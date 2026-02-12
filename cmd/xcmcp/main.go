@@ -34,7 +34,7 @@ func main() {
 	}
 
 	// Initialize AppKit to satisfy LaunchServices
-	app := appkit.GetNSApplicationClass().SharedApplication()
+	app := appkit.NSApplicationFrom(appkit.GetNSApplicationClass().SharedApplication())
 
 	// Parse flags first to configure capabilities
 	enableAll := flag.Bool("enable-all", false, "Enable all optional toolsets")
@@ -44,6 +44,7 @@ func main() {
 	enableFS := flag.Bool("enable-fs-tools", false, "Enable file system tools")
 	enableDeps := flag.Bool("enable-dependency-tools", false, "Enable dependency management tools")
 	enableResources := flag.Bool("enable-resources", false, "Enable resource management")
+	enableASC := flag.Bool("enable-asc-tools", false, "Enable App Store Connect and altool tools")
 	flag.Parse()
 
 	if *enableAll {
@@ -53,6 +54,7 @@ func main() {
 		*enableFS = true
 		*enableDeps = true
 		*enableResources = true
+		*enableASC = true
 	}
 
 	// Create server options based on flags
@@ -116,6 +118,9 @@ func main() {
 	}
 	if *enableDeps {
 		registerDependencyTools(server)
+	}
+	if *enableASC {
+		registerASCTools(server)
 	}
 
 	registerExtraTools(server)
