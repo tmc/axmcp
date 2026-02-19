@@ -1,23 +1,26 @@
 package axuiautomation
 
 import (
+	"fmt"
+	"os"
+	"os/exec"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/ebitengine/purego"
-	"github.com/tmc/appledocs/generated/applicationservices"
 	"github.com/tmc/appledocs/generated/corefoundation"
 )
 
 // Element represents an accessibility UI element.
 type Element struct {
-	ref applicationservices.AXUIElementRef
+	ref AXUIElementRef
 	app *Application
 }
 
 // newElement creates a new Element wrapping an AXUIElementRef.
 // The element takes ownership of the ref and will release it when no longer needed.
-func newElement(ref applicationservices.AXUIElementRef, app *Application) *Element {
+func newElement(ref AXUIElementRef, app *Application) *Element {
 	if ref == 0 {
 		return nil
 	}
@@ -26,7 +29,7 @@ func newElement(ref applicationservices.AXUIElementRef, app *Application) *Eleme
 
 // newElementRetained creates a new Element, retaining the ref.
 // Use this when the ref is owned by something else (e.g., an array).
-func newElementRetained(ref applicationservices.AXUIElementRef, app *Application) *Element {
+func newElementRetained(ref AXUIElementRef, app *Application) *Element {
 	if ref == 0 {
 		return nil
 	}
@@ -36,7 +39,7 @@ func newElementRetained(ref applicationservices.AXUIElementRef, app *Application
 
 // Ref returns the underlying AXUIElementRef.
 // The caller should not release this ref; it is owned by the Element.
-func (e *Element) Ref() applicationservices.AXUIElementRef {
+func (e *Element) Ref() AXUIElementRef {
 	if e == nil {
 		return 0
 	}
@@ -92,6 +95,14 @@ func (e *Element) Description() string {
 		return ""
 	}
 	return getAXAttributeString(e.ref, "AXDescription")
+}
+
+// RoleDescription returns the element's localized role description.
+func (e *Element) RoleDescription() string {
+	if e == nil || e.ref == 0 {
+		return ""
+	}
+	return getAXAttributeString(e.ref, "AXRoleDescription")
 }
 
 // Identifier returns the element's unique identifier.
@@ -194,7 +205,7 @@ func (e *Element) Click() error {
 	}
 
 	// Try AXPress first
-	err := applicationservices.AXUIElementPerformAction(e.ref, axAttr("AXPress"))
+	err := AXUIElementPerformAction(e.ref, axAttr("AXPress"))
 	if int(err) == axErrorSuccess {
 		return nil
 	}
@@ -209,6 +220,21 @@ func (e *Element) Click() error {
 	}
 
 	return axErrorToGo(err)
+}
+
+// ClickAt performs a low-level CGEvent click at a specific offset relative to the element's top-left origin.
+func (e *Element) ClickAt(xOffset, yOffset int) error {
+	if e == nil || e.ref == 0 {
+		return ErrInvalidElement
+	}
+	frame := e.Frame()
+	// If the frame is entirely zero, the element may not be on screen or visible
+	if frame.Size.Width == 0 && frame.Size.Height == 0 {
+		return ErrElementNotFound
+	}
+	absX := int(frame.Origin.X) + xOffset
+	absY := int(frame.Origin.Y) + yOffset
+	return cgEventClick(absX, absY)
 }
 
 // DoubleClick performs a double-click on the element.
@@ -229,7 +255,7 @@ func (e *Element) PerformAction(action string) error {
 	if e == nil || e.ref == 0 {
 		return ErrInvalidElement
 	}
-	err := applicationservices.AXUIElementPerformAction(e.ref, axAttr(action))
+	err := AXUIElementPerformAction(e.ref, axAttr(action))
 	return axErrorToGo(err)
 }
 
@@ -240,13 +266,13 @@ func (e *Element) SetValue(value string) error {
 	}
 
 	cStr := append([]byte(value), 0)
-	cfValue := corefoundation.CFStringCreateWithCString(0, cStr, cfStringEncodingUTF8)
-	if cfValue == 0 {
+	cfValue := corefoundation.CFStringCreateWithCString(0, &cStr[0], cfStringEncodingUTF8)
+	if cfValue == nil {
 		return &Error{Message: "failed to create CFString"}
 	}
 	defer corefoundation.CFRelease(corefoundation.CFTypeRef(cfValue))
 
-	err := applicationservices.AXUIElementSetAttributeValue(e.ref, axAttr("AXValue"), corefoundation.CFTypeRef(cfValue))
+	err := AXUIElementSetAttributeValue(e.ref, axAttr("AXValue"), uintptr(cfValue))
 	return axErrorToGo(err)
 }
 
@@ -259,7 +285,7 @@ func (e *Element) Focus() error {
 	initCFBoolean()
 	// Set AXFocused to true
 	// Note: We need to get kCFBooleanTrue
-	err := applicationservices.AXUIElementSetAttributeValue(e.ref, axAttr("AXFocused"), corefoundation.CFTypeRef(getCFBooleanTrue()))
+	err := AXUIElementSetAttributeValue(e.ref, axAttr("AXFocused"), getCFBooleanTrue())
 	return axErrorToGo(err)
 }
 
@@ -270,13 +296,13 @@ func (e *Element) SetPosition(x, y float64) error {
 	}
 
 	point := Point{X: x, Y: y}
-	axValue := applicationservices.AXValueCreate(applicationservices.AXValueType(axValueTypeCGPoint), unsafe.Pointer(&point))
+	axValue := AXValueCreate(AXValueType(axValueTypeCGPoint), unsafe.Pointer(&point))
 	if axValue == 0 {
 		return &Error{Message: "failed to create AXValue for position"}
 	}
-	defer corefoundation.CFRelease(corefoundation.CFTypeRef(axValue))
+	defer corefoundation.CFRelease(corefoundation.CFTypeRef(unsafe.Pointer(axValue)))
 
-	err := applicationservices.AXUIElementSetAttributeValue(e.ref, axAttr("AXPosition"), corefoundation.CFTypeRef(axValue))
+	err := AXUIElementSetAttributeValue(e.ref, axAttr("AXPosition"), axValue)
 	return axErrorToGo(err)
 }
 
@@ -306,13 +332,13 @@ func (e *Element) Parent() *Element {
 		return nil
 	}
 
-	var value corefoundation.CFTypeRef
-	err := applicationservices.AXUIElementCopyAttributeValue(e.ref, axAttr("AXParent"), &value)
+	var value uintptr
+	err := AXUIElementCopyAttributeValue(e.ref, axAttr("AXParent"), &value)
 	if int(err) != axErrorSuccess || value == 0 {
 		return nil
 	}
 
-	return newElement(applicationservices.AXUIElementRef(value), e.app)
+	return newElement(AXUIElementRef(value), e.app)
 }
 
 // Children returns the element's children.
@@ -340,7 +366,7 @@ func (e *Element) ChildCount() int {
 	}
 
 	var count int
-	err := applicationservices.AXUIElementGetAttributeValueCount(e.ref, axAttr("AXChildren"), &count)
+	err := AXUIElementGetAttributeValueCount(e.ref, axAttr("AXChildren"), &count)
 	if int(err) != axErrorSuccess {
 		return 0
 	}
@@ -427,4 +453,190 @@ func (e *Element) IntValue() int {
 		return 1
 	}
 	return 0
+}
+
+// Scroll scrolls the element in the given direction by the given number of lines.
+// It first tries the AXScroll action, then falls back to CGEvent scroll wheel.
+func (e *Element) Scroll(direction ScrollDirection, lines int) error {
+	if e == nil || e.ref == 0 {
+		return ErrInvalidElement
+	}
+	if lines <= 0 {
+		return nil
+	}
+	x, y := e.Center()
+	return cgScrollWheel(x, y, direction, lines)
+}
+
+// ScrollToVisible scrolls through ancestor scroll areas until this element is visible.
+// It walks up the tree looking for an AXScrollArea or AXOutline parent and scrolls it.
+func (e *Element) ScrollToVisible() error {
+	if e == nil || e.ref == 0 {
+		return ErrInvalidElement
+	}
+
+	// Walk up looking for a scrollable ancestor.
+	parent := e.Parent()
+	for parent != nil {
+		role := parent.Role()
+		if role == "AXScrollArea" || role == "AXOutline" || role == "AXList" || role == "AXTable" {
+			break
+		}
+		next := parent.Parent()
+		parent.Release()
+		parent = next
+	}
+	if parent == nil {
+		return nil // No scrollable ancestor; assume already visible.
+	}
+	defer parent.Release()
+
+	// Check if element is within the visible rect of the scroll area.
+	ex, ey := e.Center()
+	px, py := parent.Position()
+	pw, ph := parent.Size()
+
+	// Scroll down until the element center is within the scroll area bounds.
+	maxAttempts := 20
+	for i := 0; i < maxAttempts; i++ {
+		if ex >= px && ex <= px+pw && ey >= py && ey <= py+ph {
+			return nil
+		}
+		var dir ScrollDirection
+		if ey < py {
+			dir = ScrollUp
+		} else {
+			dir = ScrollDown
+		}
+		sx, sy := parent.Center()
+		if err := cgScrollWheel(sx, sy, dir, 3); err != nil {
+			return err
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return nil
+}
+
+// TypeText focuses the element and types the given text using keyboard events.
+func (e *Element) TypeText(text string) error {
+	if e == nil || e.ref == 0 {
+		return ErrInvalidElement
+	}
+	if err := e.Focus(); err != nil {
+		// Focus may fail for some elements; try clicking instead.
+		if err2 := e.Click(); err2 != nil {
+			return fmt.Errorf("focusing element: %w", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return TypeText(text)
+}
+
+// SelectMenuItem clicks this element (assumed to be an AXPopUpButton or AXComboBox),
+// waits for the menu to open, and clicks the menu item with the given title.
+func (e *Element) SelectMenuItem(title string) error {
+	if e == nil || e.ref == 0 {
+		return ErrInvalidElement
+	}
+
+	// Click to open the popup.
+	if err := e.Click(); err != nil {
+		return fmt.Errorf("opening popup: %w", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	// Search descendants for a menu item with the matching title.
+	item := e.Descendants().ByRole("AXMenuItem").ByTitle(title).First()
+	if item == nil {
+		// Menu may be a sibling or elsewhere in the window; search from app root.
+		if e.app != nil {
+			item = e.app.Descendants().ByRole("AXMenuItem").ByTitle(title).First()
+		}
+		if item == nil {
+			return fmt.Errorf("%w: menu item %q", ErrElementNotFound, title)
+		}
+	}
+	defer item.Release()
+	return item.Click()
+}
+
+// SelectValue sets the value of a combo box or other value-settable element,
+// then tries to select a matching item from a popup if present.
+func (e *Element) SelectValue(value string) error {
+	if e == nil || e.ref == 0 {
+		return ErrInvalidElement
+	}
+
+	role := e.Role()
+	if role == "AXPopUpButton" {
+		return e.SelectMenuItem(value)
+	}
+
+	// For AXComboBox: set value then confirm.
+	if err := e.SetValue(value); err != nil {
+		return err
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// Try to find a matching menu item and click it.
+	item := e.Descendants().ByRole("AXMenuItem").ByTitle(value).First()
+	if item != nil {
+		defer item.Release()
+		return item.Click()
+	}
+	return nil
+}
+
+// WaitAndClick waits up to timeout for the element to exist and be enabled, then clicks it.
+func (e *Element) WaitAndClick(timeout time.Duration) error {
+	if e == nil || e.ref == 0 {
+		return ErrInvalidElement
+	}
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if e.Exists() && e.IsEnabled() {
+			return e.Click()
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return ErrTimeout
+}
+
+// Screenshot captures a PNG of the element's on-screen frame using screencapture.
+// Returns an error if the element has no frame or the capture fails.
+func (e *Element) Screenshot() ([]byte, error) {
+	if e == nil || e.ref == 0 {
+		return nil, ErrInvalidElement
+	}
+	frame := e.Frame()
+	if frame.Size.Width == 0 || frame.Size.Height == 0 {
+		return nil, fmt.Errorf("element has zero-size frame")
+	}
+	f, err := os.CreateTemp("", "ax-screenshot-*.png")
+	if err != nil {
+		return nil, fmt.Errorf("create temp file: %w", err)
+	}
+	f.Close()
+	defer os.Remove(f.Name())
+
+	rect := fmt.Sprintf("%d,%d,%d,%d",
+		int(frame.Origin.X), int(frame.Origin.Y),
+		int(frame.Size.Width), int(frame.Size.Height))
+	cmd := exec.Command("screencapture", "-x", "-R", rect, "-t", "png", f.Name())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("screencapture: %w: %s", err, out)
+	}
+	return os.ReadFile(f.Name())
+}
+
+// ScrollAndClick scrolls the element into view and then clicks it.
+func (e *Element) ScrollAndClick() error {
+	if e == nil || e.ref == 0 {
+		return ErrInvalidElement
+	}
+	if err := e.ScrollToVisible(); err != nil {
+		return err
+	}
+	return e.Click()
 }

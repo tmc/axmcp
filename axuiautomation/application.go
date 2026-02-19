@@ -51,62 +51,91 @@ func NewApplicationFromPID(pid int32) *Application {
 	return app
 }
 
-// findPIDByBundleID finds the PID of a running application by its bundle ID.
-func findPIDByBundleID(bundleID string) (int32, error) {
-	// Try using pgrep with bundle ID pattern
-	// First, try to find by process name derived from bundle ID
-	// e.g., "com.apple.dt.Xcode" -> "Xcode"
-	parts := strings.Split(bundleID, ".")
-	if len(parts) == 0 {
-		return 0, ErrNotRunning
-	}
-	processName := parts[len(parts)-1]
-	if processName == "" {
-		return 0, ErrNotRunning
+// findPIDByBundleID finds the PID of a running application by its bundle ID or name.
+// It uses "lsappinfo list" which enumerates all running GUI apps. It supports:
+// 1. Exact numeric PID
+// 2. Exact Bundle ID (e.g. "com.apple.Safari")
+// 3. Exact localized name (e.g. "Safari")
+// 4. Case-insensitive substring match of the name (e.g. "safari" or "antigrav")
+func findPIDByBundleID(query string) (int32, error) {
+	// 1. Exact numeric PID
+	if pid, err := strconv.ParseInt(query, 10, 32); err == nil {
+		return int32(pid), nil
 	}
 
-	// Try case-insensitive pgrep first (more reliable)
-	cmd := exec.Command("pgrep", "-xi", processName)
+	// Dump all applications via lsappinfo list
+	cmd := exec.Command("lsappinfo", "list")
 	output, err := cmd.Output()
 	if err != nil {
-		// Try exact match with capitalized first letter
-		capitalizedName := strings.ToUpper(processName[:1]) + processName[1:]
-		cmd = exec.Command("pgrep", "-x", capitalizedName)
-		output, err = cmd.Output()
+		return 0, fmt.Errorf("lsappinfo failed: %w", err)
 	}
-	if err != nil {
-		// Try with full bundle ID using lsappinfo
-		cmd = exec.Command("lsappinfo", "info", "-only", "pid", bundleID)
-		output, err = cmd.Output()
-		if err != nil {
-			return 0, ErrNotRunning
-		}
-		// Parse lsappinfo output like "pid=12345"
-		outStr := strings.TrimSpace(string(output))
-		if strings.HasPrefix(outStr, "pid=") {
-			pidStr := strings.TrimPrefix(outStr, "pid=")
-			pid, err := strconv.ParseInt(pidStr, 10, 32)
-			if err != nil {
-				return 0, ErrNotRunning
+
+	type appInfo struct {
+		Name     string
+		BundleID string
+		PID      int32
+	}
+	var apps []appInfo
+	var cur appInfo
+
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, ") \"") && strings.Contains(line, "ASN:") {
+			if cur.BundleID != "" || cur.PID != 0 {
+				apps = append(apps, cur)
 			}
-			return int32(pid), nil
+			cur = appInfo{}
+			s := line[strings.Index(line, "\"")+1:]
+			cur.Name = s[:strings.Index(s, "\"")]
+		} else if strings.HasPrefix(line, "bundleID=") {
+			id := strings.Trim(strings.TrimPrefix(line, "bundleID="), `"`)
+			if id != "[ NULL ]" {
+				cur.BundleID = id
+			}
+		} else if strings.HasPrefix(line, "pid = ") {
+			rest := strings.TrimPrefix(line, "pid = ")
+			if i := strings.IndexAny(rest, " \t"); i > 0 {
+				rest = rest[:i]
+			}
+			if p, err := strconv.ParseInt(rest, 10, 32); err == nil {
+				cur.PID = int32(p)
+			}
 		}
-		return 0, ErrNotRunning
+	}
+	if cur.BundleID != "" || cur.PID != 0 {
+		apps = append(apps, cur)
 	}
 
-	// Parse pgrep output
-	pidStr := strings.TrimSpace(string(output))
-	lines := strings.Split(pidStr, "\n")
-	if len(lines) == 0 || lines[0] == "" {
-		return 0, ErrNotRunning
+	// Priority 1: Exact Bundle ID match
+	for _, app := range apps {
+		if strings.EqualFold(app.BundleID, query) {
+			return app.PID, nil
+		}
 	}
 
-	pid, err := strconv.ParseInt(lines[0], 10, 32)
-	if err != nil {
-		return 0, ErrNotRunning
+	// Priority 2: Exact Name match
+	for _, app := range apps {
+		if strings.EqualFold(app.Name, query) {
+			return app.PID, nil
+		}
 	}
 
-	return int32(pid), nil
+	// Priority 3: Substring Name match
+	queryLower := strings.ToLower(query)
+	for _, app := range apps {
+		if strings.Contains(strings.ToLower(app.Name), queryLower) {
+			return app.PID, nil
+		}
+	}
+
+	// Priority 4: Substring Bundle ID match
+	for _, app := range apps {
+		if strings.Contains(strings.ToLower(app.BundleID), queryLower) {
+			return app.PID, nil
+		}
+	}
+
+	return 0, ErrNotRunning
 }
 
 // PID returns the application's process ID.
