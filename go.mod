@@ -1,9 +1,9 @@
 module github.com/tmc/xcmcp
 
-go 1.25.5
+go 1.26
 
 require (
-	github.com/ebitengine/purego v0.9.1
+	github.com/ebitengine/purego v0.10.0-alpha.4
 	github.com/modelcontextprotocol/go-sdk v1.2.0
 	github.com/spf13/cobra v1.10.2
 	github.com/tmc/appledocs/generated v0.0.0-00010101000000-000000000000
