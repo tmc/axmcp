@@ -8,6 +8,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -165,6 +166,14 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 	args := parts[1:]
 
 	switch cmd {
+	case "apps":
+		out, err := exec.Command("lsappinfo", "list").Output()
+		if err != nil {
+			return fmt.Errorf("lsappinfo failed: %w", err)
+		}
+		// Assuming we want a human readable string since stages return text.
+		buf.Write(parseAppsTable(out))
+
 	case "app":
 		if len(args) == 0 {
 			return fmt.Errorf("app: requires bundle-id or pid")
@@ -204,11 +213,36 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 		}
 
 	case "windows":
-		if pc.app == nil {
-			return fmt.Errorf("windows: no app in context")
+		if pc.app != nil {
+			pc.elements = pc.app.WindowList()
+			pc.element = nil
+		} else {
+			// Global windows: find all PIDs from lsappinfo and get their windows.
+			out, err := exec.Command("lsappinfo", "list").Output()
+			if err != nil {
+				return fmt.Errorf("lsappinfo failed: %w", err)
+			}
+			var allWins []*axuiautomation.Element
+			for _, line := range strings.Split(string(out), "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "pid = ") {
+					rest := strings.TrimPrefix(line, "pid = ")
+					if i := strings.IndexAny(rest, " \t"); i > 0 {
+						rest = rest[:i]
+					}
+					if pid, err := strconv.ParseInt(rest, 10, 32); err == nil {
+						app := axuiautomation.NewApplicationFromPID(int32(pid))
+						if app != nil {
+							// We can't defer app.Close() here because Elements refer to app,
+							// but for a quick script it's fine.
+							allWins = append(allWins, app.WindowList()...)
+						}
+					}
+				}
+			}
+			pc.elements = allWins
+			pc.element = nil
 		}
-		pc.elements = pc.app.WindowList()
-		pc.element = nil
 
 	case "focus":
 		if pc.app == nil {
@@ -219,6 +253,19 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 		if pc.element == nil {
 			return fmt.Errorf("focus: no focused element")
 		}
+
+	case "raise":
+		el := pc.element
+		if el == nil && len(pc.elements) > 0 {
+			el = pc.elements[0]
+		}
+		if el == nil {
+			return fmt.Errorf("raise: no element in context")
+		}
+		if err := el.Raise(); err != nil {
+			return err
+		}
+		fmt.Fprintf(buf, "raised %s %q\n", el.Role(), el.Title())
 
 	case "children":
 		if pc.element == nil {
@@ -260,6 +307,11 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 					q = q.ByTitleContains(args[i+1])
 					i++
 				}
+			case "--id", "-i":
+				if i+1 < len(args) {
+					q = q.ByIdentifier(args[i+1])
+					i++
+				}
 			}
 		}
 		pc.elements = q.AllElements()
@@ -298,6 +350,19 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 			return err
 		}
 		fmt.Fprintf(buf, "clicked-at %d,%d %s %q\n", xOffset, yOffset, el.Role(), el.Title())
+
+	case "hover":
+		el := pc.element
+		if el == nil && len(pc.elements) > 0 {
+			el = pc.elements[0]
+		}
+		if el == nil {
+			return fmt.Errorf("hover: no element in context")
+		}
+		if err := el.Hover(); err != nil {
+			return err
+		}
+		fmt.Fprintf(buf, "hovered %s %q\n", el.Role(), el.Title())
 
 	case "type":
 		if len(args) == 0 {
@@ -411,7 +476,26 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 		return enc.Encode(out)
 
 	default:
-		return fmt.Errorf("unknown stage %q", cmd)
+		return fmt.Errorf("unknown stage %q. Available stages:\n"+
+			"  apps\n"+
+			"  app <bundle-id|pid>\n"+
+			"  window [substr]\n"+
+			"  windows\n"+
+			"  focus\n"+
+			"  raise\n"+
+			"  children\n"+
+			"  first\n"+
+			"  find [--role R] [--title T] [--contains C] [--id I]\n"+
+			"  .\n"+
+			"  tree [--depth N]\n"+
+			"  list\n"+
+			"  json\n"+
+			"  click\n"+
+			"  click-at <x> <y>\n"+
+			"  hover\n"+
+			"  type <text>\n"+
+			"  attr <AXAttr>\n"+
+			"  click-menu <A> <B> <C>", cmd)
 	}
 	return nil
 }

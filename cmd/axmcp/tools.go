@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -406,25 +407,83 @@ func registerAXScreenshot(s *mcp.Server) {
 			if el == nil {
 				return nil, nil, fmt.Errorf("element not found (try being less specific)")
 			}
+			// Capture specific element
+			png, err := captureElementOrWindow(args.App, true, el)
+			if err != nil {
+				return nil, nil, err
+			}
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.ImageContent{Data: png, MIMEType: "image/png"}},
+			}, nil, nil
 		} else {
 			wins := app.WindowList()
 			if len(wins) == 0 {
 				return nil, nil, fmt.Errorf("no windows found to screenshot")
 			}
 			el = wins[0]
-		}
-
-		png, err := el.Screenshot()
-		if err != nil {
-			if strings.Contains(err.Error(), "could not create image from rect") || strings.Contains(err.Error(), "screencapture: exit status") {
-				return nil, nil, fmt.Errorf("screenshot failed: %w (Ensure Terminal/host has Screen Recording permissions in System Settings > Privacy & Security, and that the element is not fully occluded or off-screen)", err)
+			// Capture the whole window using screen-capture and list-app-windows
+			png, err := captureElementOrWindow(args.App, false, el)
+			if err != nil {
+				return nil, nil, err
 			}
-			return nil, nil, fmt.Errorf("screenshot: %w", err)
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.ImageContent{Data: png, MIMEType: "image/png"}},
+			}, nil, nil
 		}
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.ImageContent{Data: png, MIMEType: "image/png"}},
-		}, nil, nil
 	})
+}
+
+// captureElementOrWindow abstracts the logic to capture a screenshot.
+// If isElement is true, it attempts an element screenshot.
+// Otherwise it tries to use list-app-windows/screen-capture for a robust window capture.
+func captureElementOrWindow(appName string, isElement bool, el *axuiautomation.Element) ([]byte, error) {
+	if !isElement {
+		// Try the external tools first for full windows
+		listCmd := exec.Command("list-app-windows", "-app", appName)
+		out, err := listCmd.Output()
+		if err == nil {
+			lines := strings.Split(string(out), "\n")
+			if len(lines) > 1 {
+				fields := strings.Fields(lines[1])
+				if len(fields) > 0 {
+					windowID := fields[0]
+
+					// Create a temp file for the screenshot
+					f, err := os.CreateTemp("", "ax-screenshot-*.png")
+					if err == nil {
+						f.Close()
+						defer os.Remove(f.Name())
+
+						captureCmd := exec.Command("screen-capture", "-window", windowID, "-output", f.Name())
+						if err := captureCmd.Run(); err == nil {
+							if png, err := os.ReadFile(f.Name()); err == nil {
+								return png, nil
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Fallback to accessibility element screenshot
+	png, err := el.Screenshot()
+	if err != nil {
+		if strings.Contains(err.Error(), "could not create image from rect") || strings.Contains(err.Error(), "screencapture: exit status") {
+			// Restore TCC "Open System Settings" missing prompt via AppleScript
+			go func() {
+				script := `display dialog "Screen Recording permission is required for axmcp to capture screenshots. Would you like to open System Settings?" buttons {"Cancel", "Open System Settings"} default button "Open System Settings"`
+				out, _ := exec.Command("osascript", "-e", script).Output()
+				if strings.Contains(string(out), "Open System Settings") {
+					exec.Command("open", "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture").Run()
+				}
+			}()
+			return nil, fmt.Errorf("screenshot failed: %w (Ensure Terminal/host has Screen Recording permissions in System Settings > Privacy & Security, and that the element is not fully occluded or off-screen)", err)
+		}
+		return nil, fmt.Errorf("screenshot: %w", err)
+	}
+
+	return png, nil
 }
 
 // ── ax_focus ──────────────────────────────────────────────────────────────────
