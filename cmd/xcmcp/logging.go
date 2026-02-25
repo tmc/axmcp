@@ -3,20 +3,45 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
+	"log/slog"
 	"os"
-	"time"
+	"path/filepath"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// broadcastLog sends a logging notification to all active sessions.
-// It also logs to stderr for immediate visibility.
-func broadcastLog(s *mcp.Server, level mcp.LoggingLevel, logger, msg string) {
-	// Log to stderr
-	timestamp := time.Now().Format("15:04:05")
-	fmt.Fprintf(os.Stderr, "[%s] %s: %s\n", timestamp, level, msg)
+// initFileLog sets up slog with a MultiHandler writing to both stderr and
+// ~/.xcmcp/xcmcp.log. Also bridges the standard log package to slog.
+func initFileLog() {
+	dir := filepath.Join(os.Getenv("HOME"), ".xcmcp")
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		fmt.Fprintf(os.Stderr, "xcmcp: create log dir: %v\n", err)
+		return
+	}
+	path := filepath.Join(dir, "xcmcp.log")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "xcmcp: open log file: %v\n", err)
+		return
+	}
 
-	// Send to MCP clients
+	opts := &slog.HandlerOptions{Level: slog.LevelDebug, AddSource: true}
+	multi := slog.NewMultiHandler(
+		slog.NewTextHandler(os.Stderr, opts),
+		slog.NewTextHandler(f, opts),
+	)
+	slog.SetDefault(slog.New(multi))
+	log.SetFlags(0)
+	log.SetOutput(os.Stderr)
+	slog.Info("xcmcp starting", "log", path)
+}
+
+// broadcastLog sends a logging notification to all active MCP sessions
+// and logs via slog.
+func broadcastLog(s *mcp.Server, level mcp.LoggingLevel, logger, msg string) {
+	slog.Info(msg, "logger", logger, "level", level)
+
 	for session := range s.Sessions() {
 		err := session.Log(context.Background(), &mcp.LoggingMessageParams{
 			Level:  level,
@@ -24,7 +49,7 @@ func broadcastLog(s *mcp.Server, level mcp.LoggingLevel, logger, msg string) {
 			Data:   msg,
 		})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "DEBUG: Failed to send log to session: %v\n", err)
+			slog.Warn("failed to send log to session", "err", err)
 		}
 	}
 }

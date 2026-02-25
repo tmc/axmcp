@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/tmc/xcmcp/internal/purego/coresim"
@@ -24,7 +23,6 @@ type IOSQueryOutput struct {
 }
 
 func registerIOSTools(s *mcp.Server) {
-	fmt.Fprintf(os.Stderr, "DEBUG: Adding ios_tree\n")
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "ios_tree",
 		Description: "Get iOS UI accessibility tree from booted simulator. Queries actual iOS app content, not the Simulator.app window.",
@@ -92,7 +90,7 @@ func registerIOSTools(s *mcp.Server) {
 			}, IOSQueryOutput{}, nil
 		}
 
-		element, err := device.GetAccessibilityElementAtPoint(args.X, args.Y)
+		element, err := device.GetAccessibilityElementAtPoint(args.X, args.Y, "")
 		if err != nil {
 			return &mcp.CallToolResult{
 				IsError: true,

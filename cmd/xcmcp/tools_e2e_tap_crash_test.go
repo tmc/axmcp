@@ -18,7 +18,7 @@ import (
 // Looking at the SDK, it typically provides a server transport. We can simulate a client
 // by running the server as a subprocess and connecting stdin/stdout.
 
-func TestToolsE2E(t *testing.T) {
+func TestToolsE2ETapCrash(t *testing.T) {
 	if os.Getenv("XCMCP_E2E") == "" {
 		t.Skip("Skipping E2E test; set XCMCP_E2E=1 to run")
 	}
