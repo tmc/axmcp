@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/ebitengine/purego"
+	"github.com/tmc/appledocs/generated/appkit"
 	"github.com/tmc/appledocs/generated/corefoundation"
 	"github.com/tmc/appledocs/generated/objc"
 )
@@ -150,27 +153,212 @@ type App struct {
 
 var trustOnce sync.Once
 
+func uiExecName() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "xcmcp"
+	}
+	name := filepath.Base(exe)
+	name = strings.TrimSuffix(name, ".app")
+	return name
+}
+
+func uiIsTrustedFresh() bool {
+	if axIsProcessTrustedWithOptions == nil {
+		return axIsProcessTrusted != nil && axIsProcessTrusted()
+	}
+	key := MkString("AXTrustedCheckOptionPrompt")
+	val := objc.Send[uintptr](objc.ID(objc.GetClass("NSNumber")), objc.Sel("numberWithBool:"), false)
+	dict := objc.Send[uintptr](objc.ID(objc.GetClass("NSDictionary")), objc.Sel("dictionaryWithObject:forKey:"), val, key)
+	return axIsProcessTrustedWithOptions(dict)
+}
+
+func uiOpenAccessibilityPrefs() {
+	exec.Command("open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility").Start()
+}
+
+func uiResetTCC() {
+	exe, _ := os.Executable()
+	plist := filepath.Join(filepath.Dir(filepath.Dir(exe)), "Info.plist")
+	out, err := exec.Command("defaults", "read", plist, "CFBundleIdentifier").Output()
+	bundleID := ""
+	if err == nil {
+		bundleID = strings.TrimSpace(string(out))
+	}
+	if bundleID == "" {
+		bundleID = "dev.tmc." + uiExecName()
+	}
+	exec.Command("tccutil", "reset", "Accessibility", bundleID).Run()
+	// Re-query with prompt=false to re-register the entry in TCC without
+	// triggering the system universalAccessAuthWarn popup. This causes macOS
+	// to write a "denied" row back into the TCC database so it appears in
+	// System Settings > Privacy & Security > Accessibility for the user to
+	// toggle on.
+	if axIsProcessTrustedWithOptions != nil {
+		key := MkString("AXTrustedCheckOptionPrompt")
+		val := objc.Send[uintptr](objc.ID(objc.GetClass("NSNumber")), objc.Sel("numberWithBool:"), false)
+		dict := objc.Send[uintptr](objc.ID(objc.GetClass("NSDictionary")), objc.Sel("dictionaryWithObject:forKey:"), val, key)
+		axIsProcessTrustedWithOptions(dict)
+	}
+	uiOpenAccessibilityPrefs()
+}
+
+func uiBindButtonAction(btn appkit.NSButton, fn func()) {
+	item := appkit.NewNSMenuItem()
+	appkit.BindAction(item, func(_ objc.ID) { fn() })
+	btn.SetTarget(item.Target())
+	btn.SetAction(item.Action())
+}
+
+func uiMakeButton(title string, frame corefoundation.CGRect, fn func()) appkit.NSButton {
+	btn := appkit.NewButtonWithFrame(frame)
+	btn.SetTitle(title)
+	btn.SetBezelStyle(appkit.NSBezelStyleAccessoryBar)
+	uiBindButtonAction(btn, fn)
+	return btn
+}
+
 func CheckTrust() {
 	trustOnce.Do(func() {
-		if axIsProcessTrustedWithOptions != nil {
-			key := MkString("AXTrustedCheckOptionPrompt")
-			val := objc.Send[uintptr](objc.ID(objc.GetClass("NSNumber")), objc.Sel("numberWithBool:"), true)
-
-			dict := objc.Send[uintptr](objc.ID(objc.GetClass("NSDictionary")), objc.Sel("dictionaryWithObject:forKey:"), val, key)
-
-			trusted := axIsProcessTrustedWithOptions(dict)
-			if !trusted {
-				// Try to show a visible alert if not trusted
-				go func() {
-					cmd := exec.Command("osascript", "-e", `display dialog "xcmcp requires Accessibility permissions to automate the Simulator.\n\nPlease grant access in System Settings > Privacy & Security > Accessibility." buttons {"OK"} default button "OK" with title "xcmcp Permissions" with icon stop`)
-					cmd.Run()
-				}()
-				fmt.Fprintln(os.Stderr, "Warning: Process is NOT trusted. Attempted to prompt user.")
-				fmt.Fprintln(os.Stderr, "Check System Settings > Privacy & Security > Accessibility.")
-			}
-		} else if axIsProcessTrusted != nil && !axIsProcessTrusted() {
-			fmt.Fprintln(os.Stderr, "Warning: Process is NOT trusted as an accessibility client. Grant Accessibility permissions to Terminal/xc in System Settings.")
+		if axIsProcessTrusted != nil && axIsProcessTrusted() {
+			return
 		}
+		if axIsProcessTrustedWithOptions == nil {
+			fmt.Fprintln(os.Stderr, "Warning: Process is NOT trusted as an accessibility client. Grant Accessibility permissions in System Settings.")
+			return
+		}
+		showWaitingForPermissionWindow()
+	})
+}
+
+func showWaitingForPermissionWindow() {
+	appkit.DispatchMainSafe(func() {
+		app := appkit.GetNSApplicationClass().SharedApplication()
+		app.SetActivationPolicy(appkit.NSApplicationActivationPolicyAccessory)
+
+		const (
+			w         = 400.0
+			h         = 148.0
+			padding   = 16.0
+			spinSz    = 24.0
+			btnH      = 22.0
+			btnGap    = 6.0
+			titleH    = 34.0
+			subtitleH = 38.0
+		)
+
+		name := uiExecName()
+
+		win := appkit.NewWindowWithContentRectStyleMaskBackingDefer(
+			corefoundation.CGRect{Size: corefoundation.CGSize{Width: w, Height: h}},
+			appkit.NSWindowStyleMaskTitled,
+			appkit.NSBackingStoreBuffered,
+			false,
+		)
+		win.SetTitle(name + " — Accessibility Permission Required")
+		win.SetLevel(appkit.NSFloatingWindowLevel)
+
+		content := appkit.NSViewFrom(win.ContentView().GetID())
+
+		// Spinner — left side, aligned with text area.
+		spinner := appkit.NewProgressIndicatorWithFrame(corefoundation.CGRect{
+			Origin: corefoundation.CGPoint{X: padding, Y: h - padding - spinSz - 4},
+			Size:   corefoundation.CGSize{Width: spinSz, Height: spinSz},
+		})
+		spinner.SetStyle(appkit.NSProgressIndicatorStyleSpinning)
+		spinner.SetIndeterminate(true)
+		spinner.StartAnimation(nil)
+		content.AddSubview(spinner)
+
+		labelX := padding + spinSz + padding
+		labelW := w - labelX - padding
+
+		// Bold title line.
+		titleLabel := appkit.NewTextFieldLabelWithString(
+			`"` + name + `.app" would like to control this computer using accessibility features.`,
+		)
+		titleLabel.SetFrame(corefoundation.CGRect{
+			Origin: corefoundation.CGPoint{X: labelX, Y: h - padding - titleH},
+			Size:   corefoundation.CGSize{Width: labelW, Height: titleH},
+		})
+		content.AddSubview(titleLabel)
+
+		// Secondary description.
+		subtitleLabel := appkit.NewTextFieldLabelWithString(
+			"Grant access in Privacy & Security settings, located in System Settings.",
+		)
+		subtitleLabel.SetFrame(corefoundation.CGRect{
+			Origin: corefoundation.CGPoint{X: labelX, Y: h - padding - titleH - subtitleH - 2},
+			Size:   corefoundation.CGSize{Width: labelW, Height: subtitleH},
+		})
+		content.AddSubview(subtitleLabel)
+
+		// Two buttons side by side in the lower area.
+		halfW := (labelW - btnGap) / 2
+		openBtn := uiMakeButton("Open System Settings…", corefoundation.CGRect{
+			Origin: corefoundation.CGPoint{X: labelX, Y: padding},
+			Size:   corefoundation.CGSize{Width: halfW, Height: btnH},
+		}, uiOpenAccessibilityPrefs)
+		content.AddSubview(openBtn)
+
+		resetBtn := uiMakeButton("Reset TCC…", corefoundation.CGRect{
+			Origin: corefoundation.CGPoint{X: labelX + halfW + btnGap, Y: padding},
+			Size:   corefoundation.CGSize{Width: halfW, Height: btnH},
+		}, uiResetTCC)
+		content.AddSubview(resetBtn)
+
+		win.Center()
+		win.MakeKeyAndOrderFront(nil)
+		app.ActivateIgnoringOtherApps(true)
+
+		// Poll on the main thread via time.AfterFunc + DispatchMainSafe so all
+		// ObjC calls (including uiIsTrustedFresh and UI mutations) stay on the
+		// main thread.
+		var pollTimer *time.Timer
+		var poll func()
+		poll = func() {
+			if !uiIsTrustedFresh() {
+				pollTimer = time.AfterFunc(500*time.Millisecond, func() {
+					appkit.DispatchMainSafe(poll)
+				})
+				return
+			}
+			// Permission granted — transition to success state.
+			spinner.StopAnimation(nil)
+			spinner.SetIsHidden(true)
+			openBtn.SetIsHidden(true)
+			resetBtn.SetIsHidden(true)
+			subtitleLabel.SetIsHidden(true)
+
+			const checkSz = 36.0
+			baseImg := appkit.NewImageWithSystemSymbolNameAccessibilityDescription(
+				"checkmark.circle.fill", "Permission granted",
+			)
+			sizeCfg := appkit.NewImageSymbolConfigurationWithPointSizeWeight(checkSz, appkit.NSFontWeightMedium)
+			colorCfg := appkit.NewImageSymbolConfigurationWithHierarchicalColor(
+				appkit.GetNSColorClass().SystemGreen(),
+			)
+			cfg := sizeCfg.ConfigurationByApplyingConfiguration(colorCfg)
+			checkImg := appkit.NSImageFrom(baseImg.ImageWithSymbolConfiguration(cfg).GetID())
+			checkView := appkit.NewImageViewWithFrame(corefoundation.CGRect{
+				Origin: corefoundation.CGPoint{X: padding - 4, Y: (h - checkSz) / 2},
+				Size:   corefoundation.CGSize{Width: checkSz, Height: checkSz},
+			})
+			checkView.SetImage(checkImg)
+			content.AddSubview(checkView)
+			titleLabel.SetStringValue("Accessibility permission granted.")
+
+			time.AfterFunc(1200*time.Millisecond, func() {
+				appkit.DispatchMainSafe(func() {
+					win.Close()
+				})
+			})
+		}
+
+		pollTimer = time.AfterFunc(500*time.Millisecond, func() {
+			appkit.DispatchMainSafe(poll)
+		})
+		_ = pollTimer
 	})
 }
 
