@@ -119,18 +119,13 @@ func (d SimDevice) GetAccessibilityElements() ([]*AccessibilityElement, error) {
 	token := RegisterDeviceForToken(deviceRef)
 	defer UnregisterToken(token)
 
-	// Hit test at center with our token
-	fmt.Println("DEBUG: HitTesting at 200, 400...")
 	hitElement, err := d.GetAccessibilityElementAtPoint(200, 400, token)
 	if err != nil {
-		fmt.Printf("DEBUG: HitTest failed: %v\n", err)
 		return nil, err
 	}
 	if hitElement == nil {
-		fmt.Println("DEBUG: HitTest returned nil.")
 		return nil, nil
 	}
-	fmt.Printf("DEBUG: HitTest success. PID: %d, Frame: %v\n", hitElement.PID, hitElement.AXFrame)
 
 	// Create Synthetic Root
 	root := &AccessibilityElement{
@@ -232,28 +227,31 @@ func (d SimDevice) FetchChildren(element *AccessibilityElement) ([]*Accessibilit
 	return children, nil
 }
 
+// maxTreeDepth limits how deep we recurse into the accessibility tree.
+const maxTreeDepth = 15
+
+// maxTreeElements limits the total number of elements fetched.
+const maxTreeElements = 500
+
 // RecursivelyFetchChildren traverses the accessibility tree.
 func (d SimDevice) RecursivelyFetchChildren(element *AccessibilityElement, depth int) {
-	if depth > 50 {
-		return
-	}
+	d.recursivelyFetchChildren(element, depth, new(int))
+}
 
-	// Upgrade if needed (and if we have token)
-	if len(element.RawData) == 0 && element.AXUniqueId != "0" {
-		// fmt.Printf("Upgrading %s...\n", element.AXUniqueId)
-		upgraded, err := d.UpgradeElement(element)
-		if err == nil && upgraded != nil {
-			element.RawData = upgraded.RawData
-			element.AXChildren = upgraded.AXChildren // Usually empty on upgrade but just in case
-		}
+func (d SimDevice) recursivelyFetchChildren(element *AccessibilityElement, depth int, count *int) {
+	if depth > maxTreeDepth || *count >= maxTreeElements {
+		return
 	}
 
 	children, err := d.FetchChildren(element)
 	if err == nil && len(children) > 0 {
 		element.AXChildren = children
+		*count += len(children)
 		for _, child := range children {
-			// Token propagation handled in FetchChildren
-			d.RecursivelyFetchChildren(child, depth+1)
+			if *count >= maxTreeElements {
+				return
+			}
+			d.recursivelyFetchChildren(child, depth+1, count)
 		}
 	}
 }

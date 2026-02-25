@@ -122,18 +122,15 @@ func InitAXPDelegate() {
 		imp := objc.NewCallback(func(self, _cmd, tokenID objc.ID) objc.ID {
 			token := objc.GoString(tokenID)
 
-			// Return a block that handles the request
 			blk := objc.NewBlock(func(blk, req objc.ID) objc.ID {
 				val, ok := tokenMap.Load(token)
 				if !ok {
-					fmt.Printf("Delegate: No device for token %s\n", token)
 					return 0
 				}
 				device := val.(*SimDevice)
 
 				resp, err := device.SendAccessibilityRequestID(req)
 				if err != nil {
-					fmt.Println("Delegate: Error sending request:", err)
 					return 0
 				}
 				return resp
@@ -146,11 +143,6 @@ func InitAXPDelegate() {
 		// We implement this to avoid crash. We don't care about correctness for now (return garbage/0).
 		// Signature involves structs. We try returning 0 (which might zero-out d0, effectively returning {{0,0},{0,0}}).
 		impConvert := objc.NewCallback(func(self, _cmd objc.ID, framePtr unsafe.Pointer, tokenID objc.ID) int {
-			// Note: frame is passed by value (struct). On ARM64, it's in d0-d3 registers.
-			// Purego might not pass these to us easily.
-			// However, if we define inputs as `...` or specific types?
-			// Actually, if we just return 0, we might survive.
-			fmt.Println("DEBUG: ConvertFrame called from Translator!")
 			return 0
 		})
 		// Signature: Return Struct, Self, Sel, Arg Struct, Arg ID
@@ -189,34 +181,42 @@ func UnregisterToken(token string) {
 	tokenMap.Delete(token)
 }
 
+var (
+	axQueue     objc.ID
+	axQueueOnce sync.Once
+)
+
+func getAXQueue() objc.ID {
+	axQueueOnce.Do(func() {
+		axQueue = objc.ID(CreateQueue("xcmcp.accessibility"))
+	})
+	return axQueue
+}
+
 // SendAccessibilityRequestID sends a request using ID and waits for response.
 func (d SimDevice) SendAccessibilityRequestID(requestID objc.ID) (objc.ID, error) {
-	queue := objc.ID(CreateQueue("xcmcp.accessibility"))
+	queue := getAXQueue()
 	if queue == 0 {
-		return 0, fmt.Errorf("failed to get global queue")
+		return 0, fmt.Errorf("failed to create dispatch queue")
 	}
 
 	done := make(chan objc.ID, 1)
 
-	// Callback for the block invoke function
-	// Signature: void invoke(void *block, AXPTranslatorResponse *response)
 	invoke := objc.NewCallback(func(_ uintptr, response objc.ID) {
 		done <- response
 	})
 
-	// Create Manual Block
 	blk, _ := createGlobalBlock(invoke)
 	if blk == nil {
-		return 0, fmt.Errorf("failed to create manual block")
+		return 0, fmt.Errorf("failed to create block")
 	}
-	// defer cleanup() // LEAK MEMORY to avoid premature free if block is retained/used
 
 	objc.Send[objc.ID](d.id, objc.Sel("sendAccessibilityRequestAsync:completionQueue:completionHandler:"), requestID, queue, blk)
 
 	select {
 	case resp := <-done:
 		return resp, nil
-	case <-time.After(10 * time.Second):
-		return 0, fmt.Errorf("timeout waiting for low-level accessibility response")
+	case <-time.After(5 * time.Second):
+		return 0, fmt.Errorf("timeout waiting for accessibility response")
 	}
 }
