@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tmc/appledocs/generated/appkit"
 	"github.com/tmc/macgo"
+	"github.com/tmc/xcmcp/axuiautomation"
 	"github.com/tmc/xcmcp/crash"
 	"github.com/tmc/xcmcp/devicectl"
 	"github.com/tmc/xcmcp/internal/purego/coresim"
@@ -31,7 +32,7 @@ func main() {
 		WithPermissions(macgo.Accessibility).
 		WithAdHocSign()
 		// WithUIMode(macgo.UIModeRegular).
-	cfg.BundleID = "com.tmc.xc"
+	cfg.BundleID = "dev.tmc.xc"
 	// cfg.ForceDirectExecution = true // Commented out to enable App Mode
 
 	f, _ := os.OpenFile("/tmp/xc_debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -1651,4 +1652,450 @@ func init() {
 	physicalCmd.AddCommand(physicalLaunchCmd)
 	physicalCmd.AddCommand(physicalTerminateCmd)
 	physicalCmd.AddCommand(physicalRebootCmd)
+}
+
+// -- Xcode --
+
+var xcodeCmd = &cobra.Command{
+	Use:   "xcode",
+	Short: "Drive Xcode via accessibility automation",
+}
+
+var xcodeAddTargetCmd = &cobra.Command{
+	Use:   "add-target",
+	Short: "Add a new target via File > New > Target wizard",
+	Example: `  xc xcode add-target --template "Widget Extension" --product NanoclawWidget
+  xc xcode add-target --template "App Intent Extension" --product NanoclawIntents --team "My Team"`,
+	Run: func(cmd *cobra.Command, args []string) {
+		template, _ := cmd.Flags().GetString("template")
+		product, _ := cmd.Flags().GetString("product")
+		bundleID, _ := cmd.Flags().GetString("bundle-id")
+		team, _ := cmd.Flags().GetString("team")
+
+		if template == "" {
+			fmt.Fprintln(os.Stderr, "error: --template is required")
+			os.Exit(1)
+		}
+		if product == "" {
+			fmt.Fprintln(os.Stderr, "error: --product is required")
+			os.Exit(1)
+		}
+
+		app, err := axuiautomation.NewApplication("com.apple.dt.Xcode")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: Xcode is not running: %v\n", err)
+			os.Exit(1)
+		}
+		defer app.Close()
+
+		if err := app.Activate(); err != nil {
+			fmt.Fprintf(os.Stderr, "error: failed to activate Xcode: %v\n", err)
+			os.Exit(1)
+		}
+		// Give Xcode time to come to front.
+		time.Sleep(600 * time.Millisecond)
+
+		// Check if the template chooser sheet is already open.
+		sheet, _ := waitForSheet(app, 300*time.Millisecond)
+		if sheet == nil {
+			// Select the project root node so File > New > Target… is enabled.
+			ensureXcodeProjectNodeSelected(app)
+			time.Sleep(300 * time.Millisecond)
+
+			// Try both Unicode ellipsis and ASCII variant of "Target".
+			var menuErr error
+			for _, name := range []string{"Target\u2026", "Target..."} {
+				menuErr = app.ClickMenuItem([]string{"File", "New", name})
+				if menuErr == nil {
+					break
+				}
+			}
+			if menuErr != nil {
+				fmt.Fprintf(os.Stderr, "error: failed to open File > New > Target: %v\n", menuErr)
+				os.Exit(1)
+			}
+
+			var err error
+			sheet, err = waitForSheet(app, 8*time.Second)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: template chooser did not appear: %v\n", err)
+				os.Exit(1)
+			}
+		}
+
+		// Type the template name into the search field to filter the grid.
+		// After typing, the first result is auto-selected — just click Next.
+		// If no search field exists, fall back to clicking the template cell.
+		// Type the template name into the search field, wait for filter,
+		// then click the first result to select it (enables Next).
+		_ = typeIntoSearchField(sheet, template)
+		time.Sleep(800 * time.Millisecond)
+		if err := clickTemplateByName(sheet, template); err != nil {
+			axuiautomation.SendEscape()
+			msg := fmt.Sprintf("error: failed to select template %q: %v", template, err)
+			fmt.Fprintln(os.Stderr, msg)
+			_ = os.WriteFile("/tmp/xc-add-target.log", []byte(msg+"\n"), 0644)
+			os.Exit(1)
+		}
+
+		if err := clickBtn(sheet, "Next", 3*time.Second); err != nil {
+			axuiautomation.SendEscape()
+			fmt.Fprintf(os.Stderr, "error: failed to click Next: %v\n", err)
+			os.Exit(1)
+		}
+		time.Sleep(300 * time.Millisecond)
+
+		sheet2, err := waitForSheet(app, 5*time.Second)
+		if err != nil {
+			sheet2 = app.Root()
+		}
+
+		if err := fillField(sheet2, "Product Name", product); err != nil {
+			axuiautomation.SendEscape()
+			fmt.Fprintf(os.Stderr, "error: failed to fill product name: %v\n", err)
+			os.Exit(1)
+		}
+		if bundleID != "" {
+			_ = fillField(sheet2, "Bundle Identifier", bundleID)
+		}
+		if team != "" {
+			_ = selectPopup(sheet2, "team", team)
+		}
+
+		if err := clickBtn(sheet2, "Finish", 3*time.Second); err != nil {
+			axuiautomation.SendEscape()
+			fmt.Fprintf(os.Stderr, "error: failed to click Finish: %v\n", err)
+			os.Exit(1)
+		}
+
+		time.Sleep(500 * time.Millisecond)
+		dismissActivateScheme(app)
+
+		msg := fmt.Sprintf("added target %q (template: %s)", product, template)
+		fmt.Println(msg)
+		_ = os.WriteFile("/tmp/xc-add-target.log", []byte(msg+"\n"), 0644)
+	},
+}
+
+var xcodeMenuDumpCmd = &cobra.Command{
+	Use:   "menu-dump",
+	Short: "Dump File > New submenu items from Xcode (debug)",
+	Run: func(cmd *cobra.Command, args []string) {
+		app, err := axuiautomation.NewApplication("com.apple.dt.Xcode")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		defer app.Close()
+		_ = app.Activate()
+
+		// Retry getting menu bar
+		var menuBar *axuiautomation.Element
+		for i := 0; i < 10; i++ {
+			time.Sleep(300 * time.Millisecond)
+			menuBar = app.MenuBar()
+			if menuBar != nil {
+				break
+			}
+		}
+		if menuBar == nil {
+			fmt.Fprintln(os.Stderr, "menu bar not found after retries")
+			os.Exit(1)
+		}
+		defer menuBar.Release()
+
+		// Find File menu and dump everything under File > New
+		for _, child := range menuBar.Children() {
+			if child.Title() != "File" {
+				continue
+			}
+			_ = child.Click()
+			time.Sleep(400 * time.Millisecond)
+			for _, sub := range child.Children() {
+				if sub.Role() != "AXMenu" {
+					continue
+				}
+				for _, item := range sub.Children() {
+					if item.Title() != "New" {
+						continue
+					}
+					_ = item.Click()
+					time.Sleep(400 * time.Millisecond)
+					for _, newSub := range item.Children() {
+						if newSub.Role() != "AXMenu" {
+							continue
+						}
+						fmt.Println("File > New items:")
+						for _, newItem := range newSub.Children() {
+							title := newItem.Title()
+							fmt.Printf("  role=%-20s title=%q (hex:", newItem.Role(), title)
+							for _, r := range title {
+								fmt.Printf(" %04x", r)
+							}
+							fmt.Printf(") enabled=%v\n", newItem.IsEnabled())
+						}
+					}
+				}
+			}
+		}
+		axuiautomation.SendEscape()
+		time.Sleep(100 * time.Millisecond)
+		axuiautomation.SendEscape()
+	},
+}
+
+var xcodeSheetDumpCmd = &cobra.Command{
+	Use:   "sheet-dump",
+	Short: "Dump all named elements in the open Xcode sheet (debug)",
+	Run: func(cmd *cobra.Command, args []string) {
+		app, err := axuiautomation.NewApplication("com.apple.dt.Xcode")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		defer app.Close()
+
+		sheet, err := waitForSheet(app, 5*time.Second)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "no sheet found: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Print the full role hierarchy to understand the sheet structure.
+		var printTree func(e *axuiautomation.Element, depth int)
+		printTree = func(e *axuiautomation.Element, depth int) {
+			indent := strings.Repeat("  ", depth)
+			t, v := e.Title(), e.Value()
+			fmt.Printf("%s[%s] title=%q value=%q\n", indent, e.Role(), t, v)
+			if depth < 5 {
+				for _, child := range e.Children() {
+					printTree(child, depth+1)
+				}
+			}
+		}
+		printTree(sheet, 0)
+	},
+}
+
+func init() {
+	rootCmd.AddCommand(xcodeCmd)
+	xcodeCmd.AddCommand(xcodeAddTargetCmd)
+	xcodeCmd.AddCommand(xcodeMenuDumpCmd)
+	xcodeCmd.AddCommand(xcodeSheetDumpCmd)
+
+	xcodeAddTargetCmd.Flags().String("template", "", "Target template name (e.g. 'Widget Extension')")
+	xcodeAddTargetCmd.Flags().String("product", "", "Product name for the new target")
+	xcodeAddTargetCmd.Flags().String("bundle-id", "", "Bundle identifier (optional)")
+	xcodeAddTargetCmd.Flags().String("team", "", "Development team name (optional)")
+
+}
+
+
+// helpers shared by xcodeAddTargetCmd — thin wrappers over axuiautomation.
+
+func waitForSheet(app *axuiautomation.Application, timeout time.Duration) (*axuiautomation.Element, error) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if sheets := app.Sheets().AllElements(); len(sheets) > 0 {
+			return sheets[0], nil
+		}
+		if dialogs := app.Dialogs().AllElements(); len(dialogs) > 0 {
+			return dialogs[0], nil
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	return nil, axuiautomation.ErrTimeout
+}
+
+func clickTemplateByName(sheet *axuiautomation.Element, name string) error {
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		var found *axuiautomation.Element
+
+		// Match any element whose title or value contains the name.
+		sheet.Descendants().ForEach(func(e *axuiautomation.Element) bool {
+			t, v := e.Title(), e.Value()
+			if strings.Contains(t, name) || strings.Contains(v, name) {
+				found = e
+				return false
+			}
+			return true
+		})
+		if found != nil {
+			_ = found.ScrollToVisible()
+			err := found.Click()
+			found.Release()
+			return err
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	// Debug: write all elements to log file.
+	logf, _ := os.OpenFile("/tmp/xc-add-target.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if logf != nil {
+		fmt.Fprintf(logf, "template %q not found. elements in sheet:\n", name)
+		seen := map[string]bool{}
+		sheet.Descendants().ForEach(func(e *axuiautomation.Element) bool {
+			t, v := e.Title(), e.Value()
+			key := e.Role() + "|" + t + "|" + v
+			if (t != "" || v != "") && !seen[key] {
+				seen[key] = true
+				fmt.Fprintf(logf, "  role=%-30s title=%q value=%q\n", e.Role(), t, v)
+			}
+			return true
+		})
+		logf.Close()
+	}
+	return fmt.Errorf("template %q not found", name)
+}
+
+func clickBtn(parent *axuiautomation.Element, title string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if btn := parent.Descendants().ByRole("AXButton").ByTitle(title).First(); btn != nil {
+			if btn.IsEnabled() {
+				err := btn.Click()
+				btn.Release()
+				return err
+			}
+			btn.Release()
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("button %q not found or not enabled", title)
+}
+
+func fillField(parent *axuiautomation.Element, label, text string) error {
+	tf := parent.Descendants().ByRole("AXTextField").Matching(func(e *axuiautomation.Element) bool {
+		return strings.EqualFold(e.Identifier(), label) ||
+			strings.EqualFold(e.Title(), label)
+	}).First()
+	if tf == nil {
+		// Fall back to the first non-search text field.
+		tf = parent.Descendants().ByRole("AXTextField").Matching(func(e *axuiautomation.Element) bool {
+			role := e.Role()
+			return role != "AXSearchField"
+		}).First()
+	}
+	if tf == nil {
+		return fmt.Errorf("text field %q not found", label)
+	}
+	defer tf.Release()
+	if err := tf.Focus(); err != nil {
+		if err2 := tf.Click(); err2 != nil {
+			return fmt.Errorf("focusing %q: %w", label, err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	_ = axuiautomation.SendKeyCombo(0x00, false, false, false, true) // Cmd+A
+	time.Sleep(30 * time.Millisecond)
+	return tf.TypeText(text)
+}
+
+func selectPopup(parent *axuiautomation.Element, labelHint, value string) error {
+	popup := parent.Descendants().ByRole("AXPopUpButton").Matching(func(e *axuiautomation.Element) bool {
+		return strings.Contains(strings.ToLower(e.Identifier()), labelHint) ||
+			strings.Contains(strings.ToLower(e.Title()), labelHint)
+	}).First()
+	if popup == nil {
+		return fmt.Errorf("popup %q not found", labelHint)
+	}
+	defer popup.Release()
+	return popup.SelectMenuItem(value)
+}
+
+// typeIntoSearchField finds the search/filter text field in the template
+// chooser sheet and types the template name into it.
+func typeIntoSearchField(sheet *axuiautomation.Element, text string) error {
+	// Retry finding the search field — it may take a moment to appear.
+	var tf *axuiautomation.Element
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		tf = sheet.Descendants().ByRole("AXSearchField").First()
+		if tf != nil {
+			break
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	if tf == nil {
+		return fmt.Errorf("search field not found")
+	}
+	defer tf.Release()
+	if err := tf.Click(); err != nil {
+		return fmt.Errorf("click search field: %w", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	return tf.TypeText(text)
+}
+
+// selectPlatformFilter clicks the first platform row in the Xcode template
+// chooser sidebar so the template grid populates. Tries "iOS" first, then
+// falls back to the first available row.
+func selectPlatformFilter(sheet *axuiautomation.Element) {
+	// The sidebar is an AXOutline or AXTable on the left side.
+	for _, role := range []string{"AXOutline", "AXTable"} {
+		outline := sheet.Descendants().ByRole(role).First()
+		if outline == nil {
+			continue
+		}
+		// Try clicking "iOS" row first.
+		if row := outline.Descendants().ByRole("AXRow").ByTitle("iOS").First(); row != nil {
+			_ = row.Click()
+			row.Release()
+			outline.Release()
+			return
+		}
+		// Fall back to first non-empty row.
+		if row := outline.Descendants().ByRole("AXRow").Matching(func(e *axuiautomation.Element) bool {
+			return e.Title() != ""
+		}).First(); row != nil {
+			_ = row.Click()
+			row.Release()
+			outline.Release()
+			return
+		}
+		outline.Release()
+	}
+}
+
+// ensureXcodeProjectNodeSelected clicks the root .xcodeproj/.xcworkspace node
+// in the Project Navigator so that File > New > Target... is enabled.
+func ensureXcodeProjectNodeSelected(app *axuiautomation.Application) {
+	win := app.Windows().First()
+	if win == nil {
+		return
+	}
+	defer win.Release()
+	outline := win.Descendants().ByRole("AXOutline").First()
+	if outline == nil {
+		return
+	}
+	defer outline.Release()
+	row := outline.Descendants().ByRole("AXRow").Matching(func(e *axuiautomation.Element) bool {
+		t := e.Title()
+		return strings.HasSuffix(t, ".xcodeproj") || strings.HasSuffix(t, ".xcworkspace")
+	}).First()
+	if row == nil {
+		row = outline.Descendants().ByRole("AXRow").First()
+	}
+	if row != nil {
+		_ = row.Click()
+		row.Release()
+	}
+}
+
+func dismissActivateScheme(app *axuiautomation.Application) {
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, sheet := range app.Sheets().AllElements() {
+			if btn := sheet.Buttons().ByTitle("Activate").First(); btn != nil {
+				_ = btn.Click()
+				return
+			}
+			if btn := sheet.Buttons().ByTitle("Don't Activate").First(); btn != nil {
+				_ = btn.Click()
+				return
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
