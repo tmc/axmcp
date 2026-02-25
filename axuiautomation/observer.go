@@ -7,7 +7,6 @@ import (
 	"unsafe"
 
 	"github.com/ebitengine/purego"
-	"github.com/tmc/appledocs/generated/applicationservices"
 	"github.com/tmc/appledocs/generated/corefoundation"
 )
 
@@ -41,7 +40,7 @@ type ObserverHandler func(event ObserverEvent)
 
 // Observer provides event-based waiting for UI state changes.
 type Observer struct {
-	ref      applicationservices.AXObserverRef
+	ref      AXObserverRef
 	app      *Application
 	pid      int32
 	runLoop  *runLoopHelper
@@ -74,8 +73,8 @@ func NewObserver(app *Application) (*Observer, error) {
 	// Create the AXObserver
 	// Note: We need to use a callback-based approach here
 	// For now, we'll use polling as a simpler fallback
-	var ref applicationservices.AXObserverRef
-	err := applicationservices.AXObserverCreate(app.pid, getObserverCallback(), &ref)
+	var ref AXObserverRef
+	err := AXObserverCreate(app.pid, getObserverCallback(), &ref)
 	if int(err) != axErrorSuccess {
 		cancel()
 		return nil, axErrorToGo(err)
@@ -84,7 +83,7 @@ func NewObserver(app *Application) (*Observer, error) {
 	obs.ref = ref
 
 	// Add the observer's run loop source to the main run loop
-	source := applicationservices.AXObserverGetRunLoopSource(ref)
+	source := AXObserverGetRunLoopSource(ref)
 	if source != 0 {
 		obs.runLoop.addSource(uintptr(source))
 	}
@@ -104,15 +103,15 @@ var (
 )
 
 // getObserverCallback returns the C function pointer for the observer callback.
-func getObserverCallback() applicationservices.AXObserverCallback {
+func getObserverCallback() AXObserverCallback {
 	observerCallbackOnce.Do(func() {
 		// Create a purego callback
 		// The callback signature is: void (AXObserverRef, AXUIElementRef, CFStringRef, void*)
 		callback := func(observer uintptr, element uintptr, notification uintptr, refcon uintptr) {
 			// Get the PID from the observer
 			var pid int32
-			ref := applicationservices.AXUIElementRef(element)
-			applicationservices.AXUIElementGetPid(ref, &pid)
+			ref := AXUIElementRef(element)
+			AXUIElementGetPid(ref, &pid)
 
 			// Find the registered observer
 			observerRegistryMu.RLock()
@@ -146,7 +145,7 @@ func getObserverCallback() applicationservices.AXObserverCallback {
 		observerCallbackPtr = unsafe.Pointer(purego.NewCallback(callback))
 	})
 
-	return applicationservices.AXObserverCallback(observerCallbackPtr)
+	return AXObserverCallback(observerCallbackPtr)
 }
 
 func registerObserver(obs *Observer) {
@@ -168,7 +167,7 @@ func (o *Observer) OnNotification(name string, element *Element, handler Observe
 	}
 
 	// Register with AXObserver
-	err := applicationservices.AXObserverAddNotification(o.ref, element.ref, axAttr(name), nil)
+	err := AXObserverAddNotification(o.ref, element.ref, axAttr(name), nil)
 	if int(err) != axErrorSuccess {
 		return axErrorToGo(err)
 	}

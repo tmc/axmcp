@@ -8,8 +8,8 @@ import (
 	"unsafe"
 
 	"github.com/ebitengine/purego"
-	"github.com/tmc/appledocs/generated/applicationservices"
 	"github.com/tmc/appledocs/generated/corefoundation"
+	"github.com/tmc/appledocs/generated/foundation"
 )
 
 // AX error codes
@@ -41,9 +41,7 @@ const (
 )
 
 // CFString encoding
-const (
-	cfStringEncodingUTF8 corefoundation.CFStringEncoding = 0x08000100
-)
+var cfStringEncodingUTF8 = unsafe.Pointer(uintptr(0x08000100))
 
 // CGEvent constants
 const (
@@ -73,8 +71,8 @@ var (
 	ErrInvalidElement    = errors.New("invalid UI element")
 )
 
-// axErrorToGo converts an applicationservices.AXError to a Go error
-func axErrorToGo(err applicationservices.AXError) error {
+// axErrorToGo converts an AXError to a Go error
+func axErrorToGo(err AXError) error {
 	code := int(err)
 	if code == axErrorSuccess {
 		return nil
@@ -148,9 +146,8 @@ func (c *stringCache) get(s string) uintptr {
 	}
 
 	cStr := append([]byte(s), 0)
-	// Correct: pass slice directly
-	ref := corefoundation.CFStringCreateWithCString(0, cStr, cfStringEncodingUTF8)
-	if ref != 0 {
+	ref := corefoundation.CFStringCreateWithCString(0, &cStr[0], cfStringEncodingUTF8)
+	if ref != nil {
 		c.cache[s] = uintptr(ref)
 	}
 	return uintptr(ref)
@@ -192,6 +189,7 @@ type Rect struct {
 // CGEvent functions
 var (
 	cgEventCreateMouseEvent     func(source uintptr, mouseType int32, x, y float64, button int32) uintptr
+	cgEventCreateScrollWheelEvt func(source uintptr, units int32, wheelCount uint32, wheel1, wheel2, wheel3 int32) uintptr
 	cgEventPost                 func(tap int32, event uintptr)
 	cgEventSetIntegerValueField func(event uintptr, field uint32, value int64)
 	cgEventCreate               func(source uintptr) uintptr
@@ -210,6 +208,7 @@ func initCGEvents() {
 		}
 
 		purego.RegisterLibFunc(&cgEventCreateMouseEvent, libCG, "CGEventCreateMouseEvent")
+		purego.RegisterLibFunc(&cgEventCreateScrollWheelEvt, libCG, "CGEventCreateScrollWheelEvent")
 		purego.RegisterLibFunc(&cgEventPost, libCG, "CGEventPost")
 		purego.RegisterLibFunc(&cgEventSetIntegerValueField, libCG, "CGEventSetIntegerValueField")
 		purego.RegisterLibFunc(&cgEventCreate, libCG, "CGEventCreate")
@@ -465,13 +464,63 @@ func initCFBoolean() {
 	})
 }
 
+// SpinRunLoop briefly spins the current thread's CFRunLoop to allow pending
+// accessibility IPC replies to be delivered. Many AX attributes (notably
+// AXMenuBar) require at least one run-loop iteration to return a value in
+// processes that do not otherwise run a persistent run loop (e.g. CLI tools).
+func SpinRunLoop(d time.Duration) {
+	initCFRunLoop()
+	if !cfRunLoopInitialized {
+		return
+	}
+	cfRunLoopRunInMode(kCFRunLoopDefaultMode, d.Seconds(), false)
+}
+
+// SpinMainRunLoop briefly runs the NSRunLoop on the main thread for the given
+// duration. Unlike SpinRunLoop (which only pumps CFRunLoop), this also drains
+// the GCD main queue, so DispatchMainSafe callbacks and AppKit UI events are
+// processed. Must be called from the main OS thread.
+func SpinMainRunLoop(d time.Duration) {
+	deadline := foundation.GetNSDateClass().Alloc().InitWithTimeIntervalSinceNow(d.Seconds())
+	foundation.GetNSRunLoopClass().MainRunLoop().RunUntilDate(deadline)
+}
+
+// cfStringTypeID holds the CFTypeID for CFString, used to guard cfStringToGo.
+var (
+	cfStringTypeID    uintptr
+	cfGetTypeID       func(uintptr) uintptr
+	cfStringGetTypeID func() uintptr
+	cfTypeIDInitOnce  sync.Once
+)
+
+func initCFTypeID() {
+	cfTypeIDInitOnce.Do(func() {
+		lib, err := purego.Dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", purego.RTLD_GLOBAL)
+		if err != nil {
+			return
+		}
+		purego.RegisterLibFunc(&cfGetTypeID, lib, "CFGetTypeID")
+		purego.RegisterLibFunc(&cfStringGetTypeID, lib, "CFStringGetTypeID")
+		cfStringTypeID = cfStringGetTypeID()
+	})
+}
+
 // String conversion helpers
 func cfStringToGo(cfStr uintptr) string {
 	if cfStr == 0 {
 		return ""
 	}
 
-	length := corefoundation.CFStringGetLength(cfStr)
+	// Guard against non-string CF types (e.g. CFNumber) that would crash.
+	initCFTypeID()
+	if cfGetTypeID != nil && cfStringGetTypeID != nil {
+		if cfGetTypeID(cfStr) != cfStringTypeID {
+			return ""
+		}
+	}
+
+	ref := corefoundation.CFStringRef(unsafe.Pointer(cfStr))
+	length := corefoundation.CFStringGetLength(ref)
 	if length == 0 {
 		return ""
 	}
@@ -479,7 +528,7 @@ func cfStringToGo(cfStr uintptr) string {
 	bufSize := length*4 + 1
 	buf := make([]byte, bufSize)
 
-	result := corefoundation.CFStringGetCString(cfStr, buf, int(bufSize), cfStringEncodingUTF8)
+	result := corefoundation.CFStringGetCString(ref, &buf[0], int(bufSize), cfStringEncodingUTF8)
 	if !result {
 		return ""
 	}
@@ -511,76 +560,76 @@ func cfArrayToSlice(cfArray uintptr) []uintptr {
 }
 
 // AX attribute helpers
-func getAXAttributeString(element applicationservices.AXUIElementRef, attrName string) string {
-	var value corefoundation.CFTypeRef
-	err := applicationservices.AXUIElementCopyAttributeValue(element, axAttr(attrName), &value)
+func getAXAttributeString(element AXUIElementRef, attrName string) string {
+	var value uintptr
+	err := AXUIElementCopyAttributeValue(element, axAttr(attrName), &value)
 	if int(err) != axErrorSuccess || value == 0 {
 		return ""
 	}
-	defer corefoundation.CFRelease(value)
+	defer corefoundation.CFRelease(corefoundation.CFTypeRef(unsafe.Pointer(value)))
 
-	return cfStringToGo(uintptr(value))
+	return cfStringToGo(value)
 }
 
-func getAXAttributeBool(element applicationservices.AXUIElementRef, attrName string) bool {
+func getAXAttributeBool(element AXUIElementRef, attrName string) bool {
 	initCFBoolean()
 
-	var value corefoundation.CFTypeRef
-	err := applicationservices.AXUIElementCopyAttributeValue(element, axAttr(attrName), &value)
+	var value uintptr
+	err := AXUIElementCopyAttributeValue(element, axAttr(attrName), &value)
 	if int(err) != axErrorSuccess || value == 0 {
 		return false
 	}
-	defer corefoundation.CFRelease(value)
+	defer corefoundation.CFRelease(corefoundation.CFTypeRef(unsafe.Pointer(value)))
 
 	if cfBooleanGetValue == nil {
 		return false
 	}
-	return cfBooleanGetValue(uintptr(value))
+	return cfBooleanGetValue(value)
 }
 
-func getAXAttributePoint(element applicationservices.AXUIElementRef, attrName string) (Point, bool) {
-	var value corefoundation.CFTypeRef
-	err := applicationservices.AXUIElementCopyAttributeValue(element, axAttr(attrName), &value)
+func getAXAttributePoint(element AXUIElementRef, attrName string) (Point, bool) {
+	var value uintptr
+	err := AXUIElementCopyAttributeValue(element, axAttr(attrName), &value)
 	if int(err) != axErrorSuccess || value == 0 {
 		return Point{}, false
 	}
-	defer corefoundation.CFRelease(value)
+	defer corefoundation.CFRelease(corefoundation.CFTypeRef(unsafe.Pointer(value)))
 
 	var point Point
-	if applicationservices.AXValueGetValue(applicationservices.AXValueRef(value), applicationservices.AXValueType(axValueTypeCGPoint), unsafe.Pointer(&point)) {
+	if AXValueGetValue(AXValueRef(value), AXValueType(axValueTypeCGPoint), unsafe.Pointer(&point)) {
 		return point, true
 	}
 	return Point{}, false
 }
 
-func getAXAttributeSize(element applicationservices.AXUIElementRef, attrName string) (Size, bool) {
-	var value corefoundation.CFTypeRef
-	err := applicationservices.AXUIElementCopyAttributeValue(element, axAttr(attrName), &value)
+func getAXAttributeSize(element AXUIElementRef, attrName string) (Size, bool) {
+	var value uintptr
+	err := AXUIElementCopyAttributeValue(element, axAttr(attrName), &value)
 	if int(err) != axErrorSuccess || value == 0 {
 		return Size{}, false
 	}
-	defer corefoundation.CFRelease(value)
+	defer corefoundation.CFRelease(corefoundation.CFTypeRef(unsafe.Pointer(value)))
 
 	var size Size
-	if applicationservices.AXValueGetValue(applicationservices.AXValueRef(value), applicationservices.AXValueType(axValueTypeCGSize), unsafe.Pointer(&size)) {
+	if AXValueGetValue(AXValueRef(value), AXValueType(axValueTypeCGSize), unsafe.Pointer(&size)) {
 		return size, true
 	}
 	return Size{}, false
 }
 
-func getAXAttributeElements(element applicationservices.AXUIElementRef, attrName string) []applicationservices.AXUIElementRef {
-	var value corefoundation.CFTypeRef
-	err := applicationservices.AXUIElementCopyAttributeValue(element, axAttr(attrName), &value)
+func getAXAttributeElements(element AXUIElementRef, attrName string) []AXUIElementRef {
+	var value uintptr
+	err := AXUIElementCopyAttributeValue(element, axAttr(attrName), &value)
 	if int(err) != axErrorSuccess || value == 0 {
 		return nil
 	}
-	defer corefoundation.CFRelease(value)
+	defer corefoundation.CFRelease(corefoundation.CFTypeRef(unsafe.Pointer(value)))
 
-	refs := cfArrayToSlice(uintptr(value))
-	result := make([]applicationservices.AXUIElementRef, len(refs))
+	refs := cfArrayToSlice(value)
+	result := make([]AXUIElementRef, len(refs))
 	for i, ref := range refs {
-		corefoundation.CFRetain(corefoundation.CFTypeRef(ref))
-		result[i] = applicationservices.AXUIElementRef(ref)
+		corefoundation.CFRetain(corefoundation.CFTypeRef(unsafe.Pointer(ref)))
+		result[i] = AXUIElementRef(ref)
 	}
 	return result
 }
@@ -588,7 +637,6 @@ func getAXAttributeElements(element applicationservices.AXUIElementRef, attrName
 // Keyboard event functions
 var (
 	cgEventCreateKeyboardEvent      func(source uintptr, keycode uint16, keyDown bool) uintptr
-	cgEventKeyboardGetUnicodeString func(event uintptr, bufferLength uint32, actualLength *uint32, unicodeString *uint16)
 	cgEventKeyboardSetUnicodeString func(event uintptr, length uint32, unicodeString *uint16)
 	cgEventSetFlags                 func(event uintptr, flags uint64)
 	cgEventGetFlags                 func(event uintptr) uint64
@@ -607,9 +655,16 @@ const (
 
 // Key codes
 const (
-	keyCodeEscape = 0x35
-	keyCodeG      = 0x05
-	keyCodeReturn = 0x24
+	keyCodeEscape     = 0x35
+	keyCodeReturn     = 0x24
+	keyCodeTab        = 0x30
+	keyCodeDelete     = 0x33
+	keyCodeArrowUp    = 0x7E
+	keyCodeArrowDown  = 0x7D
+	keyCodeArrowLeft  = 0x7B
+	keyCodeArrowRight = 0x7C
+	keyCodeN          = 0x2D
+	keyCodeG          = 0x05
 )
 
 func initKeyboardEvents() {
@@ -622,6 +677,7 @@ func initKeyboardEvents() {
 		}
 
 		purego.RegisterLibFunc(&cgEventCreateKeyboardEvent, libCG, "CGEventCreateKeyboardEvent")
+		purego.RegisterLibFunc(&cgEventKeyboardSetUnicodeString, libCG, "CGEventKeyboardSetUnicodeString")
 		purego.RegisterLibFunc(&cgEventSetFlags, libCG, "CGEventSetFlags")
 		purego.RegisterLibFunc(&cgEventGetFlags, libCG, "CGEventGetFlags")
 
@@ -727,4 +783,140 @@ func SendKeyCombo(keyCode uint16, shift, control, option, command bool) error {
 // SendCmdShiftG sends Command+Shift+G (Go to Folder in save dialogs).
 func SendCmdShiftG() error {
 	return SendKeyCombo(keyCodeG, true, false, false, true)
+}
+
+// SendCmdN sends Command+N (New file/item).
+func SendCmdN() error {
+	return SendKeyCombo(keyCodeN, false, false, false, true)
+}
+
+// SendTab sends a Tab key press.
+func SendTab() error {
+	return SendKeyCombo(keyCodeTab, false, false, false, false)
+}
+
+// SendShiftTab sends Shift+Tab.
+func SendShiftTab() error {
+	return SendKeyCombo(keyCodeTab, true, false, false, false)
+}
+
+// SendDelete sends a Delete (backspace) key press.
+func SendDelete() error {
+	return SendKeyCombo(keyCodeDelete, false, false, false, false)
+}
+
+// SendArrowUp sends an Up arrow key press.
+func SendArrowUp() error {
+	return SendKeyCombo(keyCodeArrowUp, false, false, false, false)
+}
+
+// SendArrowDown sends a Down arrow key press.
+func SendArrowDown() error {
+	return SendKeyCombo(keyCodeArrowDown, false, false, false, false)
+}
+
+// SendArrowLeft sends a Left arrow key press.
+func SendArrowLeft() error {
+	return SendKeyCombo(keyCodeArrowLeft, false, false, false, false)
+}
+
+// SendArrowRight sends a Right arrow key press.
+func SendArrowRight() error {
+	return SendKeyCombo(keyCodeArrowRight, false, false, false, false)
+}
+
+// TypeText types text into the currently focused element by sending keyboard events.
+// It supports printable ASCII characters. Use Element.TypeText for element-targeted input.
+func TypeText(text string) error {
+	initKeyboardEvents()
+	if !keyboardEventsInitialized {
+		return errors.New("keyboard events not initialized")
+	}
+
+	for _, ch := range text {
+		if err := typeChar(ch); err != nil {
+			return fmt.Errorf("typing %q: %w", ch, err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return nil
+}
+
+// typeChar sends a single character as keyboard events using CGEventKeyboardSetUnicodeString.
+func typeChar(ch rune) error {
+	initKeyboardEvents()
+
+	// Create a key-down event with key code 0; we'll set unicode string directly.
+	keyDown := cgEventCreateKeyboardEvent(0, 0, true)
+	if keyDown == 0 {
+		return errors.New("failed to create key down event")
+	}
+
+	// Set the unicode character directly.
+	u16 := uint16(ch)
+	cgEventKeyboardSetUnicodeString(keyDown, 1, &u16)
+	cgEventPost(cgHIDEventTap, keyDown)
+	corefoundation.CFRelease(corefoundation.CFTypeRef(keyDown))
+
+	time.Sleep(5 * time.Millisecond)
+
+	keyUp := cgEventCreateKeyboardEvent(0, 0, false)
+	if keyUp == 0 {
+		return errors.New("failed to create key up event")
+	}
+	cgEventKeyboardSetUnicodeString(keyUp, 1, &u16)
+	cgEventPost(cgHIDEventTap, keyUp)
+	corefoundation.CFRelease(corefoundation.CFTypeRef(keyUp))
+
+	return nil
+}
+
+// ScrollDirection specifies the direction to scroll.
+type ScrollDirection int
+
+const (
+	ScrollUp ScrollDirection = iota
+	ScrollDown
+	ScrollLeft
+	ScrollRight
+)
+
+// cgScrollWheel posts a CGEvent scroll wheel event at the given position.
+// units: 0 = pixel, 1 = line. amount: positive scrolls up/left, negative down/right.
+func cgScrollWheel(x, y int, direction ScrollDirection, amount int) error {
+	initCGEvents()
+	if !cgEventsInitialized || cgEventCreateScrollWheelEvt == nil {
+		return errors.New("CGEvents not initialized")
+	}
+
+	// CGEventCreateScrollWheelEvent: wheel1=vertical (positive=up), wheel2=horizontal (positive=left)
+	var wheel1, wheel2 int32
+	switch direction {
+	case ScrollUp:
+		wheel1 = int32(amount)
+	case ScrollDown:
+		wheel1 = -int32(amount)
+	case ScrollLeft:
+		wheel2 = int32(amount)
+	case ScrollRight:
+		wheel2 = -int32(amount)
+	}
+
+	// Move mouse to target position first so scroll hits the right element
+	oldX, oldY := getCurrentMousePosition()
+	cgWarpMouseCursorPosition(float64(x), float64(y))
+	time.Sleep(10 * time.Millisecond)
+
+	// kCGScrollEventUnitLine = 1
+	evt := cgEventCreateScrollWheelEvt(0, 1, 2, wheel1, wheel2, 0)
+	if evt == 0 {
+		cgWarpMouseCursorPosition(oldX, oldY)
+		return errors.New("failed to create scroll wheel event")
+	}
+	cgEventPost(cgHIDEventTap, evt)
+	corefoundation.CFRelease(corefoundation.CFTypeRef(evt))
+
+	time.Sleep(10 * time.Millisecond)
+	cgWarpMouseCursorPosition(oldX, oldY)
+	return nil
 }

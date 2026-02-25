@@ -1,6 +1,7 @@
 package axuiautomation
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -248,6 +249,25 @@ func (e *Element) DoubleClick() error {
 		return ErrElementNotFound
 	}
 	return cgEventDoubleClick(x, y)
+}
+
+// Hover moves the mouse cursor to the center of the element without clicking.
+func (e *Element) Hover() error {
+	if e == nil || e.ref == 0 {
+		return ErrInvalidElement
+	}
+
+	x, y := e.Center()
+	if x == 0 && y == 0 {
+		return ErrElementNotFound
+	}
+	// Use native CGWarpMouseCursorPosition
+	initCGEvents()
+	if !cgEventsInitialized {
+		return errors.New("CGEvents not initialized")
+	}
+	cgWarpMouseCursorPosition(float64(x), float64(y))
+	return nil
 }
 
 // PerformAction performs a named accessibility action on the element.
