@@ -1,5 +1,9 @@
 *.mcp
-
-xc
-xcmcp
 *.png
+
+# binaries
+/ax
+/axmcp
+/ascript
+/xc
+/xcmcp
