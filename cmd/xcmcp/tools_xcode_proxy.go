@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -16,7 +18,9 @@ import (
 )
 
 // xcodeProxy manages a child mcpbridge process and client session.
+// It automatically reconnects when the connection is lost (e.g. Xcode killed).
 type xcodeProxy struct {
+	mu      sync.Mutex
 	client  *mcp.Client
 	session *mcp.ClientSession
 }
@@ -110,6 +114,97 @@ func registerXcodeTools(s *mcp.Server, proxy *xcodeProxy, prefix string) (int, e
 	return n, nil
 }
 
+// isConnectionError returns true if the error indicates the mcpbridge
+// connection is dead (EOF, closed, broken pipe, etc.).
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "EOF") ||
+		strings.Contains(msg, "closed") ||
+		strings.Contains(msg, "broken pipe")
+}
+
+// reconnect tears down the existing session and establishes a new one.
+// Caller must hold proxy.mu.
+func (proxy *xcodeProxy) reconnect(ctx context.Context) error {
+	if proxy.session != nil {
+		proxy.session.Close()
+	}
+	slog.Info("reconnecting to mcpbridge")
+
+	drainXcodeAllowDialogs()
+
+	connectCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	cmd := exec.Command("xcrun", "mcpbridge")
+	if v := os.Getenv("MCP_XCODE_PID"); v != "" {
+		cmd.Env = append(os.Environ(), "MCP_XCODE_PID="+v)
+	}
+	if v := os.Getenv("MCP_XCODE_SESSION_ID"); v != "" {
+		cmd.Env = append(os.Environ(), "MCP_XCODE_SESSION_ID="+v)
+	}
+	cmd.Stderr = os.Stderr
+
+	transport := &mcp.CommandTransport{Command: cmd}
+	client := mcp.NewClient(&mcp.Implementation{
+		Name:    "xcmcp-xcode-proxy",
+		Version: "0.1.0",
+	}, nil)
+
+	allowCtx, allowCancel := context.WithCancel(ctx)
+	go autoAllowXcodeDialog(allowCtx)
+	time.Sleep(500 * time.Millisecond)
+
+	session, err := client.Connect(connectCtx, transport, nil)
+	time.AfterFunc(3*time.Second, allowCancel)
+	if err != nil {
+		allowCancel()
+		return fmt.Errorf("reconnect to mcpbridge: %w", err)
+	}
+	proxy.client = client
+	proxy.session = session
+	slog.Info("mcpbridge reconnected")
+	return nil
+}
+
+// callTool forwards a tool call, reconnecting once on connection errors.
+func (proxy *xcodeProxy) callTool(ctx context.Context, name string, args map[string]any) (*mcp.CallToolResult, error) {
+	proxy.mu.Lock()
+	session := proxy.session
+	proxy.mu.Unlock()
+
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      name,
+		Arguments: args,
+	})
+	if err == nil {
+		return result, nil
+	}
+	if !isConnectionError(err) {
+		return nil, fmt.Errorf("xcode tool error: %w", err)
+	}
+
+	// Connection lost — attempt one reconnect.
+	proxy.mu.Lock()
+	defer proxy.mu.Unlock()
+
+	// Only reconnect if the session hasn't already been replaced by
+	// another goroutine.
+	if proxy.session == session {
+		if reconnErr := proxy.reconnect(ctx); reconnErr != nil {
+			return nil, fmt.Errorf("xcode unavailable (Xcode may not be running): %w", reconnErr)
+		}
+	}
+
+	return proxy.session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      name,
+		Arguments: args,
+	})
+}
+
 // makeProxyHandler returns a ToolHandler that forwards calls to the mcpbridge session.
 func makeProxyHandler(proxy *xcodeProxy, toolName string) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -122,14 +217,11 @@ func makeProxyHandler(proxy *xcodeProxy, toolName string) mcp.ToolHandler {
 				}, nil
 			}
 		}
-		result, err := proxy.session.CallTool(ctx, &mcp.CallToolParams{
-			Name:      toolName,
-			Arguments: args,
-		})
+		result, err := proxy.callTool(ctx, toolName, args)
 		if err != nil {
 			return &mcp.CallToolResult{
 				IsError: true,
-				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("xcode tool error: %v", err)}},
+				Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}},
 			}, nil
 		}
 		return result, nil
@@ -238,11 +330,9 @@ func registerBuildErrorResource(s *mcp.Server, proxy *xcodeProxy) {
 
 // fetchBuildErrors calls GetBuildLog for all open tabs and returns the combined result.
 func fetchBuildErrors(ctx context.Context, proxy *xcodeProxy) (string, error) {
-	// First discover open windows/tabs via XcodeListWindows if available,
-	// otherwise try a well-known tab identifier.
-	result, err := proxy.session.CallTool(ctx, &mcp.CallToolParams{
-		Name:      "GetBuildLog",
-		Arguments: map[string]any{"tabIdentifier": "windowtab1", "severity": "error"},
+	result, err := proxy.callTool(ctx, "GetBuildLog", map[string]any{
+		"tabIdentifier": "windowtab1",
+		"severity":      "error",
 	})
 	if err != nil {
 		return "", fmt.Errorf("get build log: %w", err)
