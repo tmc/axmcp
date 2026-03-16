@@ -13,8 +13,10 @@ import (
 	"github.com/ebitengine/purego"
 	"github.com/tmc/apple/appkit"
 	"github.com/tmc/apple/corefoundation"
+	"github.com/tmc/apple/coregraphics"
 	"github.com/tmc/apple/dispatch"
 	"github.com/tmc/apple/objc"
+	"github.com/tmc/apple/screencapturekit"
 )
 
 // Manual AX Bindings
@@ -174,35 +176,36 @@ func uiIsTrustedFresh() bool {
 	return axIsProcessTrustedWithOptions(dict)
 }
 
-func uiOpenAccessibilityPrefs() {
-	exec.Command("open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility").Start()
+// uiBundleID reads CFBundleIdentifier from the running app bundle's Info.plist,
+// falling back to "dev.tmc.<execname>".
+func uiBundleID() string {
+	exe, err := os.Executable()
+	if err == nil {
+		plist := filepath.Join(filepath.Dir(filepath.Dir(exe)), "Info.plist")
+		out, err := exec.Command("defaults", "read", plist, "CFBundleIdentifier").Output()
+		if err == nil {
+			if id := strings.TrimSpace(string(out)); id != "" {
+				return id
+			}
+		}
+	}
+	return "dev.tmc." + uiExecName()
 }
 
-func uiResetTCC() {
-	exe, _ := os.Executable()
-	plist := filepath.Join(filepath.Dir(filepath.Dir(exe)), "Info.plist")
-	out, err := exec.Command("defaults", "read", plist, "CFBundleIdentifier").Output()
-	bundleID := ""
-	if err == nil {
-		bundleID = strings.TrimSpace(string(out))
+func uiRequestPermission() {
+	// Reset stale TCC entry before re-prompting.
+	exec.Command("tccutil", "reset", "Accessibility", uiBundleID()).Run()
+
+	if axIsProcessTrustedWithOptions == nil {
+		return
 	}
-	if bundleID == "" {
-		bundleID = "dev.tmc." + uiExecName()
-	}
-	exec.Command("tccutil", "reset", "Accessibility", bundleID).Run()
-	// Re-query with prompt=false to re-register the entry in TCC without
-	// triggering the system universalAccessAuthWarn popup. This causes macOS
-	// to write a "denied" row back into the TCC database so it appears in
-	// System Settings > Privacy & Security > Accessibility for the user to
-	// toggle on.
-	if axIsProcessTrustedWithOptions != nil {
-		key := MkString("AXTrustedCheckOptionPrompt")
-		val := objc.Send[uintptr](objc.ID(objc.GetClass("NSNumber")), objc.Sel("numberWithBool:"), false)
-		dict := objc.Send[uintptr](objc.ID(objc.GetClass("NSDictionary")), objc.Sel("dictionaryWithObject:forKey:"), val, key)
-		axIsProcessTrustedWithOptions(dict)
-	}
-	uiOpenAccessibilityPrefs()
+	key := MkString("AXTrustedCheckOptionPrompt")
+	val := objc.Send[uintptr](objc.ID(objc.GetClass("NSNumber")), objc.Sel("numberWithBool:"), true)
+	dict := objc.Send[uintptr](objc.ID(objc.GetClass("NSDictionary")), objc.Sel("dictionaryWithObject:forKey:"), val, key)
+	axIsProcessTrustedWithOptions(dict)
 }
+
+
 
 func uiBindButtonAction(btn appkit.NSButton, fn func()) {
 	btn.SetActionHandler(fn)
@@ -214,6 +217,11 @@ func uiMakeButton(title string, frame corefoundation.CGRect, fn func()) appkit.N
 	btn.SetBezelStyle(appkit.NSBezelStyleAccessoryBar)
 	uiBindButtonAction(btn, fn)
 	return btn
+}
+
+// IsTrusted reports whether the process has Accessibility permission.
+func IsTrusted() bool {
+	return axIsProcessTrusted != nil && axIsProcessTrusted()
 }
 
 func CheckTrust() {
@@ -229,23 +237,60 @@ func CheckTrust() {
 	})
 }
 
-func showWaitingForPermissionWindow() {
+// IsScreenRecordingTrusted checks if screen recording permission is granted.
+func IsScreenRecordingTrusted() bool {
+	scClass := screencapturekit.GetSCShareableContentClass()
+	done := make(chan bool)
+	handler := func(content *screencapturekit.SCShareableContent, err error) {
+		done <- content != nil && err == nil
+	}
+	scClass.GetShareableContentExcludingDesktopWindowsOnScreenWindowsOnlyCompletionHandler(true, true, handler)
+	select {
+	case result := <-done:
+		return result
+	case <-time.After(2 * time.Second):
+		return false
+	}
+}
+
+func requestScreenCapture() {
+	// Reset stale TCC entry before re-prompting.
+	exec.Command("tccutil", "reset", "ScreenCapture", uiBundleID()).Run()
+	coregraphics.CGRequestScreenCaptureAccess()
+}
+
+var screenCaptureOnce sync.Once
+
+// CheckScreenCapture checks if the process has Screen Recording permission and,
+// if not, shows a floating HIG-style window. It polls until permission is granted,
+// then briefly shows a green checkmark before closing.
+func CheckScreenCapture() {
+	screenCaptureOnce.Do(func() {
+		if IsScreenRecordingTrusted() {
+			return
+		}
+		showScreenRecordingPermissionWindow()
+	})
+}
+
+func showScreenRecordingPermissionWindow() {
 	dispatch.MainQueue().Async(func() {
 		app := appkit.GetNSApplicationClass().SharedApplication()
 		app.SetActivationPolicy(appkit.NSApplicationActivationPolicyAccessory)
 
 		const (
-			w         = 400.0
-			h         = 148.0
-			padding   = 16.0
-			spinSz    = 24.0
-			btnH      = 22.0
-			btnGap    = 6.0
-			titleH    = 34.0
-			subtitleH = 38.0
+			w       = 420.0
+			h       = 160.0
+			pad     = 20.0
+			iconSz  = 48.0
+			iconPad = 14.0
+			btnH    = 26.0
+			btnW    = 155.0
+			btnPadB = 14.0
 		)
 
 		name := uiExecName()
+		fontClass := appkit.GetNSFontClass()
 
 		win := appkit.NewWindowWithContentRectStyleMaskBackingDefer(
 			corefoundation.CGRect{Size: corefoundation.CGSize{Width: w, Height: h}},
@@ -253,14 +298,55 @@ func showWaitingForPermissionWindow() {
 			appkit.NSBackingStoreBuffered,
 			false,
 		)
-		win.SetTitle(name + " — Accessibility Permission Required")
+		win.SetTitle("")
 		win.SetLevel(appkit.FloatingWindowLevel)
 
 		content := appkit.NSViewFromID(win.ContentView().GetID())
 
-		// Spinner — left side, aligned with text area.
+		// Icon — video SF Symbol, top-left, sized like a macOS alert icon.
+		iconImg := appkit.NewImageWithSystemSymbolNameAccessibilityDescription(
+			"rectangle.inset.filled.and.person.filled", "Screen recording permission",
+		)
+		iconCfg := appkit.NewImageSymbolConfigurationWithPointSizeWeight(iconSz*0.5, appkit.NSFontWeights.Light)
+		iconImg = appkit.NSImageFromID(iconImg.ImageWithSymbolConfiguration(iconCfg).GetID())
+		iconView := appkit.NewImageViewWithFrame(corefoundation.CGRect{
+			Origin: corefoundation.CGPoint{X: pad, Y: h - pad - iconSz},
+			Size:   corefoundation.CGSize{Width: iconSz, Height: iconSz},
+		})
+		iconView.SetImage(iconImg)
+		content.AddSubview(iconView)
+
+		// Text area to the right of the icon.
+		textX := pad + iconSz + iconPad
+		textW := w - textX - pad
+
+		// Bold title.
+		titleLabel := appkit.NewTextFieldLabelWithString(
+			`"` + name + `.app" needs Screen Recording permission`,
+		)
+		titleLabel.SetFont(fontClass.BoldSystemFontOfSize(13))
+		titleLabel.SetFrame(corefoundation.CGRect{
+			Origin: corefoundation.CGPoint{X: textX, Y: h - pad - 20},
+			Size:   corefoundation.CGSize{Width: textW, Height: 20},
+		})
+		content.AddSubview(titleLabel)
+
+		// Informative text.
+		bodyLabel := appkit.NewTextFieldLabelWithString(
+			"Grant access in System Settings > Privacy & Security.",
+		)
+		bodyLabel.SetFont(fontClass.SystemFontOfSize(11))
+		bodyLabel.SetFrame(corefoundation.CGRect{
+			Origin: corefoundation.CGPoint{X: textX, Y: h - pad - 20 - 18},
+			Size:   corefoundation.CGSize{Width: textW, Height: 16},
+		})
+		content.AddSubview(bodyLabel)
+
+		// Spinner — small, inline, indicates waiting.
+		spinSz := 14.0
+		spinY := h - pad - 20 - 18 - 24
 		spinner := appkit.NewProgressIndicatorWithFrame(corefoundation.CGRect{
-			Origin: corefoundation.CGPoint{X: padding, Y: h - padding - spinSz - 4},
+			Origin: corefoundation.CGPoint{X: textX, Y: spinY},
 			Size:   corefoundation.CGSize{Width: spinSz, Height: spinSz},
 		})
 		spinner.SetStyle(appkit.NSProgressIndicatorStyleSpinning)
@@ -268,50 +354,206 @@ func showWaitingForPermissionWindow() {
 		spinner.StartAnimation(nil)
 		content.AddSubview(spinner)
 
-		labelX := padding + spinSz + padding
-		labelW := w - labelX - padding
-
-		// Bold title line.
-		titleLabel := appkit.NewTextFieldLabelWithString(
-			`"` + name + `.app" would like to control this computer using accessibility features.`,
-		)
-		titleLabel.SetFrame(corefoundation.CGRect{
-			Origin: corefoundation.CGPoint{X: labelX, Y: h - padding - titleH},
-			Size:   corefoundation.CGSize{Width: labelW, Height: titleH},
+		waitLabel := appkit.NewTextFieldLabelWithString("Waiting for permission…")
+		waitLabel.SetFont(fontClass.SystemFontOfSize(11))
+		waitLabel.SetFrame(corefoundation.CGRect{
+			Origin: corefoundation.CGPoint{X: textX + spinSz + 6, Y: spinY - 1},
+			Size:   corefoundation.CGSize{Width: textW - spinSz - 6, Height: 16},
 		})
-		content.AddSubview(titleLabel)
+		content.AddSubview(waitLabel)
 
-		// Secondary description.
-		subtitleLabel := appkit.NewTextFieldLabelWithString(
-			"Grant access in Privacy & Security settings, located in System Settings.",
-		)
-		subtitleLabel.SetFrame(corefoundation.CGRect{
-			Origin: corefoundation.CGPoint{X: labelX, Y: h - padding - titleH - subtitleH - 2},
-			Size:   corefoundation.CGSize{Width: labelW, Height: subtitleH},
+		// Single default button, right-aligned at the bottom.
+		btnY := btnPadB
+		primaryX := w - pad - btnW
+
+		requestBtn := uiMakeButton("Request Permission…", corefoundation.CGRect{
+			Origin: corefoundation.CGPoint{X: primaryX, Y: btnY},
+			Size:   corefoundation.CGSize{Width: btnW, Height: btnH},
+		}, func() {
+			win.SetLevel(appkit.NormalWindowLevel)
+			requestScreenCapture()
 		})
-		content.AddSubview(subtitleLabel)
-
-		// Two buttons side by side in the lower area.
-		halfW := (labelW - btnGap) / 2
-		openBtn := uiMakeButton("Open System Settings…", corefoundation.CGRect{
-			Origin: corefoundation.CGPoint{X: labelX, Y: padding},
-			Size:   corefoundation.CGSize{Width: halfW, Height: btnH},
-		}, uiOpenAccessibilityPrefs)
-		content.AddSubview(openBtn)
-
-		resetBtn := uiMakeButton("Reset TCC…", corefoundation.CGRect{
-			Origin: corefoundation.CGPoint{X: labelX + halfW + btnGap, Y: padding},
-			Size:   corefoundation.CGSize{Width: halfW, Height: btnH},
-		}, uiResetTCC)
-		content.AddSubview(resetBtn)
+		requestBtn.SetBezelStyle(appkit.NSBezelStylePush)
+		requestBtn.SetKeyEquivalent("\r")
+		content.AddSubview(requestBtn)
 
 		win.Center()
 		win.MakeKeyAndOrderFront(nil)
 		app.Activate()
 
-		// Poll on the main thread via time.AfterFunc + DispatchMainSafe so all
-		// ObjC calls (including uiIsTrustedFresh and UI mutations) stay on the
-		// main thread.
+		// Poll for trust on the main thread.
+		var pollTimer *time.Timer
+		var poll func()
+		poll = func() {
+			if !IsScreenRecordingTrusted() {
+				pollTimer = time.AfterFunc(500*time.Millisecond, func() {
+					dispatch.MainQueue().Async(poll)
+				})
+				return
+			}
+			// Permission granted — transition to success state.
+			spinner.StopAnimation(nil)
+			spinner.SetIsHidden(true)
+			waitLabel.SetIsHidden(true)
+			requestBtn.SetIsHidden(true)
+			bodyLabel.SetIsHidden(true)
+
+			// Resize window for compact success state.
+			const successH = 100.0
+			frame := win.Frame()
+			dy := frame.Size.Height - successH
+			frame.Origin.Y += dy
+			frame.Size.Height = successH
+			win.SetFrameDisplayAnimate(frame, true, true)
+
+			const checkSz = 32.0
+			checkBase := appkit.NewImageWithSystemSymbolNameAccessibilityDescription(
+				"checkmark.circle.fill", "Permission granted",
+			)
+			checkCfg := appkit.NewImageSymbolConfigurationWithPointSizeWeight(checkSz*0.6, appkit.NSFontWeights.Medium)
+			checkColorCfg := appkit.NewImageSymbolConfigurationWithHierarchicalColor(
+				appkit.GetNSColorClass().SystemGreen(),
+			)
+			checkFinalCfg := checkCfg.ConfigurationByApplyingConfiguration(checkColorCfg)
+			checkImg := appkit.NSImageFromID(checkBase.ImageWithSymbolConfiguration(checkFinalCfg).GetID())
+			iconView.SetImage(checkImg)
+
+			contentH := successH - 28.0
+			midY := contentH / 2.0
+			titleLabel.SetStringValue("Screen Recording permission granted.")
+			titleLabel.SetFrame(corefoundation.CGRect{
+				Origin: corefoundation.CGPoint{X: pad + checkSz + iconPad, Y: midY - 10},
+				Size:   corefoundation.CGSize{Width: textW, Height: 20},
+			})
+			iconView.SetFrame(corefoundation.CGRect{
+				Origin: corefoundation.CGPoint{X: pad, Y: midY - checkSz/2},
+				Size:   corefoundation.CGSize{Width: checkSz, Height: checkSz},
+			})
+
+			time.AfterFunc(1200*time.Millisecond, func() {
+				dispatch.MainQueue().Async(func() {
+					win.Close()
+				})
+			})
+		}
+
+		pollTimer = time.AfterFunc(500*time.Millisecond, func() {
+			dispatch.MainQueue().Async(poll)
+		})
+		_ = pollTimer
+	})
+}
+
+func showWaitingForPermissionWindow() {
+	dispatch.MainQueue().Async(func() {
+		app := appkit.GetNSApplicationClass().SharedApplication()
+		app.SetActivationPolicy(appkit.NSApplicationActivationPolicyAccessory)
+
+		const (
+			w       = 420.0
+			h       = 160.0
+			pad     = 20.0
+			iconSz  = 48.0
+			iconPad = 14.0
+			btnH    = 26.0
+			btnW    = 155.0
+			btnPadB = 14.0
+		)
+
+		name := uiExecName()
+		fontClass := appkit.GetNSFontClass()
+
+		win := appkit.NewWindowWithContentRectStyleMaskBackingDefer(
+			corefoundation.CGRect{Size: corefoundation.CGSize{Width: w, Height: h}},
+			appkit.NSWindowStyleMaskTitled,
+			appkit.NSBackingStoreBuffered,
+			false,
+		)
+		win.SetTitle("")
+		win.SetLevel(appkit.FloatingWindowLevel)
+
+		content := appkit.NSViewFromID(win.ContentView().GetID())
+
+		// Icon — lock.shield SF Symbol, top-left, sized like a macOS alert icon.
+		iconImg := appkit.NewImageWithSystemSymbolNameAccessibilityDescription(
+			"lock.shield", "Accessibility permission",
+		)
+		iconCfg := appkit.NewImageSymbolConfigurationWithPointSizeWeight(iconSz*0.5, appkit.NSFontWeights.Light)
+		iconImg = appkit.NSImageFromID(iconImg.ImageWithSymbolConfiguration(iconCfg).GetID())
+		iconView := appkit.NewImageViewWithFrame(corefoundation.CGRect{
+			Origin: corefoundation.CGPoint{X: pad, Y: h - pad - iconSz},
+			Size:   corefoundation.CGSize{Width: iconSz, Height: iconSz},
+		})
+		iconView.SetImage(iconImg)
+		content.AddSubview(iconView)
+
+		// Text area to the right of the icon.
+		textX := pad + iconSz + iconPad
+		textW := w - textX - pad
+
+		// Bold title.
+		titleLabel := appkit.NewTextFieldLabelWithString(
+			`"` + name + `.app" needs Accessibility permission`,
+		)
+		titleLabel.SetFont(fontClass.BoldSystemFontOfSize(13))
+		titleLabel.SetFrame(corefoundation.CGRect{
+			Origin: corefoundation.CGPoint{X: textX, Y: h - pad - 20},
+			Size:   corefoundation.CGSize{Width: textW, Height: 20},
+		})
+		content.AddSubview(titleLabel)
+
+		// Informative text.
+		bodyLabel := appkit.NewTextFieldLabelWithString(
+			"Grant access in System Settings > Privacy & Security.",
+		)
+		bodyLabel.SetFont(fontClass.SystemFontOfSize(11))
+		bodyLabel.SetFrame(corefoundation.CGRect{
+			Origin: corefoundation.CGPoint{X: textX, Y: h - pad - 20 - 18},
+			Size:   corefoundation.CGSize{Width: textW, Height: 16},
+		})
+		content.AddSubview(bodyLabel)
+
+		// Spinner — small, inline, indicates waiting.
+		spinSz := 14.0
+		spinY := h - pad - 20 - 18 - 24
+		spinner := appkit.NewProgressIndicatorWithFrame(corefoundation.CGRect{
+			Origin: corefoundation.CGPoint{X: textX, Y: spinY},
+			Size:   corefoundation.CGSize{Width: spinSz, Height: spinSz},
+		})
+		spinner.SetStyle(appkit.NSProgressIndicatorStyleSpinning)
+		spinner.SetIndeterminate(true)
+		spinner.StartAnimation(nil)
+		content.AddSubview(spinner)
+
+		waitLabel := appkit.NewTextFieldLabelWithString("Waiting for permission…")
+		waitLabel.SetFont(fontClass.SystemFontOfSize(11))
+		waitLabel.SetFrame(corefoundation.CGRect{
+			Origin: corefoundation.CGPoint{X: textX + spinSz + 6, Y: spinY - 1},
+			Size:   corefoundation.CGSize{Width: textW - spinSz - 6, Height: 16},
+		})
+		content.AddSubview(waitLabel)
+
+		// Single default button, right-aligned at the bottom.
+		btnY := btnPadB
+		primaryX := w - pad - btnW
+
+		requestBtn := uiMakeButton("Request Permission…", corefoundation.CGRect{
+			Origin: corefoundation.CGPoint{X: primaryX, Y: btnY},
+			Size:   corefoundation.CGSize{Width: btnW, Height: btnH},
+		}, func() {
+			// Drop below the system TCC dialog before triggering it.
+			win.SetLevel(appkit.NormalWindowLevel)
+			uiRequestPermission()
+		})
+		requestBtn.SetBezelStyle(appkit.NSBezelStylePush)
+		requestBtn.SetKeyEquivalent("\r")
+		content.AddSubview(requestBtn)
+
+		win.Center()
+		win.MakeKeyAndOrderFront(nil)
+		app.Activate()
+
+		// Poll for trust on the main thread.
 		var pollTimer *time.Timer
 		var poll func()
 		poll = func() {
@@ -324,27 +566,43 @@ func showWaitingForPermissionWindow() {
 			// Permission granted — transition to success state.
 			spinner.StopAnimation(nil)
 			spinner.SetIsHidden(true)
-			openBtn.SetIsHidden(true)
-			resetBtn.SetIsHidden(true)
-			subtitleLabel.SetIsHidden(true)
+			waitLabel.SetIsHidden(true)
+			requestBtn.SetIsHidden(true)
+			bodyLabel.SetIsHidden(true)
 
-			const checkSz = 36.0
-			baseImg := appkit.NewImageWithSystemSymbolNameAccessibilityDescription(
+			// Resize window for compact success state.
+			const successH = 100.0
+			frame := win.Frame()
+			dy := frame.Size.Height - successH
+			frame.Origin.Y += dy
+			frame.Size.Height = successH
+			win.SetFrameDisplayAnimate(frame, true, true)
+
+			const checkSz = 32.0
+			checkBase := appkit.NewImageWithSystemSymbolNameAccessibilityDescription(
 				"checkmark.circle.fill", "Permission granted",
 			)
-			sizeCfg := appkit.NewImageSymbolConfigurationWithPointSizeWeight(checkSz, appkit.NSFontWeights.Medium)
-			colorCfg := appkit.NewImageSymbolConfigurationWithHierarchicalColor(
+			checkCfg := appkit.NewImageSymbolConfigurationWithPointSizeWeight(checkSz*0.6, appkit.NSFontWeights.Medium)
+			checkColorCfg := appkit.NewImageSymbolConfigurationWithHierarchicalColor(
 				appkit.GetNSColorClass().SystemGreen(),
 			)
-			cfg := sizeCfg.ConfigurationByApplyingConfiguration(colorCfg)
-			checkImg := appkit.NSImageFromID(baseImg.ImageWithSymbolConfiguration(cfg).GetID())
-			checkView := appkit.NewImageViewWithFrame(corefoundation.CGRect{
-				Origin: corefoundation.CGPoint{X: padding - 4, Y: (h - checkSz) / 2},
+			checkFinalCfg := checkCfg.ConfigurationByApplyingConfiguration(checkColorCfg)
+			checkImg := appkit.NSImageFromID(checkBase.ImageWithSymbolConfiguration(checkFinalCfg).GetID())
+			iconView.SetImage(checkImg)
+
+			// Center icon and label in the smaller window. Content height
+			// is successH minus the title bar (~28pt).
+			contentH := successH - 28.0
+			midY := contentH / 2.0
+			titleLabel.SetStringValue("Accessibility permission granted.")
+			titleLabel.SetFrame(corefoundation.CGRect{
+				Origin: corefoundation.CGPoint{X: pad + checkSz + iconPad, Y: midY - 10},
+				Size:   corefoundation.CGSize{Width: textW, Height: 20},
+			})
+			iconView.SetFrame(corefoundation.CGRect{
+				Origin: corefoundation.CGPoint{X: pad, Y: midY - checkSz/2},
 				Size:   corefoundation.CGSize{Width: checkSz, Height: checkSz},
 			})
-			checkView.SetImage(checkImg)
-			content.AddSubview(checkView)
-			titleLabel.SetStringValue("Accessibility permission granted.")
 
 			time.AfterFunc(1200*time.Millisecond, func() {
 				dispatch.MainQueue().Async(func() {
