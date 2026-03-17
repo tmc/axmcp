@@ -35,12 +35,6 @@ type VideoListOutput struct {
 	Recordings []string `json:"recordings"`
 }
 
-type ScreenshotInput struct {
-	UDID       string `json:"udid,omitempty"`
-	OutputPath string `json:"output_path,omitempty"`
-	Format     string `json:"format,omitempty"`
-}
-
 func registerVideoTools(s *mcp.Server) {
 	// Video Start Recording
 	mcp.AddTool(s, &mcp.Tool{
@@ -103,39 +97,5 @@ func registerVideoTools(s *mcp.Server) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args struct{}) (*mcp.CallToolResult, VideoListOutput, error) {
 		ids := simctl.ListActiveRecordings()
 		return &mcp.CallToolResult{}, VideoListOutput{Recordings: ids}, nil
-	})
-
-	// Screenshot
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "screen_shot",
-		Description: "Take a screenshot of a simulator. Returns the file path. If udid is not specified, uses the first booted simulator.",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, args ScreenshotInput) (*mcp.CallToolResult, ScreenshotOutput, error) {
-		udid := args.UDID
-		if udid == "" {
-			udid = "booted"
-		}
-
-		outputPath := args.OutputPath
-		if outputPath == "" {
-			outputPath = "/tmp/screenshot.png"
-		}
-
-		format := args.Format
-		if format == "" {
-			format = "png"
-		}
-
-		if err := simctl.Screenshot(ctx, udid, outputPath, format); err != nil {
-			return &mcp.CallToolResult{
-				IsError: true,
-				Content: []mcp.Content{
-					&mcp.TextContent{Text: fmt.Sprintf("Failed to take screenshot: %v", err)},
-				},
-			}, ScreenshotOutput{}, nil
-		}
-
-		return &mcp.CallToolResult{}, ScreenshotOutput{
-			Message: fmt.Sprintf("Screenshot saved to: %s", outputPath),
-		}, nil
 	})
 }

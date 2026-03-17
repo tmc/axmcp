@@ -38,6 +38,11 @@ var xcodeReady sync.WaitGroup
 func (r *toolsetRegistry) add(ts toolset) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	for _, existing := range r.sets {
+		if existing.name == ts.name {
+			panic(fmt.Sprintf("duplicate toolset %q", ts.name))
+		}
+	}
 	r.sets = append(r.sets, ts)
 }
 
@@ -91,12 +96,14 @@ func addXcodeBridgeToolset(prefix string, subscribeBuildErrors bool, wait bool) 
 	}
 	globalToolsets.add(toolset{
 		name:        "xcode",
-		description: "Xcode IDE tools via xcrun mcpbridge (build log, source navigation, diagnostics, etc.)",
+		description: "Xcode IDE tools via xcrun mcpbridge plus native Xcode workflows such as preview batches and target creation",
 		async:       true,
 		register: func(s *mcp.Server) {
 			if wait {
 				defer xcodeReady.Done()
 			}
+
+			registerXcodeTargetTools(s)
 
 			// Wait for Accessibility trust before attempting to auto-allow
 			// the Xcode MCP permission dialog. Without AX permission, the
@@ -121,6 +128,8 @@ func addXcodeBridgeToolset(prefix string, subscribeBuildErrors bool, wait bool) 
 				slog.Warn("xcode tools unavailable after retries")
 				return
 			}
+			setXcodeBridge(proxy)
+			registerXcodeWorkflowTools(s)
 			n, err := registerXcodeTools(s, proxy, prefix)
 			if err != nil {
 				slog.Warn("error discovering xcode tools", "err", err)
@@ -137,62 +146,9 @@ func addXcodeBridgeToolset(prefix string, subscribeBuildErrors bool, wait bool) 
 // registerToolsetTools registers the toolset discovery/enable tools and declares
 // the optional toolsets. Call this after registering the always-on tools.
 func registerToolsetTools(s *mcp.Server) {
-	// Declare optional toolsets
-	globalToolsets.add(toolset{
-		name:        "app",
-		description: "App management tools: launch, terminate, install, uninstall, logs, list apps",
-		register:    registerAppTools,
-	})
-	globalToolsets.add(toolset{
-		name:        "ui",
-		description: "UI automation tools: tap, tree, screenshot, query, inspect, wait, list windows, list buttons",
-		register:    registerUITools,
-	})
-	globalToolsets.add(toolset{
-		name:        "device",
-		description: "Simulator device control: orientation, appearance, location, biometry, privacy, screenshot",
-		register:    registerDeviceTools,
-	})
-	globalToolsets.add(toolset{
-		name:        "ios",
-		description: "iOS-specific tools: accessibility tree, hit testing, simulator list, device info",
-		register:    registerIOSTools,
-	})
-	globalToolsets.add(toolset{
-		name:        "simulator_extras",
-		description: "Simulator extras: app container path, open URL, add photos/videos to library",
-		register:    registerExtraTools,
-	})
-	globalToolsets.add(toolset{
-		name:        "physical_device",
-		description: "Tools for managing physical iOS/macOS devices (install, run, logs, etc.)",
-		register:    registerPhysicalDeviceTools,
-	})
-	globalToolsets.add(toolset{
-		name:        "video",
-		description: "Video recording tools for simulators",
-		register:    registerVideoTools,
-	})
-	globalToolsets.add(toolset{
-		name:        "crash",
-		description: "Crash log collection and symbolication tools",
-		register:    registerCrashTools,
-	})
-	globalToolsets.add(toolset{
-		name:        "filesystem",
-		description: "File system access tools for simulator and device containers",
-		register:    registerFileSystemTools,
-	})
-	globalToolsets.add(toolset{
-		name:        "dependency",
-		description: "Dependency management tools (CocoaPods, Swift Package Manager)",
-		register:    registerDependencyTools,
-	})
-	globalToolsets.add(toolset{
-		name:        "asc",
-		description: "App Store Connect and altool tools for distribution and TestFlight",
-		register:    registerASCTools,
-	})
+	for _, ts := range standardToolsets() {
+		globalToolsets.add(ts)
+	}
 
 	// list_toolsets — discover available optional tool groups
 	mcp.AddTool(s, &mcp.Tool{

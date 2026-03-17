@@ -24,6 +24,7 @@ var (
 	enableApp            = flag.Bool("enable-app-tools", false, "Enable app management tools at startup")
 	enableUI             = flag.Bool("enable-ui-tools", false, "Enable UI automation tools at startup")
 	enableDevice         = flag.Bool("enable-device-tools", false, "Enable simulator device control tools at startup")
+	enableDebugging      = flag.Bool("enable-debugging-tools", false, "Enable LLDB debugging tools at startup")
 	enableIOS            = flag.Bool("enable-ios-tools", false, "Enable iOS-specific tools at startup")
 	enableSimExtras      = flag.Bool("enable-sim-extras", false, "Enable simulator extras (open URL, add media, container path) at startup")
 	enablePhysical       = flag.Bool("enable-physical-device-tools", false, "Enable physical device management tools at startup")
@@ -77,6 +78,7 @@ func main() {
 		*enableApp = true
 		*enableUI = true
 		*enableDevice = true
+		*enableDebugging = true
 		*enableIOS = true
 		*enableSimExtras = true
 		*enablePhysical = true
@@ -135,17 +137,7 @@ func main() {
 
 	// Register native xcmcp tools (skipped with --xcode-only)
 	if !*xcodeOnly {
-		// Core tools — always registered (~11 tools)
-		registerDiscoverProjects(server)
-		registerListSchemes(server)
-		registerShowBuildSettings(server)
-		registerBuild(server)
-		registerTest(server)
-		registerListSimulators(server)
-		registerBootSimulator(server)
-		registerShutdownSimulator(server)
-		registerSwiftUIPreviewFeatures(server)
-		registerXcodeTargetTools(server)
+		registerCoreTools(server)
 		// list_toolsets + enable_toolset — declares all optional categories.
 		registerToolsetTools(server)
 
@@ -158,6 +150,7 @@ func main() {
 			{*enableApp, "app"},
 			{*enableUI, "ui"},
 			{*enableDevice, "device"},
+			{*enableDebugging, "debugging"},
 			{*enableIOS, "ios"},
 			{*enableSimExtras, "simulator_extras"},
 			{*enablePhysical, "physical_device"},
