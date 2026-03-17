@@ -99,6 +99,7 @@ func main() {
 			if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 				log.Printf("server error: %v", err)
 			}
+			ui.WaitForWindows()
 			os.Exit(0)
 		}()
 	}

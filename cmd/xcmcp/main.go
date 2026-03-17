@@ -190,6 +190,7 @@ func main() {
 		if err := server.Run(context.TODO(), transport); err != nil {
 			log.Printf("Server error: %v", err)
 		}
+		ui.WaitForWindows()
 		os.Exit(0)
 	}()
 	//

@@ -156,6 +156,17 @@ type App struct {
 
 var trustOnce sync.Once
 
+// activeWindows tracks permission windows that are animating their close
+// transition. Call WaitForWindows before os.Exit to let animations finish.
+var activeWindows sync.WaitGroup
+
+// WaitForWindows blocks until all permission windows have finished their
+// close animations. Call this before os.Exit to avoid cutting off the
+// green checkmark transition.
+func WaitForWindows() {
+	activeWindows.Wait()
+}
+
 func uiExecName() string {
 	exe, err := os.Executable()
 	if err != nil {
@@ -174,6 +185,19 @@ func uiIsTrustedFresh() bool {
 	val := objc.Send[uintptr](objc.ID(objc.GetClass("NSNumber")), objc.Sel("numberWithBool:"), false)
 	dict := objc.Send[uintptr](objc.ID(objc.GetClass("NSDictionary")), objc.Sel("dictionaryWithObject:forKey:"), val, key)
 	return axIsProcessTrustedWithOptions(dict)
+}
+
+func waitForAccessibilityTrust(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if uiIsTrustedFresh() {
+			return true
+		}
+		if timeout <= 0 || time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // uiBundleID reads CFBundleIdentifier from the running app bundle's Info.plist,
@@ -205,8 +229,6 @@ func uiRequestPermission() {
 	axIsProcessTrustedWithOptions(dict)
 }
 
-
-
 func uiBindButtonAction(btn appkit.NSButton, fn func()) {
 	btn.SetActionHandler(fn)
 }
@@ -221,12 +243,12 @@ func uiMakeButton(title string, frame corefoundation.CGRect, fn func()) appkit.N
 
 // IsTrusted reports whether the process has Accessibility permission.
 func IsTrusted() bool {
-	return axIsProcessTrusted != nil && axIsProcessTrusted()
+	return uiIsTrustedFresh()
 }
 
 func CheckTrust() {
 	trustOnce.Do(func() {
-		if axIsProcessTrusted != nil && axIsProcessTrusted() {
+		if waitForAccessibilityTrust(1500 * time.Millisecond) {
 			return
 		}
 		if axIsProcessTrustedWithOptions == nil {
@@ -274,6 +296,7 @@ func CheckScreenCapture() {
 }
 
 func showScreenRecordingPermissionWindow() {
+	activeWindows.Add(1)
 	dispatch.MainQueue().Async(func() {
 		app := appkit.GetNSApplicationClass().SharedApplication()
 		app.SetActivationPolicy(appkit.NSApplicationActivationPolicyAccessory)
@@ -433,6 +456,7 @@ func showScreenRecordingPermissionWindow() {
 			time.AfterFunc(1200*time.Millisecond, func() {
 				dispatch.MainQueue().Async(func() {
 					win.Close()
+					activeWindows.Done()
 				})
 			})
 		}
@@ -445,6 +469,7 @@ func showScreenRecordingPermissionWindow() {
 }
 
 func showWaitingForPermissionWindow() {
+	activeWindows.Add(1)
 	dispatch.MainQueue().Async(func() {
 		app := appkit.GetNSApplicationClass().SharedApplication()
 		app.SetActivationPolicy(appkit.NSApplicationActivationPolicyAccessory)
@@ -607,6 +632,7 @@ func showWaitingForPermissionWindow() {
 			time.AfterFunc(1200*time.Millisecond, func() {
 				dispatch.MainQueue().Async(func() {
 					win.Close()
+					activeWindows.Done()
 				})
 			})
 		}

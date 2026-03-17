@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/tmc/apple/x/axuiautomation"
+	"github.com/tmc/xcmcp/internal/ui"
 )
 
 // isTTY reports whether stdin is an interactive terminal.
@@ -45,6 +46,7 @@ func runCLI() {
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
+	ui.WaitForWindows()
 	os.Exit(0)
 }
 
