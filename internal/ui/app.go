@@ -299,7 +299,7 @@ func showScreenRecordingPermissionWindow() {
 			false,
 		)
 		win.SetTitle("")
-		win.SetLevel(appkit.ModalPanelWindowLevel)
+		win.SetLevel(appkit.FloatingWindowLevel)
 
 		content := appkit.NSViewFromID(win.ContentView().GetID())
 
@@ -470,7 +470,7 @@ func showWaitingForPermissionWindow() {
 			false,
 		)
 		win.SetTitle("")
-		win.SetLevel(appkit.ModalPanelWindowLevel)
+		win.SetLevel(appkit.FloatingWindowLevel)
 
 		content := appkit.NSViewFromID(win.ContentView().GetID())
 
