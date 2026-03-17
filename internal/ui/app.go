@@ -299,7 +299,7 @@ func showScreenRecordingPermissionWindow() {
 			false,
 		)
 		win.SetTitle("")
-		win.SetLevel(appkit.FloatingWindowLevel)
+		win.SetLevel(appkit.ModalPanelWindowLevel)
 
 		content := appkit.NSViewFromID(win.ContentView().GetID())
 
@@ -366,7 +366,7 @@ func showScreenRecordingPermissionWindow() {
 		btnY := btnPadB
 		primaryX := w - pad - btnW
 
-		requestBtn := uiMakeButton("Request Permission…", corefoundation.CGRect{
+		requestBtn := uiMakeButton("Request Permission", corefoundation.CGRect{
 			Origin: corefoundation.CGPoint{X: primaryX, Y: btnY},
 			Size:   corefoundation.CGSize{Width: btnW, Height: btnH},
 		}, func() {
@@ -470,7 +470,7 @@ func showWaitingForPermissionWindow() {
 			false,
 		)
 		win.SetTitle("")
-		win.SetLevel(appkit.FloatingWindowLevel)
+		win.SetLevel(appkit.ModalPanelWindowLevel)
 
 		content := appkit.NSViewFromID(win.ContentView().GetID())
 
@@ -537,7 +537,7 @@ func showWaitingForPermissionWindow() {
 		btnY := btnPadB
 		primaryX := w - pad - btnW
 
-		requestBtn := uiMakeButton("Request Permission…", corefoundation.CGRect{
+		requestBtn := uiMakeButton("Request Permission", corefoundation.CGRect{
 			Origin: corefoundation.CGPoint{X: primaryX, Y: btnY},
 			Size:   corefoundation.CGSize{Width: btnW, Height: btnH},
 		}, func() {
