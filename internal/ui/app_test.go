@@ -53,6 +53,22 @@ func TestWaitForAccessibilityTrustTimeout(t *testing.T) {
 	}
 }
 
+func TestIsTrustedPrefersImmediateAXSignal(t *testing.T) {
+	oldTrusted := axIsProcessTrusted
+	oldTrustedWithOptions := axIsProcessTrustedWithOptions
+	defer func() {
+		axIsProcessTrusted = oldTrusted
+		axIsProcessTrustedWithOptions = oldTrustedWithOptions
+	}()
+
+	axIsProcessTrusted = func() bool { return true }
+	axIsProcessTrustedWithOptions = func(uintptr) bool { return false }
+
+	if !IsTrusted() {
+		t.Fatal("IsTrusted returned false, want true when AXIsProcessTrusted is true")
+	}
+}
+
 func TestConfigureIdentityOverridesFallbacks(t *testing.T) {
 	resetIdentityForTest(t)
 	t.Cleanup(func() {

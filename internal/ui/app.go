@@ -215,8 +215,11 @@ func uiExecName() string {
 }
 
 func uiIsTrustedFresh() bool {
+	if axIsProcessTrusted != nil && axIsProcessTrusted() {
+		return true
+	}
 	if axIsProcessTrustedWithOptions == nil {
-		return axIsProcessTrusted != nil && axIsProcessTrusted()
+		return false
 	}
 	key := MkString("AXTrustedCheckOptionPrompt")
 	val := objc.Send[uintptr](objc.ID(objc.GetClass("NSNumber")), objc.Sel("numberWithBool:"), false)
