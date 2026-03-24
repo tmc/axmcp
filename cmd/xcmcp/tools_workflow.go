@@ -291,6 +291,13 @@ func renderAllPreviews(ctx context.Context, args RenderAllPreviewsInput) (Render
 	for _, file := range files {
 		localPath, sourcePath := previewPaths(root, file)
 		count, err := previewDefinitionCount(localPath)
+		if err != nil && os.IsNotExist(unwrapPathError(err)) {
+			// Local path doesn't exist — the file may be an Xcode project
+			// path (e.g. from XcodeGlob) that differs from the filesystem
+			// layout (common with Swift Packages). Fall back to reading
+			// through the bridge.
+			count, err = bridgePreviewDefinitionCount(ctx, bridge, tabIdentifier, sourcePath)
+		}
 		if err != nil {
 			results = append(results, PreviewRenderResult{SourceFile: sourcePath, Error: err.Error()})
 			continue
@@ -425,6 +432,36 @@ func previewDefinitionCount(path string) (int, error) {
 		return 0, fmt.Errorf("read %s: %w", path, err)
 	}
 	return len(previewTokenRE.FindAll(data, -1)), nil
+}
+
+// bridgePreviewDefinitionCount reads a source file through the Xcode bridge
+// and counts #Preview / PreviewProvider definitions. This handles cases where
+// Xcode project paths don't correspond to filesystem paths (e.g. Swift Packages).
+func bridgePreviewDefinitionCount(ctx context.Context, bridge xcodeBridge, tabIdentifier, sourcePath string) (int, error) {
+	result, err := bridge.callTool(ctx, "XcodeRead", map[string]any{
+		"tabIdentifier": tabIdentifier,
+		"filePath":      sourcePath,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("bridge read %s: %w", sourcePath, err)
+	}
+	for _, item := range result.Content {
+		text, ok := item.(*mcp.TextContent)
+		if ok && text.Text != "" {
+			return len(previewTokenRE.FindAll([]byte(text.Text), -1)), nil
+		}
+	}
+	return 0, fmt.Errorf("bridge read %s: empty result", sourcePath)
+}
+
+// unwrapPathError extracts the underlying error from a wrapped path error,
+// allowing os.IsNotExist to work on fmt.Errorf-wrapped errors.
+func unwrapPathError(err error) error {
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return pathErr
+	}
+	return err
 }
 
 func extractImageContent(result *mcp.CallToolResult) ([]byte, string, error) {
