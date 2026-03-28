@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -351,8 +352,19 @@ func isScreenRecordingAvailable() bool {
 	return coregraphics.CGPreflightScreenCaptureAccess()
 }
 
+var screenCaptureRequested atomic.Bool
+
 func requestScreenCapture() {
-	coregraphics.CGRequestScreenCaptureAccess()
+	if screenCaptureRequested.CompareAndSwap(false, true) {
+		// First request: CGRequestScreenCaptureAccess triggers the TCC prompt.
+		coregraphics.CGRequestScreenCaptureAccess()
+		return
+	}
+	// Subsequent requests: CGRequestScreenCaptureAccess is a no-op after the
+	// first call. Reset TCC so the OS will re-prompt, then open System Settings.
+	resetTCC("ScreenCapture")
+	url := uiPrivacySettingsURL("ScreenCapture")
+	exec.Command("open", url).Run()
 }
 
 func requestScreenCaptureAsync() {
