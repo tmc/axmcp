@@ -65,6 +65,7 @@ func registerAXTools(s *mcp.Server) {
 	registerAXFocus(s)
 	registerAXListWindows(s)
 	registerAXScreenshot(s)
+	registerAXOCR(s)
 	registerAXInteractionTools(s)
 	registerAXWindowTools(s)
 }
@@ -96,8 +97,21 @@ func spinAndOpen(arg string) (*axuiautomation.Application, error) {
 func elementAttrs(e *axuiautomation.Element) map[string]any {
 	x, y := e.Position()
 	w, h := e.Size()
+	// For checkboxes and switches, AXValue is a CFNumber (0/1) which
+	// Value() can't read (returns ""). Use IsChecked() instead.
+	var val any
+	role := e.Role()
+	if role == "AXCheckBox" || role == "AXSwitch" || role == "AXRadioButton" {
+		if e.IsChecked() {
+			val = 1
+		} else {
+			val = 0
+		}
+	} else {
+		val = e.Value()
+	}
 	return map[string]any{
-		"role": e.Role(), "title": e.Title(), "value": e.Value(),
+		"role": role, "title": e.Title(), "value": val,
 		"subrole": e.Subrole(), "enabled": e.IsEnabled(),
 		"role_desc": e.RoleDescription(),
 		"desc":      e.Description(), "identifier": e.Identifier(),
@@ -404,6 +418,19 @@ func registerAXType(s *mcp.Server) {
 		if el == nil {
 			return nil, nil, fmt.Errorf("type target disappeared: %s", formatMatch(result.matches[0]))
 		}
+		// For text fields, prefer SetValue to avoid cursor warp from CGEvent click.
+		role := el.Role()
+		useSetValue := role == "AXTextField" || role == "AXTextArea" || role == "AXComboBox"
+		if useSetValue {
+			if err := el.SetValue(args.Text); err == nil {
+				var buf bytes.Buffer
+				fmt.Fprintf(&buf, "set value on %s", formatMatch(result.matches[0]))
+				if note := selectionReason(result); note != "" {
+					fmt.Fprintf(&buf, "\n%s", note)
+				}
+				return textResult(buf.String()), nil, nil
+			}
+		}
 		if err := el.Click(); err != nil {
 			return nil, nil, fmt.Errorf("focus %s: %w", formatMatch(result.matches[0]), err)
 		}
@@ -640,5 +667,54 @@ func registerAXFocus(s *mcp.Server) {
 			return nil, nil, fmt.Errorf("no focused element and no main window found (app might be in background or has no standard UI)")
 		}
 		return textResult(elementSummary(el)), nil, nil
+	})
+}
+
+type axOCRInput struct {
+	App    string `json:"app"`
+	Find   string `json:"find,omitempty"`
+	JSON   bool   `json:"json,omitempty"`
+	Layout bool   `json:"layout,omitempty"`
+	Cols   int    `json:"cols,omitempty"`
+	Rows   int    `json:"rows,omitempty"`
+}
+
+func registerAXOCR(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "ax_ocr",
+		Description: "Run Apple Vision OCR on an app window screenshot. " +
+			"Returns recognized text with pixel coordinates and bounding boxes. " +
+			"Use 'find' to search for specific text. " +
+			"Use 'layout' for a spatial ASCII rendering that preserves text positions. " +
+			"Useful for VMs, custom-drawn UIs, and elements without accessibility text.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, args axOCRInput) (*mcp.CallToolResult, any, error) {
+		results, imgW, imgH, err := ocrWindow(args.App)
+		if err != nil {
+			return nil, nil, err
+		}
+		if args.Find != "" {
+			results = findOCRText(results, args.Find)
+			if len(results) == 0 {
+				return nil, nil, fmt.Errorf("no text matching %q found", args.Find)
+			}
+		}
+		if args.Layout {
+			cols, rows := 120, 40
+			if args.Cols > 0 {
+				cols = args.Cols
+			}
+			if args.Rows > 0 {
+				rows = args.Rows
+			}
+			return textResult(renderOCRLayout(results, imgW, imgH, cols, rows)), nil, nil
+		}
+		if args.JSON {
+			out, err := formatOCRResultsJSON(results)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(out), nil, nil
+		}
+		return textResult(formatOCRResults(results)), nil, nil
 	})
 }

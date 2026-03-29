@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/tmc/apple/x/axuiautomation"
@@ -263,6 +264,8 @@ func registerAXPerformAction(s *mcp.Server) {
 		if err := el.PerformAction(args.Action); err != nil {
 			return nil, nil, fmt.Errorf("perform %s on %s: %w", args.Action, formatMatch(result.matches[0]), err)
 		}
+		// Spin the run loop so the target app processes the action.
+		axuiautomation.SpinRunLoop(200 * time.Millisecond)
 		var buf bytes.Buffer
 		fmt.Fprintf(&buf, "performed %s on %s", args.Action, formatMatch(result.matches[0]))
 		if note := selectionReason(result); note != "" {

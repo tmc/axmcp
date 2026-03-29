@@ -103,8 +103,11 @@ func listAppWindows(appIdentifier string) ([]windowInfo, error) {
 		ownerPID, _ := dictGetNumber(dict, coregraphics.KCGWindowOwnerPID)
 		windowID, _ := dictGetNumber(dict, coregraphics.KCGWindowNumber)
 
+		ownerLower := strings.ToLower(ownerName)
+		queryLower := strings.ToLower(appIdentifier)
 		if !strings.EqualFold(ownerName, appIdentifier) &&
-			!strings.Contains(strings.ToLower(ownerName), strings.ToLower(appIdentifier)) {
+			!strings.Contains(ownerLower, queryLower) &&
+			!strings.Contains(queryLower, ownerLower) {
 			continue
 		}
 

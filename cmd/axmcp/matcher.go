@@ -119,11 +119,20 @@ func snapshotElement(element *axuiautomation.Element, depth, index int) elementS
 	x, y := element.Position()
 	w, h := element.Size()
 	role := displayString(element.Role())
+	// Checkboxes/switches store AXValue as CFNumber; Value() returns "".
+	value := displayString(element.Value())
+	if value == "" && (role == "AXCheckBox" || role == "AXSwitch" || role == "AXRadioButton") {
+		if element.IsChecked() {
+			value = "1"
+		} else {
+			value = "0"
+		}
+	}
 	record := elementRecord{
 		role:            role,
 		title:           displayString(element.Title()),
 		desc:            displayString(element.Description()),
-		value:           displayString(element.Value()),
+		value:           value,
 		identifier:      displayString(element.Identifier()),
 		roleDescription: displayString(element.RoleDescription()),
 		enabled:         element.IsEnabled(),

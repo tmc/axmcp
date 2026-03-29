@@ -66,6 +66,7 @@ func execPipeline(expr string) (string, error) {
 var terminalStage = map[string]bool{
 	".": true, "tree": true, "list": true, "json": true,
 	"click": true, "type": true, "attr": true, "click-menu": true,
+	"ocr": true, "action": true,
 }
 
 // splitPipelineExec splits the pipeline string on // separators and trims stages.
@@ -425,6 +426,15 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 			return fmt.Errorf("type: no element in context")
 		}
 		text := strings.Join(args, " ")
+		// For text fields, prefer SetValue to avoid cursor warp from CGEvent click.
+		role := el.Role()
+		if role == "AXTextField" || role == "AXTextArea" || role == "AXComboBox" {
+			if err := el.SetValue(text); err == nil {
+				fmt.Fprintf(buf, "set value %q on %s\n", text, formatSnapshot(snapshotElement(el, 0, 0)))
+				break
+			}
+			// Fall through to TypeText if SetValue fails.
+		}
 		if err := el.TypeText(text); err != nil {
 			return err
 		}
@@ -449,6 +459,17 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 			val = el.Title()
 		case "AXValue":
 			val = el.Value()
+			// Checkboxes/switches store AXValue as CFNumber; Value() returns "".
+			if val == "" {
+				role := el.Role()
+				if role == "AXCheckBox" || role == "AXSwitch" || role == "AXRadioButton" {
+					if el.IsChecked() {
+						val = "1"
+					} else {
+						val = "0"
+					}
+				}
+			}
 		case "AXSubrole":
 			val = el.Subrole()
 		default:
@@ -527,6 +548,108 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 		enc.SetIndent("", "  ")
 		return enc.Encode(out)
 
+	case "ocr":
+		var findQuery string
+		jsonOut := false
+		layoutOut := false
+		layoutCols, layoutRows := 120, 40
+		for i := 0; i < len(args); i++ {
+			switch args[i] {
+			case "--find", "-f":
+				if i+1 < len(args) {
+					findQuery = args[i+1]
+					i++
+				}
+			case "--json", "-j":
+				jsonOut = true
+			case "--layout", "-l":
+				layoutOut = true
+			case "--cols":
+				if i+1 < len(args) {
+					if v, err := strconv.Atoi(args[i+1]); err == nil {
+						layoutCols = v
+					}
+					i++
+				}
+			case "--rows":
+				if i+1 < len(args) {
+					if v, err := strconv.Atoi(args[i+1]); err == nil {
+						layoutRows = v
+					}
+					i++
+				}
+			}
+		}
+
+		// Capture the current element/window. If element capture fails
+		// (e.g. zero-size frame for VM windows), fall back to window capture.
+		var results []ocrResult
+		var ocrErr error
+		var imgW, imgH int
+		if pc.element != nil {
+			results, ocrErr = ocrElement(pc.element)
+			if ocrErr == nil {
+				frame := pc.element.Frame()
+				imgW = int(frame.Size.Width)
+				imgH = int(frame.Size.Height)
+			}
+		}
+		if ocrErr != nil || pc.element == nil {
+			// Fall back to window-level capture, trying title then bundle ID.
+			if pc.app != nil {
+				name := pc.app.Root().Title()
+				if name != "" {
+					results, imgW, imgH, ocrErr = ocrWindow(name)
+				}
+				if (name == "" || ocrErr != nil) && pc.app.BundleID() != "" {
+					results, imgW, imgH, ocrErr = ocrWindow(pc.app.BundleID())
+				}
+			} else {
+				return fmt.Errorf("ocr: no element or app in context")
+			}
+		}
+		if ocrErr != nil {
+			return fmt.Errorf("ocr: %w", ocrErr)
+		}
+
+		if findQuery != "" {
+			results = findOCRText(results, findQuery)
+			if len(results) == 0 {
+				return fmt.Errorf("ocr: no text matching %q found", findQuery)
+			}
+		}
+		if layoutOut {
+			buf.WriteString(renderOCRLayout(results, imgW, imgH, layoutCols, layoutRows))
+		} else if jsonOut {
+			s, err := formatOCRResultsJSON(results)
+			if err != nil {
+				return err
+			}
+			buf.WriteString(s)
+			buf.WriteByte('\n')
+		} else {
+			buf.WriteString(formatOCRResults(results))
+		}
+
+	case "action":
+		if len(args) == 0 {
+			return fmt.Errorf("action: requires action name (e.g. AXPress, AXShowMenu)")
+		}
+		el := pc.element
+		if el == nil && len(pc.elements) > 0 {
+			el = pc.elements[0]
+		}
+		if el == nil {
+			return fmt.Errorf("action: no element in context")
+		}
+		actionName := args[0]
+		if err := el.PerformAction(actionName); err != nil {
+			return fmt.Errorf("action %s: %w", actionName, err)
+		}
+		// Spin the run loop so the target app processes the action.
+		axuiautomation.SpinRunLoop(200 * time.Millisecond)
+		fmt.Fprintf(buf, "performed %s on %s\n", actionName, formatSnapshot(snapshotElement(el, 0, 0)))
+
 	default:
 		return fmt.Errorf("unknown stage %q. Available stages:\n"+
 			"  apps\n"+
@@ -538,6 +661,7 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 			"  children\n"+
 			"  first\n"+
 			"  find [--role R] [--title T] [--contains C] [--id I]  (normalized text match)\n"+
+			"  ocr [--find TEXT] [--json] [--layout] [--cols N] [--rows N]\n"+
 			"  .\n"+
 			"  tree [--depth N]\n"+
 			"  list\n"+
@@ -546,6 +670,7 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 			"  click-at <x> <y>\n"+
 			"  hover\n"+
 			"  type <text>\n"+
+			"  action <AXAction>\n"+
 			"  attr <AXAttr>\n"+
 			"  click-menu <A> <B> <C>", cmd)
 	}
