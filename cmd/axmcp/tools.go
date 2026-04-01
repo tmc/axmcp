@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -66,6 +67,7 @@ func registerAXTools(s *mcp.Server) {
 	registerAXListWindows(s)
 	registerAXScreenshot(s)
 	registerAXOCR(s)
+	registerAXOCRDiff(s)
 	registerAXInteractionTools(s)
 	registerAXWindowTools(s)
 }
@@ -225,6 +227,7 @@ func registerAXTree(s *mcp.Server) {
 
 type axFindInput struct {
 	App      string `json:"app"`
+	Window   string `json:"window,omitempty"`
 	Role     string `json:"role,omitempty"`
 	Title    string `json:"title,omitempty"`
 	Contains string `json:"contains,omitempty"`
@@ -233,8 +236,9 @@ type axFindInput struct {
 
 func registerAXFind(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "ax_find",
-		Description: "Find AX elements in an app by role, exact text, or substring across title, description, value, and identifier.",
+		Name: "ax_find",
+		Description: "Find AX elements in an app by role, exact text, or substring across title, description, value, and identifier. " +
+			"Set window to scope the search to a specific window title substring.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axFindInput) (*mcp.CallToolResult, any, error) {
 		app, err := spinAndOpen(args.App)
 		if err != nil {
@@ -246,7 +250,11 @@ func registerAXFind(s *mcp.Server) {
 		if limit <= 0 {
 			limit = 500
 		}
-		result := findElements(app.Root(), searchOptions{
+		root, _, err := resolveSearchRoot(app, args.Window)
+		if err != nil {
+			return nil, nil, err
+		}
+		result := findElements(root, searchOptions{
 			Role:     args.Role,
 			Title:    args.Title,
 			Contains: args.Contains,
@@ -255,6 +263,9 @@ func registerAXFind(s *mcp.Server) {
 		var buf bytes.Buffer
 		if len(result.matches) == 0 {
 			buf.WriteString(noMatchMessage(result))
+			if hint := ocrNoMatchHint(args.App, args.Window, primaryQuery(result.options)); hint != "" {
+				buf.WriteString(hint)
+			}
 			return textResult(buf.String()), nil, nil
 		}
 		if note := selectionReason(result); note != "" {
@@ -316,6 +327,7 @@ Examples:
 
 type axClickInput struct {
 	App      string `json:"app"`
+	Window   string `json:"window,omitempty"`
 	Contains string `json:"contains"`
 	Role     string `json:"role,omitempty"`
 	XOffset  *int   `json:"x_offset,omitempty"`
@@ -324,8 +336,11 @@ type axClickInput struct {
 
 func registerAXClick(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "ax_click",
-		Description: "Click an element in an app found by normalized text lookup across title, description, value, and identifier. Provide x_offset and y_offset to click at a specific point relative to the element's top-left corner.",
+		Name: "ax_click",
+		Description: "Click an element in an app found by normalized text lookup across title, description, value, and identifier. " +
+			"Set window to scope the search to a specific window title substring. " +
+			"Provide x_offset and y_offset to click at a specific point relative to the element's top-left corner. " +
+			"Use the window parameter to avoid matching system menu items when targeting in-window elements.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axClickInput) (*mcp.CallToolResult, any, error) {
 		app, err := spinAndOpen(args.App)
 		if err != nil {
@@ -333,13 +348,21 @@ func registerAXClick(s *mcp.Server) {
 		}
 		defer app.Close()
 
-		result := findElements(app.Root(), searchOptions{
+		root, _, err := resolveSearchRoot(app, args.Window)
+		if err != nil {
+			return nil, nil, err
+		}
+		result := findElements(root, searchOptions{
 			Role:     args.Role,
 			Contains: args.Contains,
 			Limit:    500,
 		})
 		if len(result.matches) == 0 {
-			return nil, nil, fmt.Errorf("%s", noMatchMessage(result))
+			msg := noMatchMessage(result)
+			if hint := ocrNoMatchHint(args.App, args.Window, primaryQuery(result.options)); hint != "" {
+				msg += hint
+			}
+			return nil, nil, fmt.Errorf("%s", msg)
 		}
 
 		match := result.matches[0]
@@ -350,7 +373,7 @@ func registerAXClick(s *mcp.Server) {
 		}
 
 		if args.XOffset != nil && args.YOffset != nil {
-			if err := target.ClickAt(*args.XOffset, *args.YOffset); err != nil {
+			if err := clickLocalPoint(target, *args.XOffset, *args.YOffset); err != nil {
 				return nil, nil, fmt.Errorf("click_at %s: %w", formatSnapshot(resolution.target), err)
 			}
 			var buf bytes.Buffer
@@ -364,7 +387,8 @@ func registerAXClick(s *mcp.Server) {
 			return textResult(buf.String()), nil, nil
 		}
 
-		if err := target.Click(); err != nil {
+		clickSummary, err := performDefaultClick(resolution.target)
+		if err != nil {
 			if !match.snapshot.record.actionable && len(resolution.actionableDescendants) > 1 {
 				var b strings.Builder
 				fmt.Fprintf(&b, "click %s: %v\n", formatMatch(match), err)
@@ -377,7 +401,7 @@ func registerAXClick(s *mcp.Server) {
 			return nil, nil, fmt.Errorf("click %s: %w", formatSnapshot(resolution.target), err)
 		}
 		var buf bytes.Buffer
-		fmt.Fprintf(&buf, "clicked %s", formatSnapshot(resolution.target))
+		buf.WriteString(clickSummary)
 		if note := selectionReason(result); note != "" {
 			fmt.Fprintf(&buf, "\n%s", note)
 		}
@@ -392,20 +416,40 @@ func registerAXClick(s *mcp.Server) {
 
 type axTypeInput struct {
 	App      string `json:"app"`
-	Contains string `json:"contains"`
+	Contains string `json:"contains,omitempty"`
 	Text     string `json:"text"`
 }
 
 func registerAXType(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "ax_type",
-		Description: "Type text into an element found by normalized text lookup across title, description, value, and identifier.",
+		Name: "ax_type",
+		Description: "Type text into an element found by normalized text lookup across title, description, value, and identifier. " +
+			"When contains is omitted, types into the currently focused element.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axTypeInput) (*mcp.CallToolResult, any, error) {
 		app, err := spinAndOpen(args.App)
 		if err != nil {
 			return nil, nil, err
 		}
 		defer app.Close()
+
+		// When contains is omitted, type into the focused element.
+		if args.Contains == "" {
+			el := app.FocusedElement()
+			if el == nil {
+				return nil, nil, fmt.Errorf("no focused element found")
+			}
+			role := el.Role()
+			useSetValue := role == "AXTextField" || role == "AXTextArea" || role == "AXComboBox"
+			if useSetValue {
+				if err := el.SetValue(args.Text); err == nil {
+					return textResult(fmt.Sprintf("set value on focused %s", elementSummary(el))), nil, nil
+				}
+			}
+			if err := el.TypeText(args.Text); err != nil {
+				return nil, nil, fmt.Errorf("type into focused element: %w", err)
+			}
+			return textResult(fmt.Sprintf("typed into focused %s", elementSummary(el))), nil, nil
+		}
 
 		result := findElements(app.Root(), searchOptions{
 			Contains: args.Contains,
@@ -482,11 +526,36 @@ func registerAXListWindows(s *mcp.Server) {
 		Name:        "ax_list_windows",
 		Description: "List windows for an application by name or bundle ID. Returns window IDs, titles, and bounds.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axListWindowsInput) (*mcp.CallToolResult, any, error) {
-		windows, err := listAppWindows(args.App)
+		app, err := spinAndOpen(args.App)
 		if err != nil {
 			return nil, nil, err
 		}
-		data, err := json.Marshal(windows)
+		defer app.Close()
+
+		wins := app.WindowList()
+		if len(wins) == 0 {
+			return nil, nil, fmt.Errorf("no windows found for %q", args.App)
+		}
+		type winInfo struct {
+			Title  string `json:"title"`
+			X      int    `json:"x"`
+			Y      int    `json:"y"`
+			Width  int    `json:"width"`
+			Height int    `json:"height"`
+		}
+		result := make([]winInfo, 0, len(wins))
+		for _, w := range wins {
+			x, y := w.Position()
+			width, height := w.Size()
+			result = append(result, winInfo{
+				Title:  w.Title(),
+				X:      x,
+				Y:      y,
+				Width:  width,
+				Height: height,
+			})
+		}
+		data, err := json.Marshal(result)
 		if err != nil {
 			return nil, nil, fmt.Errorf("marshal: %w", err)
 		}
@@ -497,10 +566,12 @@ func registerAXListWindows(s *mcp.Server) {
 // ── ax_screenshot ─────────────────────────────────────────────────────────────
 
 type axScreenshotInput struct {
-	App        string `json:"app"`
-	Contains   string `json:"contains,omitempty"`
-	Role       string `json:"role,omitempty"`
-	FullScreen bool   `json:"full_screen,omitempty"`
+	App          string `json:"app"`
+	Window       string `json:"window,omitempty"`
+	Contains     string `json:"contains,omitempty"`
+	Role         string `json:"role,omitempty"`
+	ArtifactPath string `json:"artifact_path,omitempty"`
+	FullScreen   bool   `json:"full_screen,omitempty"`
 }
 
 func registerAXScreenshot(s *mcp.Server) {
@@ -508,21 +579,18 @@ func registerAXScreenshot(s *mcp.Server) {
 		Name: "ax_screenshot",
 		Description: `Capture a screenshot of an app window or specific element.
 
-Prefer targeting a specific element with contains/role for smaller, faster, more token-efficient results. Full app window captures are larger and should only be used when you need to see the complete window layout.
+Prefer targeting a specific element with contains/role for smaller, faster, more token-efficient results. Set window to a title substring when an app has multiple windows and you want a specific one. Full app window captures are larger and should only be used when you need to see the complete window layout.
 
-Set full_screen=true to capture the entire display (requires explicit opt-in due to large image size).`,
+Set full_screen=true to capture the entire display (requires explicit opt-in due to large image size). Set artifact_path to save the PNG to a durable file.`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axScreenshotInput) (*mcp.CallToolResult, any, error) {
+		var png []byte
 		if args.FullScreen {
-			png, err := captureFullScreen()
+			var err error
+			png, err = captureFullScreen()
 			if err != nil {
 				return nil, nil, err
 			}
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.ImageContent{Data: png, MIMEType: "image/png"}},
-			}, nil, nil
-		}
-
-		if args.Contains != "" || args.Role != "" {
+		} else if args.Contains != "" || args.Role != "" {
 			// Element screenshot: need AX to find the element.
 			app, err := spinAndOpen(args.App)
 			if err != nil {
@@ -530,7 +598,15 @@ Set full_screen=true to capture the entire display (requires explicit opt-in due
 			}
 			defer app.Close()
 
-			result := findElements(app.Root(), searchOptions{
+			root := app.Root()
+			if args.Window != "" {
+				win, _, err := resolveWindow(app, args.Window)
+				if err != nil {
+					return nil, nil, err
+				}
+				root = win
+			}
+			result := findElements(root, searchOptions{
 				Role:     args.Role,
 				Contains: args.Contains,
 				Limit:    500,
@@ -539,23 +615,31 @@ Set full_screen=true to capture the entire display (requires explicit opt-in due
 				return nil, nil, fmt.Errorf("%s", noMatchMessage(result))
 			}
 			el := result.matches[0].snapshot.element
-			png, err := captureElementOrWindow(args.App, true, el)
+			png, err = captureElementOrWindow(args.App, true, el)
 			if err != nil {
 				return nil, nil, err
 			}
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.ImageContent{Data: png, MIMEType: "image/png"}},
-			}, nil, nil
+		} else {
+			// Full window screenshot: try SCK/CGWindowList first (no AX IPC needed,
+			// avoids hanging on apps with unresponsive accessibility implementations).
+			var err error
+			png, err = captureWindowByTitle(args.App, args.Window)
+			if err != nil {
+				return nil, nil, err
+			}
 		}
 
-		// Full window screenshot: try SCK/CGWindowList first (no AX IPC needed,
-		// avoids hanging on apps with unresponsive accessibility implementations).
-		png, err := captureWindowByName(args.App)
-		if err != nil {
-			return nil, nil, err
+		content := []mcp.Content{&mcp.ImageContent{Data: png, MIMEType: "image/png"}}
+		if args.ArtifactPath != "" {
+			if err := writePNGArtifact(args.ArtifactPath, png); err != nil {
+				return nil, nil, err
+			}
+			content = append([]mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf("saved screenshot to %s", filepath.Clean(args.ArtifactPath))},
+			}, content...)
 		}
 		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.ImageContent{Data: png, MIMEType: "image/png"}},
+			Content: content,
 		}, nil, nil
 	})
 }
@@ -573,31 +657,33 @@ func captureWindowByName(appName string) ([]byte, error) {
 	}
 	diagf("captureWindowByName: found %d windows, firstID=%d\n", len(windows), windows[0].WindowID)
 
-	// Try CGWindowListCreateImage first — it runs synchronously and avoids
-	// the ScreenCaptureKit dispatch-to-main-thread issue that kills the process.
-	png, err := captureWindowCG(windows[0].WindowID)
+	png, err := captureWindow(windows[0])
 	if err != nil {
-		diagf("captureWindowByName: CG failed: %v, trying SCK\n", err)
-		// Screen Recording permission is required for SCK.
-		if !ui.IsScreenRecordingTrusted() {
-			if !ui.WaitForScreenRecording(30 * time.Second) {
-				return nil, fmt.Errorf("screenshot failed: Screen Recording permission required — grant access in System Settings > Privacy & Security")
-			}
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		png, err = captureWindowSCK(ctx, windows[0].WindowID)
-		if err != nil {
-			return nil, fmt.Errorf("capture window %q (id=%d): %w", appName, windows[0].WindowID, err)
-		}
+		return nil, err
 	}
 	diagf("captureWindowByName: success, %d bytes\n", len(png))
 	return png, nil
 }
 
+func captureWindowByTitle(appName, title string) ([]byte, error) {
+	if title == "" {
+		return captureWindowByName(appName)
+	}
+	windows, err := listAppWindows(appName)
+	if err != nil {
+		return nil, fmt.Errorf("no windows found for %q: %w", appName, err)
+	}
+	win, ok := matchWindowInfo(windows, title)
+	if !ok {
+		return nil, fmt.Errorf("no window matching %q found for %q", title, appName)
+	}
+	return captureWindow(win)
+}
+
 // captureElementOrWindow abstracts the logic to capture a screenshot.
 // If isElement is true, it attempts an element screenshot.
-// Otherwise it tries ScreenCaptureKit for a robust window capture.
+// Otherwise it uses the dedicated window capture path and falls back to an AX
+// rect screenshot if needed.
 func captureElementOrWindow(appName string, isElement bool, el *axuiautomation.Element) ([]byte, error) {
 	diagf("captureElementOrWindow: app=%s isElement=%v\n", appName, isElement)
 	if !ui.IsScreenRecordingTrusted() {
@@ -608,24 +694,16 @@ func captureElementOrWindow(appName string, isElement bool, el *axuiautomation.E
 	}
 
 	if !isElement {
-		// Try CGWindowListCreateImage for full windows (avoids SCK process
-		// termination issues). Fall back to SCK, then AX element capture.
+		// Try the window-specific capture path first. It stays on synchronous
+		// capture APIs and avoids the ScreenCaptureKit process-exit edge cases.
 		windows, err := listAppWindows(appName)
 		if err == nil && len(windows) > 0 {
-			diagf("captureElementOrWindow: trying CG capture windowID=%d\n", windows[0].WindowID)
-			if png, err := captureWindowCG(windows[0].WindowID); err == nil {
-				diagf("captureElementOrWindow: CG success %d bytes\n", len(png))
+			diagf("captureElementOrWindow: trying window capture windowID=%d\n", windows[0].WindowID)
+			if png, err := captureWindow(windows[0]); err == nil {
+				diagf("captureElementOrWindow: window capture success %d bytes\n", len(png))
 				return png, nil
 			}
-			diagf("captureElementOrWindow: CG failed, trying SCK capture\n")
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			if png, err := captureWindowSCK(ctx, windows[0].WindowID); err == nil {
-				diagf("captureElementOrWindow: SCK success %d bytes\n", len(png))
-				return png, nil
-			} else {
-				diagf("captureElementOrWindow: SCK failed: %v\n", err)
-			}
+			diagf("captureElementOrWindow: window capture failed, falling back to AX element screenshot\n")
 		}
 	}
 
@@ -659,39 +737,55 @@ func registerAXFocus(s *mcp.Server) {
 
 		el := app.FocusedElement()
 		if el == nil {
-			// Fallback: perhaps the app has no focused element, but has a main window
 			win := app.MainWindow()
-			if win != nil {
-				return textResult(fmt.Sprintf("no focused element; main window is: %s", elementSummary(win))), nil, nil
+			if win == nil {
+				windows := app.WindowList()
+				if len(windows) > 0 {
+					win = windows[0]
+				}
 			}
-			return nil, nil, fmt.Errorf("no focused element and no main window found (app might be in background or has no standard UI)")
+			if win != nil {
+				return textResult(fmt.Sprintf("no focused element; window fallback is: %s", elementSummary(win))), nil, nil
+			}
+			root := app.Root()
+			if root != nil {
+				return textResult(fmt.Sprintf("no focused element; app root is: %s", elementSummary(root))), nil, nil
+			}
+			return nil, nil, fmt.Errorf("no focused element or window found")
 		}
 		return textResult(elementSummary(el)), nil, nil
 	})
 }
 
 type axOCRInput struct {
-	App    string `json:"app"`
-	Find   string `json:"find,omitempty"`
-	JSON   bool   `json:"json,omitempty"`
-	Layout bool   `json:"layout,omitempty"`
-	Cols   int    `json:"cols,omitempty"`
-	Rows   int    `json:"rows,omitempty"`
+	App      string `json:"app"`
+	Window   string `json:"window,omitempty"`
+	Contains string `json:"contains,omitempty"`
+	Role     string `json:"role,omitempty"`
+	Find     string `json:"find,omitempty"`
+	JSON     bool   `json:"json,omitempty"`
+	Layout   bool   `json:"layout,omitempty"`
+	Cols     int    `json:"cols,omitempty"`
+	Rows     int    `json:"rows,omitempty"`
 }
 
 func registerAXOCR(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "ax_ocr",
-		Description: "Run Apple Vision OCR on an app window screenshot. " +
-			"Returns recognized text with pixel coordinates and bounding boxes. " +
+		Description: "Run Apple Vision OCR on an app window or scoped AX element. " +
+			"Returns recognized text with coordinates in the local space of the captured window or element, plus absolute screen coordinates derived from that target frame. " +
+			"Set window to target a specific window title substring. Use contains/role to OCR a specific AX element such as a sidebar outline. " +
 			"Use 'find' to search for specific text. " +
 			"Use 'layout' for a spatial ASCII rendering that preserves text positions. " +
 			"Useful for VMs, custom-drawn UIs, and elements without accessibility text.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axOCRInput) (*mcp.CallToolResult, any, error) {
-		results, imgW, imgH, err := ocrWindow(args.App)
+		capture, err := captureOCRScope(args.App, args.Window, args.Contains, args.Role)
 		if err != nil {
 			return nil, nil, err
 		}
+		defer capture.Close()
+
+		results := capture.result
 		if args.Find != "" {
 			results = findOCRText(results, args.Find)
 			if len(results) == 0 {
@@ -706,15 +800,15 @@ func registerAXOCR(s *mcp.Server) {
 			if args.Rows > 0 {
 				rows = args.Rows
 			}
-			return textResult(renderOCRLayout(results, imgW, imgH, cols, rows)), nil, nil
+			return textResult(renderOCRLayout(results, capture.imgW, capture.imgH, cols, rows)), nil, nil
 		}
 		if args.JSON {
-			out, err := formatOCRResultsJSON(results)
+			out, err := formatOCRResultsJSON(results, capture.target)
 			if err != nil {
 				return nil, nil, err
 			}
 			return textResult(out), nil, nil
 		}
-		return textResult(formatOCRResults(results)), nil, nil
+		return textResult(formatOCRResults(results, capture.target)), nil, nil
 	})
 }

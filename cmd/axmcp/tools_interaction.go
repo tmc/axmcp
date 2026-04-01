@@ -13,6 +13,10 @@ import (
 
 func registerAXInteractionTools(s *mcp.Server) {
 	registerAXScroll(s)
+	registerAXActionScreenshot(s)
+	registerAXOCRActionDiff(s)
+	registerAXOCRClick(s)
+	registerAXOCRHover(s)
 	registerAXDoubleClick(s)
 	registerAXSetValue(s)
 	registerAXKeyStroke(s)
@@ -113,16 +117,20 @@ func registerAXDoubleClick(s *mcp.Server) {
 
 type axSetValueInput struct {
 	App      string `json:"app"`
-	Contains string `json:"contains"`
+	Contains string `json:"contains,omitempty"`
 	Role     string `json:"role,omitempty"`
 	Value    string `json:"value"`
 }
 
 func registerAXSetValue(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "ax_set_value",
-		Description: "Set the AXValue of an element (text fields, sliders, etc) found by normalized text lookup.",
+		Name: "ax_set_value",
+		Description: "Set the AXValue of an element (text fields, sliders, etc) found by normalized text lookup. " +
+			"When contains is omitted but role is specified, matches by role alone (useful for empty text fields).",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axSetValueInput) (*mcp.CallToolResult, any, error) {
+		if args.Contains == "" && args.Role == "" {
+			return nil, nil, fmt.Errorf("at least one of contains or role is required")
+		}
 		app, err := spinAndOpen(args.App)
 		if err != nil {
 			return nil, nil, err
@@ -240,7 +248,7 @@ type axPerformActionInput struct {
 
 func registerAXPerformAction(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
-		Name: "ax_perform_action",
+		Name:        "ax_perform_action",
 		Description: `Perform a named AX action on an element (e.g. AXPress, AXConfirm, AXCancel, AXShowMenu, AXIncrement, AXDecrement, AXRaise).`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axPerformActionInput) (*mcp.CallToolResult, any, error) {
 		app, err := spinAndOpen(args.App)

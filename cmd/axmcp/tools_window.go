@@ -10,9 +10,75 @@ import (
 )
 
 func registerAXWindowTools(s *mcp.Server) {
+	registerAXWindowClick(s)
+	registerAXWindowHover(s)
 	registerAXWindowMove(s)
 	registerAXWindowRaise(s)
 	registerAXWindowAction(s)
+}
+
+// ── ax_window_click ───────────────────────────────────────────────────────────
+
+type axWindowClickInput struct {
+	App    string `json:"app"`
+	Window string `json:"window,omitempty"`
+	X      int    `json:"x"`
+	Y      int    `json:"y"`
+}
+
+func registerAXWindowClick(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "ax_window_click",
+		Description: `Click a point in an application window using local coordinates from the window's top-left corner. ` +
+			`Useful with ax_ocr results, which report coordinates in the target's local space.`,
+	}, func(_ context.Context, _ *mcp.CallToolRequest, args axWindowClickInput) (*mcp.CallToolResult, any, error) {
+		app, err := spinAndOpen(args.App)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer app.Close()
+
+		win, desc, err := resolveWindow(app, args.Window)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := clickLocalPoint(win, args.X, args.Y); err != nil {
+			return nil, nil, fmt.Errorf("click %s at local %d,%d: %w", desc, args.X, args.Y, err)
+		}
+		return textResult(windowPointResult("clicked", desc, args.X, args.Y)), nil, nil
+	})
+}
+
+// ── ax_window_hover ───────────────────────────────────────────────────────────
+
+type axWindowHoverInput struct {
+	App    string `json:"app"`
+	Window string `json:"window,omitempty"`
+	X      int    `json:"x"`
+	Y      int    `json:"y"`
+}
+
+func registerAXWindowHover(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "ax_window_hover",
+		Description: `Move the pointer to a point in an application window using local coordinates from the window's top-left corner. ` +
+			`Useful with ax_ocr results, which report coordinates in the target's local space.`,
+	}, func(_ context.Context, _ *mcp.CallToolRequest, args axWindowHoverInput) (*mcp.CallToolResult, any, error) {
+		app, err := spinAndOpen(args.App)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer app.Close()
+
+		win, desc, err := resolveWindow(app, args.Window)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := hoverLocalPoint(win, args.X, args.Y); err != nil {
+			return nil, nil, fmt.Errorf("hover %s at local %d,%d: %w", desc, args.X, args.Y, err)
+		}
+		return textResult(windowPointResult("hovered", desc, args.X, args.Y)), nil, nil
+	})
 }
 
 // ── ax_window_move ────────────────────────────────────────────────────────────
@@ -164,4 +230,8 @@ func windowActionToButton(action string) (string, error) {
 	default:
 		return "", fmt.Errorf("unknown window action %q; use close, minimize, or zoom", action)
 	}
+}
+
+func windowPointResult(verb, desc string, x, y int) string {
+	return fmt.Sprintf("%s %s at local %d,%d", verb, desc, x, y)
 }
