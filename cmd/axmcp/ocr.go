@@ -23,9 +23,60 @@ type ocrResult struct {
 	H          int     `json:"h"`
 }
 
+type ocrOutputResult struct {
+	Text          string  `json:"text"`
+	Confidence    float32 `json:"confidence"`
+	X             int     `json:"x"`
+	Y             int     `json:"y"`
+	W             int     `json:"w"`
+	H             int     `json:"h"`
+	CenterX       int     `json:"center_x"`
+	CenterY       int     `json:"center_y"`
+	ScreenX       int     `json:"screen_x"`
+	ScreenY       int     `json:"screen_y"`
+	ScreenW       int     `json:"screen_w"`
+	ScreenH       int     `json:"screen_h"`
+	ScreenCenterX int     `json:"screen_center_x"`
+	ScreenCenterY int     `json:"screen_center_y"`
+}
+
 // Center returns the center point of the text region in pixel coordinates.
 func (r ocrResult) Center() (int, int) {
 	return r.X + r.W/2, r.Y + r.H/2
+}
+
+func expandOCRResults(results []ocrResult, target *axuiautomation.Element) []ocrOutputResult {
+	screenX, screenY := 0, 0
+	if target != nil {
+		frame := target.Frame()
+		screenX = int(math.Round(frame.Origin.X))
+		screenY = int(math.Round(frame.Origin.Y))
+	}
+	return expandOCRResultsAtOrigin(results, screenX, screenY)
+}
+
+func expandOCRResultsAtOrigin(results []ocrResult, screenX, screenY int) []ocrOutputResult {
+	out := make([]ocrOutputResult, 0, len(results))
+	for _, r := range results {
+		centerX, centerY := r.Center()
+		out = append(out, ocrOutputResult{
+			Text:          r.Text,
+			Confidence:    r.Confidence,
+			X:             r.X,
+			Y:             r.Y,
+			W:             r.W,
+			H:             r.H,
+			CenterX:       centerX,
+			CenterY:       centerY,
+			ScreenX:       screenX + r.X,
+			ScreenY:       screenY + r.Y,
+			ScreenW:       r.W,
+			ScreenH:       r.H,
+			ScreenCenterX: screenX + centerX,
+			ScreenCenterY: screenY + centerY,
+		})
+	}
+	return out
 }
 
 // recognizeText runs Apple Vision OCR on PNG image data and returns results
@@ -48,10 +99,11 @@ func recognizeText(pngData []byte, imgWidth, imgHeight int) ([]ocrResult, error)
 
 	observations := request.VNImageBasedRequest.VNRequest.Results()
 	var results []ocrResult
+	seen := map[string]bool{}
 	for _, obs := range observations {
 		textObs := vision.VNRecognizedTextObservationFromID(obs.ID)
 		bb := textObs.BoundingBox()
-		candidates := textObs.TopCandidates(1)
+		candidates := textObs.TopCandidates(3)
 		for _, c := range candidates {
 			// Vision bounding boxes are normalized (0-1), origin at bottom-left.
 			// Convert to pixel coordinates with origin at top-left.
@@ -59,6 +111,11 @@ func recognizeText(pngData []byte, imgWidth, imgHeight int) ([]ocrResult, error)
 			py := int(math.Round((1 - bb.Origin.Y - bb.Size.Height) * float64(imgHeight)))
 			pw := int(math.Round(bb.Size.Width * float64(imgWidth)))
 			ph := int(math.Round(bb.Size.Height * float64(imgHeight)))
+			key := fmt.Sprintf("%s|%d|%d|%d|%d", c.String(), px, py, pw, ph)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
 			results = append(results, ocrResult{
 				Text:       c.String(),
 				Confidence: float32(c.Confidence()),
@@ -88,8 +145,9 @@ func ocrElement(el *axuiautomation.Element) ([]ocrResult, error) {
 	return recognizeText(png, w, h)
 }
 
-// ocrWindow captures a window screenshot via CGWindowListCreateImage and runs OCR.
-func ocrWindow(appName string) ([]ocrResult, int, int, error) {
+// ocrWindow captures a window screenshot and runs OCR using coordinates in the
+// window's local coordinate space rather than raw screenshot pixels.
+func ocrWindow(appName, windowTitle string) ([]ocrResult, int, int, error) {
 	if !ui.IsScreenRecordingTrusted() {
 		if !ui.WaitForScreenRecording(30 * time.Second) {
 			return nil, 0, 0, fmt.Errorf("screen recording permission required for window OCR")
@@ -99,17 +157,28 @@ func ocrWindow(appName string) ([]ocrResult, int, int, error) {
 	if err != nil || len(windows) == 0 {
 		return nil, 0, 0, fmt.Errorf("no windows for %q: %w", appName, err)
 	}
-	png, err := captureWindowCG(windows[0].WindowID)
+	win := windows[0]
+	if windowTitle != "" {
+		var ok bool
+		win, ok = matchWindowInfo(windows, windowTitle)
+		if !ok {
+			return nil, 0, 0, fmt.Errorf("no window matching %q found for %q", windowTitle, appName)
+		}
+	}
+	png, err := captureWindow(win)
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("capture: %w", err)
 	}
-	// Get image dimensions from the PNG data.
-	w, h, err := pngDimensions(png)
-	if err != nil {
-		return nil, 0, 0, fmt.Errorf("read image dimensions: %w", err)
+	coordW := int(math.Round(win.Width))
+	coordH := int(math.Round(win.Height))
+	if coordW <= 0 || coordH <= 0 {
+		coordW, coordH, err = pngDimensions(png)
+		if err != nil {
+			return nil, 0, 0, fmt.Errorf("read image dimensions: %w", err)
+		}
 	}
-	results, err := recognizeText(png, w, h)
-	return results, w, h, err
+	results, err := recognizeText(png, coordW, coordH)
+	return results, coordW, coordH, err
 }
 
 // pngDimensions reads width and height from PNG header (IHDR chunk).
@@ -124,19 +193,19 @@ func pngDimensions(data []byte) (int, int, error) {
 }
 
 // formatOCRResults formats results as human-readable text lines.
-func formatOCRResults(results []ocrResult) string {
+func formatOCRResults(results []ocrResult, target *axuiautomation.Element) string {
 	var buf strings.Builder
-	for _, r := range results {
-		cx, cy := r.Center()
-		fmt.Fprintf(&buf, "[%.2f] %q center=(%d,%d) bounds=(%d,%d %dx%d)\n",
-			r.Confidence, r.Text, cx, cy, r.X, r.Y, r.W, r.H)
+	for _, r := range expandOCRResults(results, target) {
+		fmt.Fprintf(&buf, "[%.2f] %q center=(%d,%d) bounds=(%d,%d %dx%d) screen_center=(%d,%d) screen_bounds=(%d,%d %dx%d)\n",
+			r.Confidence, r.Text, r.CenterX, r.CenterY, r.X, r.Y, r.W, r.H,
+			r.ScreenCenterX, r.ScreenCenterY, r.ScreenX, r.ScreenY, r.ScreenW, r.ScreenH)
 	}
 	return buf.String()
 }
 
 // formatOCRResultsJSON formats results as indented JSON.
-func formatOCRResultsJSON(results []ocrResult) (string, error) {
-	data, err := json.MarshalIndent(results, "", "  ")
+func formatOCRResultsJSON(results []ocrResult, target *axuiautomation.Element) (string, error) {
+	data, err := json.MarshalIndent(expandOCRResults(results, target), "", "  ")
 	if err != nil {
 		return "", err
 	}
@@ -242,13 +311,13 @@ func renderOCRLayout(results []ocrResult, imgW, imgH, cols, rows int) string {
 }
 
 // findOCRText searches OCR results for text containing the query string.
-// Returns results sorted by relevance: exact matches first, then shorter text,
-// then by position (top-to-bottom, left-to-right).
+// Returns results sorted by relevance: normalized exact matches first, then
+// shorter text, then by position (top-to-bottom, left-to-right).
 func findOCRText(results []ocrResult, query string) []ocrResult {
-	query = strings.ToLower(query)
+	queryNorm := normalizeMatchString(query)
 	var matches []ocrResult
 	for _, r := range results {
-		if strings.Contains(strings.ToLower(r.Text), query) {
+		if strings.Contains(normalizeMatchString(r.Text), queryNorm) {
 			matches = append(matches, r)
 		}
 	}
@@ -256,8 +325,8 @@ func findOCRText(results []ocrResult, query string) []ocrResult {
 	for i := 1; i < len(matches); i++ {
 		for j := i; j > 0; j-- {
 			a, b := matches[j], matches[j-1]
-			aExact := strings.EqualFold(a.Text, query)
-			bExact := strings.EqualFold(b.Text, query)
+			aExact := normalizeMatchString(a.Text) == queryNorm
+			bExact := normalizeMatchString(b.Text) == queryNorm
 			swap := false
 			switch {
 			case aExact && !bExact:
