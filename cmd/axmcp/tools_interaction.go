@@ -59,7 +59,7 @@ func registerAXScroll(s *mcp.Server) {
 			return nil, nil, err
 		}
 
-		if err := el.Scroll(dir, amount); err != nil {
+		if _, err := performDefaultScroll(snapshotElement(el, 0, 0), dir, amount); err != nil {
 			return nil, nil, fmt.Errorf("scroll %s: %w", desc, err)
 		}
 		return textResult(fmt.Sprintf("scrolled %s %s by %d lines", desc, args.Direction, amount)), nil, nil
@@ -101,11 +101,12 @@ func registerAXDoubleClick(s *mcp.Server) {
 			return nil, nil, fmt.Errorf("double-click target disappeared: %s", formatMatch(match))
 		}
 
-		if err := target.DoubleClick(); err != nil {
+		doubleClickSummary, err := performDefaultDoubleClick(resolution.target)
+		if err != nil {
 			return nil, nil, fmt.Errorf("double-click %s: %w", formatSnapshot(resolution.target), err)
 		}
 		var buf bytes.Buffer
-		fmt.Fprintf(&buf, "double-clicked %s", formatSnapshot(resolution.target))
+		buf.WriteString(doubleClickSummary)
 		if note := selectionReason(result); note != "" {
 			fmt.Fprintf(&buf, "\n%s", note)
 		}

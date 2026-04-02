@@ -358,6 +358,26 @@ func registerAXClick(s *mcp.Server) {
 			Limit:    500,
 		})
 		if len(result.matches) == 0 {
+			if ui.IsScreenRecordingTrusted() && args.Contains != "" && args.XOffset == nil && args.YOffset == nil {
+				capture, err := captureOCRScope(args.App, args.Window, "", "")
+				if err == nil {
+					defer capture.Close()
+					selection, err := selectOCRMatch(capture.result, args.Contains, nil)
+					if err == nil {
+						summary, resolutionNote, err := performOCRClick(capture, selection.match)
+						if err == nil {
+							var buf bytes.Buffer
+							buf.WriteString(summary)
+							buf.WriteString("\nAX search found no matching element; used OCR fallback")
+							fmt.Fprintf(&buf, "\n%s", selection.resolved)
+							if resolutionNote != "" {
+								fmt.Fprintf(&buf, "\n%s", resolutionNote)
+							}
+							return textResult(buf.String()), nil, nil
+						}
+					}
+				}
+			}
 			msg := noMatchMessage(result)
 			if hint := ocrNoMatchHint(args.App, args.Window, primaryQuery(result.options)); hint != "" {
 				msg += hint
@@ -475,7 +495,7 @@ func registerAXType(s *mcp.Server) {
 				return textResult(buf.String()), nil, nil
 			}
 		}
-		if err := el.Click(); err != nil {
+		if err := focusElement(el); err != nil {
 			return nil, nil, fmt.Errorf("focus %s: %w", formatMatch(result.matches[0]), err)
 		}
 		if err := el.TypeText(args.Text); err != nil {

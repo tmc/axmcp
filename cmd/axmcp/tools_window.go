@@ -180,7 +180,7 @@ func registerAXWindowAction(s *mcp.Server) {
 		if btn == nil {
 			return nil, nil, fmt.Errorf("%s button not found on %s", args.Action, desc)
 		}
-		if err := btn.Click(); err != nil {
+		if _, err := performDefaultClick(snapshotElement(btn, 0, 0)); err != nil {
 			return nil, nil, fmt.Errorf("%s %s: %w", args.Action, desc, err)
 		}
 		return textResult(fmt.Sprintf("%s %s", args.Action, desc)), nil, nil
