@@ -65,8 +65,8 @@ func execPipeline(expr string) (string, error) {
 // terminalStage marks stages that produce their own output.
 var terminalStage = map[string]bool{
 	".": true, "tree": true, "list": true, "json": true,
-	"click": true, "type": true, "attr": true, "click-menu": true,
-	"ocr": true, "action": true,
+	"click": true, "rightclick": true, "hover": true, "type": true, "attr": true, "click-menu": true,
+	"ocr": true, "ocr-hover": true, "highlight": true, "action": true,
 }
 
 // splitPipelineExec splits the pipeline string on // separators and trims stages.
@@ -156,6 +156,69 @@ func writeTree(buf *strings.Builder, e *axuiautomation.Element, indent, maxDepth
 	for _, c := range e.Children() {
 		writeTree(buf, c, indent+1, maxDepth)
 	}
+}
+
+func capturePipelineOCRScope(pc *pipeContext) (*ocrCapture, error) {
+	if pc == nil {
+		return nil, fmt.Errorf("ocr: no pipeline context")
+	}
+	capture := &ocrCapture{}
+	if pc.element != nil {
+		if results, w, h, err := ocrElementWithSize(pc.element); err == nil {
+			capture.target = pc.element
+			capture.desc = formatSnapshot(snapshotElement(pc.element, 0, 0))
+			capture.imgW = w
+			capture.imgH = h
+			capture.result = results
+			return capture, nil
+		}
+	}
+	if pc.app == nil {
+		return nil, fmt.Errorf("ocr: no element or app in context")
+	}
+	target := pc.app.MainWindow()
+	if target == nil {
+		windows := pc.app.WindowList()
+		if len(windows) > 0 {
+			target = windows[0]
+		}
+	}
+	if target == nil {
+		return nil, fmt.Errorf("ocr: no window in context")
+	}
+	if results, w, h, err := ocrElementWithSize(target); err == nil {
+		capture.target = target
+		capture.desc = formatSnapshot(snapshotElement(target, 0, 0))
+		capture.imgW = w
+		capture.imgH = h
+		capture.result = results
+		return capture, nil
+	}
+
+	title := target.Title()
+	var appIDs []string
+	if pid := pc.app.PID(); pid > 0 {
+		appIDs = append(appIDs, strconv.Itoa(int(pid)))
+	}
+	if bundleID := strings.TrimSpace(pc.app.BundleID()); bundleID != "" {
+		appIDs = append(appIDs, bundleID)
+	}
+	if root := pc.app.Root(); root != nil {
+		if name := strings.TrimSpace(root.Title()); name != "" {
+			appIDs = append(appIDs, name)
+		}
+	}
+	for _, appID := range appIDs {
+		if results, w, h, err := ocrWindow(appID, title); err == nil {
+			capture.target = target
+			capture.desc = formatSnapshot(snapshotElement(target, 0, 0))
+			capture.imgW = w
+			capture.imgH = h
+			capture.result = results
+			return capture, nil
+		}
+	}
+	return nil, fmt.Errorf("ocr: could not capture current scope")
 }
 
 func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) error {
@@ -354,10 +417,40 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 				target = resolution.target.element
 			}
 		}
-		if err := target.Click(); err != nil {
+		clickSummary, err := performDefaultClick(snapshotElement(target, 0, 0))
+		if err != nil {
 			return err
 		}
-		fmt.Fprintf(buf, "clicked %s\n", formatSnapshot(snapshotElement(target, 0, 0)))
+		fmt.Fprintln(buf, clickSummary)
+		if pc.findNote != "" {
+			fmt.Fprintln(buf, pc.findNote)
+		}
+		if clickNote != "" {
+			fmt.Fprintln(buf, clickNote)
+		}
+
+	case "rightclick":
+		el := pc.element
+		if el == nil && len(pc.elements) > 0 {
+			el = pc.elements[0]
+		}
+		if el == nil {
+			return fmt.Errorf("rightclick: no element in context")
+		}
+		target := el
+		var clickNote string
+		if pc.findPick != nil && target == pc.findPick.snapshot.element {
+			resolution := resolveClickTarget(*pc.findPick, 50)
+			clickNote = resolution.reason
+			if resolution.target.element != nil {
+				target = resolution.target.element
+			}
+		}
+		clickSummary, err := performDefaultRightClick(snapshotElement(target, 0, 0))
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(buf, clickSummary)
 		if pc.findNote != "" {
 			fmt.Fprintln(buf, pc.findNote)
 		}
@@ -390,7 +483,7 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 				target = resolution.target.element
 			}
 		}
-		if err := target.ClickAt(xOffset, yOffset); err != nil {
+		if err := clickLocalPoint(target, xOffset, yOffset); err != nil {
 			return err
 		}
 		fmt.Fprintf(buf, "clicked-at %d,%d %s\n", xOffset, yOffset, formatSnapshot(snapshotElement(target, 0, 0)))
@@ -409,10 +502,26 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 		if el == nil {
 			return fmt.Errorf("hover: no element in context")
 		}
-		if err := el.Hover(); err != nil {
+		target := el
+		var hoverNote string
+		if pc.findPick != nil && target == pc.findPick.snapshot.element {
+			resolution := resolveClickTarget(*pc.findPick, 50)
+			hoverNote = resolution.reason
+			if resolution.target.element != nil {
+				target = resolution.target.element
+			}
+		}
+		hoverSummary, err := performDefaultHover(snapshotElement(target, 0, 0))
+		if err != nil {
 			return err
 		}
-		fmt.Fprintf(buf, "hovered %s %q\n", el.Role(), el.Title())
+		fmt.Fprintln(buf, hoverSummary)
+		if pc.findNote != "" {
+			fmt.Fprintln(buf, pc.findNote)
+		}
+		if hoverNote != "" {
+			fmt.Fprintln(buf, hoverNote)
+		}
 
 	case "type":
 		if len(args) == 0 {
@@ -581,36 +690,11 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 			}
 		}
 
-		// Capture the current element/window. If element capture fails
-		// (e.g. zero-size frame for VM windows), fall back to window capture.
-		var results []ocrResult
-		var ocrErr error
-		var imgW, imgH int
-		if pc.element != nil {
-			results, ocrErr = ocrElement(pc.element)
-			if ocrErr == nil {
-				frame := pc.element.Frame()
-				imgW = int(frame.Size.Width)
-				imgH = int(frame.Size.Height)
-			}
+		capture, err := capturePipelineOCRScope(pc)
+		if err != nil {
+			return err
 		}
-		if ocrErr != nil || pc.element == nil {
-			// Fall back to window-level capture, trying title then bundle ID.
-			if pc.app != nil {
-				name := pc.app.Root().Title()
-				if name != "" {
-					results, imgW, imgH, ocrErr = ocrWindow(name)
-				}
-				if (name == "" || ocrErr != nil) && pc.app.BundleID() != "" {
-					results, imgW, imgH, ocrErr = ocrWindow(pc.app.BundleID())
-				}
-			} else {
-				return fmt.Errorf("ocr: no element or app in context")
-			}
-		}
-		if ocrErr != nil {
-			return fmt.Errorf("ocr: %w", ocrErr)
-		}
+		results := capture.result
 
 		if findQuery != "" {
 			results = findOCRText(results, findQuery)
@@ -619,16 +703,68 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 			}
 		}
 		if layoutOut {
-			buf.WriteString(renderOCRLayout(results, imgW, imgH, layoutCols, layoutRows))
+			buf.WriteString(renderOCRLayout(results, capture.imgW, capture.imgH, layoutCols, layoutRows))
 		} else if jsonOut {
-			s, err := formatOCRResultsJSON(results)
+			s, err := formatOCRResultsJSON(results, capture.target)
 			if err != nil {
 				return err
 			}
 			buf.WriteString(s)
 			buf.WriteByte('\n')
 		} else {
-			buf.WriteString(formatOCRResults(results))
+			buf.WriteString(formatOCRResults(results, capture.target))
+		}
+
+	case "ocr-hover":
+		if len(args) == 0 {
+			return fmt.Errorf("ocr-hover: requires text argument")
+		}
+		capture, err := capturePipelineOCRScope(pc)
+		if err != nil {
+			return err
+		}
+		matches := findOCRText(capture.result, strings.Join(args, " "))
+		if len(matches) == 0 {
+			return fmt.Errorf("ocr-hover: no text matching %q found", strings.Join(args, " "))
+		}
+		summary, resolutionNote, err := performOCRHover(capture, matches[0])
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(buf, summary)
+		if resolutionNote != "" {
+			fmt.Fprintln(buf, resolutionNote)
+		}
+
+	case "highlight":
+		if len(args) == 0 {
+			return fmt.Errorf("highlight: requires text argument")
+		}
+		capture, err := capturePipelineOCRScope(pc)
+		if err != nil {
+			return err
+		}
+		query := strings.Join(args, " ")
+		rawMatches := findOCRText(capture.result, query)
+		if len(rawMatches) == 0 {
+			return fmt.Errorf("highlight: no text matching %q found", query)
+		}
+		count, err := highlightOCRMatches(capture, rawMatches, highlightDuration)
+		if err != nil {
+			return err
+		}
+		if count == len(rawMatches) {
+			fmt.Fprintf(buf, "highlighted %d OCR match", count)
+		} else {
+			fmt.Fprintf(buf, "highlighted %d unique OCR match", count)
+		}
+		if count != 1 {
+			buf.WriteByte('e')
+			buf.WriteByte('s')
+		}
+		fmt.Fprintf(buf, " for %q in %s for %s\n", query, capture.desc, highlightDuration)
+		if count != len(rawMatches) {
+			fmt.Fprintf(buf, "showing %d unique boxes from %d OCR matches\n", count, len(rawMatches))
 		}
 
 	case "action":
@@ -662,11 +798,14 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 			"  first\n"+
 			"  find [--role R] [--title T] [--contains C] [--id I]  (normalized text match)\n"+
 			"  ocr [--find TEXT] [--json] [--layout] [--cols N] [--rows N]\n"+
+			"  ocr-hover <text>\n"+
+			"  highlight <text>\n"+
 			"  .\n"+
 			"  tree [--depth N]\n"+
 			"  list\n"+
 			"  json\n"+
 			"  click\n"+
+			"  rightclick\n"+
 			"  click-at <x> <y>\n"+
 			"  hover\n"+
 			"  type <text>\n"+
