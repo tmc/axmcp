@@ -600,7 +600,7 @@ type axListWindowsInput struct {
 func registerAXListWindows(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "ax_list_windows",
-		Description: "List windows for an application by name or bundle ID. Returns window IDs, titles, and bounds.",
+		Description: "List windows for an application by name or bundle ID. Returns window titles, bounds, and display index (0=main).",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axListWindowsInput) (*mcp.CallToolResult, any, error) {
 		app, err := spinAndOpen(args.App)
 		if err != nil {
@@ -612,23 +612,26 @@ func registerAXListWindows(s *mcp.Server) {
 		if len(wins) == 0 {
 			return nil, nil, fmt.Errorf("no windows found for %q", args.App)
 		}
+		displays := activeDisplayBounds()
 		type winInfo struct {
-			Title  string `json:"title"`
-			X      int    `json:"x"`
-			Y      int    `json:"y"`
-			Width  int    `json:"width"`
-			Height int    `json:"height"`
+			Title   string `json:"title"`
+			X       int    `json:"x"`
+			Y       int    `json:"y"`
+			Width   int    `json:"width"`
+			Height  int    `json:"height"`
+			Display int    `json:"display"`
 		}
 		result := make([]winInfo, 0, len(wins))
 		for _, w := range wins {
 			x, y := w.Position()
 			width, height := w.Size()
 			result = append(result, winInfo{
-				Title:  w.Title(),
-				X:      x,
-				Y:      y,
-				Width:  width,
-				Height: height,
+				Title:   w.Title(),
+				X:       x,
+				Y:       y,
+				Width:   width,
+				Height:  height,
+				Display: displayIndexForPoint(displays, float64(x), float64(y)),
 			})
 		}
 		data, err := json.Marshal(result)

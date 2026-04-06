@@ -395,6 +395,46 @@ func captureElementWithPadding(el *axuiautomation.Element, padding int) ([]byte,
 	return captureRect(padded)
 }
 
+// activeDisplayBounds returns the bounds of all active displays,
+// with display 0 being the main display.
+func activeDisplayBounds() []corefoundation.CGRect {
+	var displayIDs [16]uint32
+	var count uint32
+	coregraphics.CGGetActiveDisplayList(16, &displayIDs[0], &count)
+	if count == 0 {
+		return nil
+	}
+	bounds := make([]corefoundation.CGRect, count)
+	// Ensure main display is index 0.
+	mainID := coregraphics.CGMainDisplayID()
+	mainIdx := -1
+	for i := range count {
+		if displayIDs[i] == mainID {
+			mainIdx = int(i)
+			break
+		}
+	}
+	if mainIdx > 0 {
+		displayIDs[0], displayIDs[mainIdx] = displayIDs[mainIdx], displayIDs[0]
+	}
+	for i := range count {
+		bounds[i] = coregraphics.CGDisplayBounds(displayIDs[i])
+	}
+	return bounds
+}
+
+// displayIndexForPoint returns the index of the display containing the
+// given point, or 0 if no display matches.
+func displayIndexForPoint(displays []corefoundation.CGRect, x, y float64) int {
+	for i, d := range displays {
+		if x >= d.Origin.X && x < d.Origin.X+d.Size.Width &&
+			y >= d.Origin.Y && y < d.Origin.Y+d.Size.Height {
+			return i
+		}
+	}
+	return 0
+}
+
 // captureWindowSCK captures a window screenshot using ScreenCaptureKit.
 // WARNING: SCK dispatches work to the main thread which can trigger process
 // termination when NSApplication.run() is driving the event loop. Prefer
