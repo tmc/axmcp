@@ -15,6 +15,7 @@ import (
 	"github.com/tmc/apple/coregraphics"
 	"github.com/tmc/apple/objc"
 	"github.com/tmc/apple/screencapturekit"
+	"github.com/tmc/apple/x/axuiautomation"
 	"github.com/tmc/xcmcp/internal/ui"
 )
 
@@ -357,6 +358,41 @@ func captureRect(rect corefoundation.CGRect) ([]byte, error) {
 	}
 	diagf("captureRect: got %d bytes\n", len(data))
 	return data, nil
+}
+
+// captureElementWithPadding captures a screenshot of the area around an AX
+// element, expanded by the given padding in pixels on all sides. Uses
+// screencapture -R on the padded rect.
+func captureElementWithPadding(el *axuiautomation.Element, padding int) ([]byte, error) {
+	if el == nil {
+		return nil, fmt.Errorf("nil element")
+	}
+	if !ui.IsScreenRecordingTrusted() {
+		if !ui.WaitForScreenRecording(30 * time.Second) {
+			return nil, fmt.Errorf("screenshot failed: Screen Recording permission required")
+		}
+	}
+	frame := el.Frame()
+	p := float64(padding)
+	padded := corefoundation.CGRect{
+		Origin: corefoundation.CGPoint{
+			X: frame.Origin.X - p,
+			Y: frame.Origin.Y - p,
+		},
+		Size: corefoundation.CGSize{
+			Width:  frame.Size.Width + 2*p,
+			Height: frame.Size.Height + 2*p,
+		},
+	}
+	if padded.Origin.X < 0 {
+		padded.Size.Width += padded.Origin.X
+		padded.Origin.X = 0
+	}
+	if padded.Origin.Y < 0 {
+		padded.Size.Height += padded.Origin.Y
+		padded.Origin.Y = 0
+	}
+	return captureRect(padded)
 }
 
 // captureWindowSCK captures a window screenshot using ScreenCaptureKit.

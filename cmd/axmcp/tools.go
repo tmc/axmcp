@@ -609,7 +609,7 @@ func registerAXScreenshot(s *mcp.Server) {
 
 Prefer targeting a specific element with contains/role for smaller, faster, more token-efficient results. Set window to a title substring when an app has multiple windows and you want a specific one. Full app window captures are larger and should only be used when you need to see the complete window layout.
 
-Set full_screen=true to capture the entire display (requires explicit opt-in due to large image size). Set artifact_path to save the PNG to a durable file.`,
+Set padding to expand the capture rect around a targeted element by N pixels on each side (useful for seeing surrounding context). Set full_screen=true to capture the entire display (requires explicit opt-in due to large image size). Set artifact_path to save the PNG to a durable file.`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axScreenshotInput) (*mcp.CallToolResult, any, error) {
 		var png []byte
 		if args.FullScreen {
@@ -644,7 +644,11 @@ Set full_screen=true to capture the entire display (requires explicit opt-in due
 				return nil, nil, fmt.Errorf("%s", noMatchMessage(result))
 			}
 			el := result.matches[0].snapshot.element
-			png, err = captureElementOrWindow(args.App, true, el)
+			if args.Padding > 0 {
+				png, err = captureElementWithPadding(el, args.Padding)
+			} else {
+				png, err = captureElementOrWindow(args.App, true, el)
+			}
 			if err != nil {
 				return nil, nil, err
 			}
