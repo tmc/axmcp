@@ -431,19 +431,41 @@ func describeSearch(options searchOptions) string {
 	return "element " + strings.Join(parts, ", ")
 }
 
+// hasWebContent checks if any candidate in the result set is a web area,
+// indicating the UI is rendered via a webview (e.g. Electron) where AX
+// visibility is limited.
+func hasWebContent(result matchResult) bool {
+	for _, c := range result.candidates {
+		if c.record.role == "AXWebArea" {
+			return true
+		}
+	}
+	return false
+}
+
 func noMatchMessage(result matchResult) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s not found", describeSearch(result.options))
 	candidates := shortlistCandidates(result, 5)
 	if len(candidates) == 0 {
+		if hasWebContent(result) {
+			b.WriteString(webContentHint)
+		}
 		return b.String()
 	}
 	b.WriteString(". Candidates:\n")
 	for _, candidate := range candidates {
 		fmt.Fprintf(&b, "  - %s\n", formatSnapshot(candidate))
 	}
+	if hasWebContent(result) {
+		b.WriteString(webContentHint)
+	}
 	return strings.TrimRight(b.String(), "\n")
 }
+
+const webContentHint = "\nNote: AXWebArea detected — this app uses a webview (e.g. Electron). " +
+	"Web-rendered UI elements may not appear in the AX tree. " +
+	"Use CDP tools (Chrome DevTools Protocol) for web content interaction."
 
 func selectionReason(result matchResult) string {
 	if len(result.matches) <= 1 {
