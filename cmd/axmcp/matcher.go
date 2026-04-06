@@ -21,6 +21,7 @@ type searchOptions struct {
 	Title      string
 	Contains   string
 	Identifier string
+	Exact      bool
 	Limit      int
 }
 
@@ -230,7 +231,7 @@ func matchElement(snapshot elementSnapshot, options searchOptions) (matchedEleme
 	case options.Title != "":
 		field, kind, ok = matchTextField(record, options.Title, true)
 	case options.Contains != "":
-		field, kind, ok = matchTextField(record, options.Contains, false)
+		field, kind, ok = matchTextField(record, options.Contains, options.Exact)
 	}
 	if !ok {
 		return matchedElement{}, false
@@ -413,6 +414,8 @@ func describeSearch(options searchOptions) string {
 	switch {
 	case options.Title != "":
 		parts = append(parts, fmt.Sprintf("exact match %q", options.Title))
+	case options.Contains != "" && options.Exact:
+		parts = append(parts, fmt.Sprintf("exact match %q", options.Contains))
 	case options.Contains != "":
 		parts = append(parts, fmt.Sprintf("containing %q", options.Contains))
 	}

@@ -231,6 +231,7 @@ type axFindInput struct {
 	Role     string `json:"role,omitempty"`
 	Title    string `json:"title,omitempty"`
 	Contains string `json:"contains,omitempty"`
+	Exact    bool   `json:"exact,omitempty"`
 	Limit    int    `json:"limit,omitempty"`
 }
 
@@ -238,6 +239,7 @@ func registerAXFind(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "ax_find",
 		Description: "Find AX elements in an app by role, exact text, or substring across title, description, value, and identifier. " +
+			"Set exact=true with contains to require an exact match instead of substring. " +
 			"Set window to scope the search to a specific window title substring.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axFindInput) (*mcp.CallToolResult, any, error) {
 		app, err := spinAndOpen(args.App)
@@ -258,6 +260,7 @@ func registerAXFind(s *mcp.Server) {
 			Role:     args.Role,
 			Title:    args.Title,
 			Contains: args.Contains,
+			Exact:    args.Exact,
 			Limit:    limit,
 		})
 		var buf bytes.Buffer
@@ -330,6 +333,7 @@ type axClickInput struct {
 	Window   string `json:"window,omitempty"`
 	Contains string `json:"contains"`
 	Role     string `json:"role,omitempty"`
+	Exact    bool   `json:"exact,omitempty"`
 	XOffset  *int   `json:"x_offset,omitempty"`
 	YOffset  *int   `json:"y_offset,omitempty"`
 }
@@ -339,6 +343,7 @@ func registerAXClick(s *mcp.Server) {
 		Name: "ax_click",
 		Description: "Click an element in an app found by normalized text lookup across title, description, value, and identifier. " +
 			"Set window to scope the search to a specific window title substring. " +
+			"Set exact=true to require an exact text match (prevents 'Settings' from matching 'Services Settings'). " +
 			"Provide x_offset and y_offset to click at a specific point relative to the element's top-left corner. " +
 			"Use the window parameter to avoid matching system menu items when targeting in-window elements.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axClickInput) (*mcp.CallToolResult, any, error) {
@@ -355,6 +360,7 @@ func registerAXClick(s *mcp.Server) {
 		result := findElements(root, searchOptions{
 			Role:     args.Role,
 			Contains: args.Contains,
+			Exact:    args.Exact,
 			Limit:    500,
 		})
 		if len(result.matches) == 0 {
@@ -590,6 +596,8 @@ type axScreenshotInput struct {
 	Window       string `json:"window,omitempty"`
 	Contains     string `json:"contains,omitempty"`
 	Role         string `json:"role,omitempty"`
+	Exact        bool   `json:"exact,omitempty"`
+	Padding      int    `json:"padding,omitempty"`
 	ArtifactPath string `json:"artifact_path,omitempty"`
 	FullScreen   bool   `json:"full_screen,omitempty"`
 }
@@ -629,6 +637,7 @@ Set full_screen=true to capture the entire display (requires explicit opt-in due
 			result := findElements(root, searchOptions{
 				Role:     args.Role,
 				Contains: args.Contains,
+				Exact:    args.Exact,
 				Limit:    500,
 			})
 			if len(result.matches) == 0 {
