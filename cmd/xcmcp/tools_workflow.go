@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/tmc/xcmcp/internal/macosapp"
-	"github.com/tmc/xcmcp/internal/xcodebuild"
+	"github.com/tmc/axmcp/internal/macosapp"
+	"github.com/tmc/axmcp/internal/xcodebuild"
 )
 
 type ShowBuildProductsOutput struct {

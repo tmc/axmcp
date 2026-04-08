@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/tmc/xcmcp/internal/ui"
+	"github.com/tmc/axmcp/internal/ui"
 )
 
 // toolset describes an optional group of tools that can be enabled at runtime.

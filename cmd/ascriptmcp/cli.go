@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/tmc/xcmcp/internal/sdef"
+	"github.com/tmc/axmcp/internal/sdef"
 )
 
 // isTTY reports whether stdin is an interactive terminal.

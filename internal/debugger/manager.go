@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/tmc/xcmcp/internal/macosapp"
+	"github.com/tmc/axmcp/internal/macosapp"
 )
 
 type Selector struct {

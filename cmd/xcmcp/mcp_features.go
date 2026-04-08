@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/tmc/xcmcp/internal/project"
+	"github.com/tmc/axmcp/internal/project"
 )
 
 var (

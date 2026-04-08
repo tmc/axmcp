@@ -18,7 +18,7 @@ import (
 	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/coregraphics"
 	"github.com/tmc/apple/x/axuiautomation"
-	"github.com/tmc/xcmcp/internal/ui"
+	"github.com/tmc/axmcp/internal/ui"
 )
 
 // axTimeout is the AX messaging timeout applied to all opened apps.

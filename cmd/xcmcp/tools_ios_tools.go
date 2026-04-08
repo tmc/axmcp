@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/tmc/xcmcp/internal/purego/coresim"
+	"github.com/tmc/axmcp/internal/purego/coresim"
 )
 
 // IOSTreeOutput represents the output of ios_tree.

@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/tmc/xcmcp/internal/debugger"
+	"github.com/tmc/axmcp/internal/debugger"
 )
 
 var debugManager = debugger.NewManager()

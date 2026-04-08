@@ -19,7 +19,7 @@ import (
 	"github.com/tmc/apple/appkit"
 	"github.com/tmc/apple/foundation"
 	"github.com/tmc/macgo"
-	"github.com/tmc/xcmcp/internal/ui"
+	"github.com/tmc/axmcp/internal/ui"
 )
 
 // hasArg reports whether arg appears anywhere in os.Args[1:].

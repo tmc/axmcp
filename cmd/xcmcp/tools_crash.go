@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/tmc/xcmcp/internal/crash"
+	"github.com/tmc/axmcp/internal/crash"
 )
 
 type CrashListOutput struct {

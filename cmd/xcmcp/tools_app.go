@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/tmc/xcmcp/internal/simctl"
-	"github.com/tmc/xcmcp/internal/ui"
+	"github.com/tmc/axmcp/internal/simctl"
+	"github.com/tmc/axmcp/internal/ui"
 )
 
 // App Lifecycle

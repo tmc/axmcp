@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/tmc/xcmcp/internal/macosapp"
+	"github.com/tmc/axmcp/internal/macosapp"
 )
 
 type fakeProcess struct {

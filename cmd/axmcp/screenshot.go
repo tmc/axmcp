@@ -16,7 +16,7 @@ import (
 	"github.com/tmc/apple/objc"
 	"github.com/tmc/apple/screencapturekit"
 	"github.com/tmc/apple/x/axuiautomation"
-	"github.com/tmc/xcmcp/internal/ui"
+	"github.com/tmc/axmcp/internal/ui"
 )
 
 type windowInfo struct {

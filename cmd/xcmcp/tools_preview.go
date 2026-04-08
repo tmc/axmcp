@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	previewutil "github.com/tmc/xcmcp/internal/preview"
+	previewutil "github.com/tmc/axmcp/internal/preview"
 )
 
 const swiftUIPreviewPromptName = "swiftui_preview_block"

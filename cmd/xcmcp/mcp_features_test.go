@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/tmc/xcmcp/internal/resources"
+	"github.com/tmc/axmcp/internal/resources"
 )
 
 func TestServerInitializeInstructionsAndCompletions(t *testing.T) {

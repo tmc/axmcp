@@ -1,23 +1,24 @@
-# xcmcp
+# axmcp
 
-`xcmcp` is a macOS-focused toolkit for Xcode, Simulator, Accessibility, and AppleScript automation.
+`axmcp` is a macOS toolkit built around two complementary MCP servers:
 
-The repository has two main faces:
+- `cmd/axmcp` for direct macOS Accessibility automation, OCR-assisted interaction, screenshots, and window control.
+- `cmd/xcmcp` for Xcode projects, builds, tests, simulators, devices, previews, and IDE-facing workflows.
 
-- `cmd/xcmcp` is a stdio MCP server for project inspection, build and test, simulator control, device control, UI inspection, and Xcode integration.
-- `cmd/xc` is a direct CLI built on the same packages for local use from a terminal.
+The repository also includes companion CLIs built on the same packages:
 
-It also includes focused tools for macOS automation:
-
-- `cmd/ax` and `cmd/axmcp` for the macOS Accessibility API.
+- `cmd/ax` for direct terminal access to the macOS Accessibility API.
+- `cmd/xc` for terminal access to Xcode, simulator, device, and UI workflows.
 - `cmd/ascript` and `cmd/ascriptmcp` for AppleScript dictionaries and scriptable applications.
+
+If you need to drive native macOS apps, start with `axmcp`. If you need to inspect or operate on Xcode projects and Apple development tooling, start with `xcmcp`.
 
 ## Requirements
 
 - macOS with Xcode installed.
 - Command Line Tools available through `xcrun`.
 - Go 1.26 or newer to build from source.
-- Accessibility permission for commands that drive the UI, including `xcmcp`, `xc`, `ax`, and `axmcp`.
+- Accessibility permission for commands that drive the UI, including `axmcp`, `ax`, `xcmcp`, and `xc`.
 - A booted simulator or connected device for simulator and device workflows.
 
 ## Install
@@ -36,7 +37,15 @@ go build ./...
 
 ## Quick Start
 
-Run the MCP server:
+Run the Accessibility MCP server:
+
+```sh
+axmcp
+```
+
+`axmcp` exposes direct macOS UI automation tools, including AX tree inspection, text lookup, screenshots, OCR, pointer actions, keyboard input, and window operations.
+
+Run the Xcode and simulator MCP server:
 
 ```sh
 xcmcp
@@ -60,11 +69,14 @@ Or all at once:
 xcmcp --enable-all
 ```
 
-An MCP client configuration usually looks like this:
+An MCP client configuration can register either server or both:
 
 ```json
 {
   "mcpServers": {
+    "axmcp": {
+      "command": "/absolute/path/to/axmcp"
+    },
     "xcmcp": {
       "command": "/absolute/path/to/xcmcp",
       "args": [
@@ -80,6 +92,17 @@ An MCP client configuration usually looks like this:
 Within a session, optional toolsets can also be enabled dynamically with `list_toolsets` and `enable_toolset`.
 
 ## Commands
+
+### `axmcp`
+
+`axmcp` is the Accessibility-first MCP server. It targets running macOS applications directly through the Accessibility API, with OCR and screenshot fallbacks for custom-drawn or partially inaccessible UIs.
+
+Representative tools include:
+
+- `ax_apps`, `ax_tree`, `ax_find`, `ax_focus`
+- `ax_click`, `ax_type`, `ax_menu`, `ax_set_value`, `ax_perform_action`, `ax_keystroke`
+- `ax_screenshot`, `ax_ocr`, `ax_ocr_diff`, `ax_action_screenshot`, `ax_ocr_action_diff`
+- `ax_window_click`, `ax_window_hover`, `ax_window_move`, `ax_window_raise`, `ax_window_action`
 
 ### `xcmcp`
 
@@ -125,9 +148,9 @@ xc ios tree --udid booted
 xc xcode add-target --template "Widget Extension" --product MyWidget
 ```
 
-### `ax` and `axmcp`
+### `ax`
 
-These commands target the macOS Accessibility API directly.
+`ax` is the direct CLI companion to `axmcp`.
 
 Examples:
 
@@ -136,8 +159,6 @@ ax apps
 ax tree com.apple.finder
 ax find com.apple.dt.Xcode --role AXButton --title Build
 ```
-
-`axmcp` exposes similar functionality as MCP tools.
 
 ### `ascript` and `ascriptmcp`
 
@@ -163,8 +184,7 @@ ascript script /Applications/Finder.app activate
 
 ## Internal Layout
 
-This module is command-first. The reusable helper packages live under `internal/`
-and are not intended as a public import surface.
+This module is command-first. The reusable helper packages live under `internal/` and are not intended as a public import surface.
 
 The main internal packages are:
 
@@ -182,6 +202,7 @@ The main internal packages are:
 ## Notes
 
 - This repository targets macOS. Many packages use AppKit, Accessibility, or Apple developer tools directly.
+- The repository name is `axmcp`, but it intentionally contains both `axmcp` and `xcmcp`. They cover different layers of the same workflow surface.
 - UI automation depends on macOS Accessibility permission and on the target app being reachable through the Accessibility tree.
 - Some simulator and Xcode automation features rely on private or implementation-defined behavior and are best treated as developer tooling rather than a stable public protocol.
 - The supported entry points are the commands in `cmd/`. The internal packages may change without notice.

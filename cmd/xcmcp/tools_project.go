@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/tmc/xcmcp/internal/project"
-	"github.com/tmc/xcmcp/internal/xcodebuild"
+	"github.com/tmc/axmcp/internal/project"
+	"github.com/tmc/axmcp/internal/xcodebuild"
 )
 
 // Discover Projects

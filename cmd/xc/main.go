@@ -13,14 +13,14 @@ import (
 	"github.com/tmc/apple/appkit"
 	"github.com/tmc/apple/x/axuiautomation"
 	"github.com/tmc/macgo"
-	"github.com/tmc/xcmcp/internal/crash"
-	"github.com/tmc/xcmcp/internal/devicectl"
-	"github.com/tmc/xcmcp/internal/project"
-	"github.com/tmc/xcmcp/internal/purego/coresim"
-	"github.com/tmc/xcmcp/internal/screen"
-	"github.com/tmc/xcmcp/internal/simctl"
-	"github.com/tmc/xcmcp/internal/ui"
-	"github.com/tmc/xcmcp/internal/xcodebuild"
+	"github.com/tmc/axmcp/internal/crash"
+	"github.com/tmc/axmcp/internal/devicectl"
+	"github.com/tmc/axmcp/internal/project"
+	"github.com/tmc/axmcp/internal/purego/coresim"
+	"github.com/tmc/axmcp/internal/screen"
+	"github.com/tmc/axmcp/internal/simctl"
+	"github.com/tmc/axmcp/internal/ui"
+	"github.com/tmc/axmcp/internal/xcodebuild"
 )
 
 func main() {

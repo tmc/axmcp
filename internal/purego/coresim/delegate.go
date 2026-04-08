@@ -9,7 +9,7 @@ import (
 	"unsafe"
 
 	"github.com/ebitengine/purego"
-	"github.com/tmc/xcmcp/internal/purego/objc"
+	"github.com/tmc/axmcp/internal/purego/objc"
 )
 
 // Exported types for use in accessibility.go

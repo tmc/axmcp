@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/tmc/xcmcp/internal/purego/coresim"
-	"github.com/tmc/xcmcp/internal/ui"
+	"github.com/tmc/axmcp/internal/purego/coresim"
+	"github.com/tmc/axmcp/internal/ui"
 )
 
 // UI Interaction

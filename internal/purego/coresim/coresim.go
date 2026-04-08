@@ -6,7 +6,7 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/tmc/xcmcp/internal/purego/objc"
+	"github.com/tmc/axmcp/internal/purego/objc"
 )
 
 var (

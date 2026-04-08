@@ -12,7 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/tmc/apple/x/axuiautomation"
-	"github.com/tmc/xcmcp/internal/ui"
+	"github.com/tmc/axmcp/internal/ui"
 	"golang.org/x/sys/unix"
 )
 

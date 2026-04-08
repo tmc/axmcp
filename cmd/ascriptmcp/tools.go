@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/tmc/xcmcp/internal/sdef"
+	"github.com/tmc/axmcp/internal/sdef"
 )
 
 // ── ascript_list_apps ────────────────────────────────────────────────────────────

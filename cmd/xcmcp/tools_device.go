@@ -5,9 +5,9 @@ import (
 	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/tmc/xcmcp/internal/screen"
-	"github.com/tmc/xcmcp/internal/simctl"
-	"github.com/tmc/xcmcp/internal/ui"
+	"github.com/tmc/axmcp/internal/screen"
+	"github.com/tmc/axmcp/internal/simctl"
+	"github.com/tmc/axmcp/internal/ui"
 )
 
 // Device Action

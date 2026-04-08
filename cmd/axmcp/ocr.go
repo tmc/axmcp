@@ -10,7 +10,7 @@ import (
 	"github.com/tmc/apple/foundation"
 	"github.com/tmc/apple/vision"
 	"github.com/tmc/apple/x/axuiautomation"
-	"github.com/tmc/xcmcp/internal/ui"
+	"github.com/tmc/axmcp/internal/ui"
 )
 
 // ocrResult holds a single recognized text region with its pixel coordinates.

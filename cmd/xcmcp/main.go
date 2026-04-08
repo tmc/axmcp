@@ -14,8 +14,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/tmc/apple/appkit"
 	"github.com/tmc/macgo"
-	"github.com/tmc/xcmcp/internal/resources"
-	"github.com/tmc/xcmcp/internal/ui"
+	"github.com/tmc/axmcp/internal/resources"
+	"github.com/tmc/axmcp/internal/ui"
 )
 
 // Define flags at package level so they can be registered before macgo.Start.

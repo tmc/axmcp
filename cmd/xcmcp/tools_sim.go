@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/tmc/xcmcp/internal/simctl"
+	"github.com/tmc/axmcp/internal/simctl"
 )
 
 // List Simulators

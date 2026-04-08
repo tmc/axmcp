@@ -1,4 +1,4 @@
-module github.com/tmc/xcmcp
+module github.com/tmc/axmcp
 
 go 1.26
 
