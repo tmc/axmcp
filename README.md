@@ -100,9 +100,19 @@ Within a session, optional toolsets can also be enabled dynamically with `list_t
 Representative tools include:
 
 - `ax_apps`, `ax_tree`, `ax_find`, `ax_focus`
-- `ax_click`, `ax_type`, `ax_menu`, `ax_set_value`, `ax_perform_action`, `ax_keystroke`
+- `ax_click`, `ax_drag`, `ax_type`, `ax_menu`, `ax_set_value`, `ax_perform_action`, `ax_keystroke`, `ax_zoom`, `ax_pinch`
 - `ax_screenshot`, `ax_ocr`, `ax_ocr_diff`, `ax_action_screenshot`, `ax_ocr_action_diff`
-- `ax_window_click`, `ax_window_hover`, `ax_window_move`, `ax_window_raise`, `ax_window_action`
+- `ax_window_click`, `ax_window_drag`, `ax_window_hover`, `ax_window_move`, `ax_window_raise`, `ax_window_action`
+
+### `computer-use-mcp`
+
+`computer-use-mcp` is the stateful, session-oriented compatibility server. It keeps a narrow computer-use contract on top of macOS accessibility and screenshot capture.
+
+Representative tools include:
+
+- `list_apps`, `get_app_state`
+- `click`, `perform_secondary_action`, `scroll`, `drag`
+- `type_text`, `press_key`, `set_value`
 
 ### `xcmcp`
 
