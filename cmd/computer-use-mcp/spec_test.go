@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/tmc/axmcp/internal/computeruse"
 )
 
 func TestComputerUseSpecParity(t *testing.T) {
@@ -63,6 +64,26 @@ func TestComputerUsePermissionsResource(t *testing.T) {
 	}
 	if _, err := cs.ListResourceTemplates(ctx, nil); err == nil || !strings.Contains(err.Error(), "Method not found") {
 		t.Fatalf("ListResourceTemplates error = %v, want method not found", err)
+	}
+}
+
+func TestRequiresRefreshResult(t *testing.T) {
+	res, payload, err := requiresRefreshResult("click", "Brave")
+	if err != nil {
+		t.Fatalf("requiresRefreshResult error = %v", err)
+	}
+	if res == nil || !res.IsError {
+		t.Fatalf("requiresRefreshResult result = %#v, want tool error", res)
+	}
+	action, ok := payload.(computeruse.ActionResult)
+	if !ok {
+		t.Fatalf("payload type = %T, want ActionResult", payload)
+	}
+	if !action.RequiresRefresh {
+		t.Fatalf("RequiresRefresh = false, want true")
+	}
+	if !strings.Contains(action.Message, "call get_app_state again") {
+		t.Fatalf("Message = %q, want refresh guidance", action.Message)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/ebitengine/purego"
 	"github.com/tmc/apple/corefoundation"
+	"github.com/tmc/apple/coregraphics"
 	"github.com/tmc/apple/x/axuiautomation"
 	"github.com/tmc/axmcp/internal/computeruse"
 	"github.com/tmc/axmcp/internal/ghostcursor"
@@ -245,6 +246,52 @@ func SendKeyCombo(spec string) error {
 		return err
 	}
 	return axuiautomation.SendKeyCombo(combo.KeyCode, combo.Shift, combo.Control, combo.Option, combo.Command)
+}
+
+func SendKeyComboToPID(pid int32, spec string) error {
+	if pid <= 0 {
+		return fmt.Errorf("invalid pid %d", pid)
+	}
+	combo, err := ParseKeyCombo(spec)
+	if err != nil {
+		return err
+	}
+	flags := keyEventFlags(combo)
+	keyDown := coregraphics.CGEventCreateKeyboardEvent(0, combo.KeyCode, true)
+	if keyDown == 0 {
+		return fmt.Errorf("failed to create key down event")
+	}
+	defer corefoundation.CFRelease(corefoundation.CFTypeRef(keyDown))
+	coregraphics.CGEventSetFlags(keyDown, flags)
+	coregraphics.CGEventPostToPid(pid, keyDown)
+
+	time.Sleep(10 * time.Millisecond)
+
+	keyUp := coregraphics.CGEventCreateKeyboardEvent(0, combo.KeyCode, false)
+	if keyUp == 0 {
+		return fmt.Errorf("failed to create key up event")
+	}
+	defer corefoundation.CFRelease(corefoundation.CFTypeRef(keyUp))
+	coregraphics.CGEventSetFlags(keyUp, flags)
+	coregraphics.CGEventPostToPid(pid, keyUp)
+	return nil
+}
+
+func keyEventFlags(combo KeyCombo) coregraphics.CGEventFlags {
+	var flags coregraphics.CGEventFlags
+	if combo.Shift {
+		flags |= coregraphics.KCGEventFlagMaskShift
+	}
+	if combo.Control {
+		flags |= coregraphics.KCGEventFlagMaskControl
+	}
+	if combo.Option {
+		flags |= coregraphics.KCGEventFlagMaskAlternate
+	}
+	if combo.Command {
+		flags |= coregraphics.KCGEventFlagMaskCommand
+	}
+	return flags
 }
 
 func localPointToScreen(el *axuiautomation.Element, point LocalPoint) LocalPoint {

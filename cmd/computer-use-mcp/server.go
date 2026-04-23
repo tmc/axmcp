@@ -165,8 +165,9 @@ func orderedComputerUseTools() []*mcp.Tool {
 			Description: "Type literal text using keyboard input",
 			Annotations: actionToolAnnotations(),
 			InputSchema: exactObjectSchema(map[string]any{
-				"app":  stringProperty("App name or bundle identifier"),
-				"text": stringProperty("Literal text to type"),
+				"app":           stringProperty("App name or bundle identifier"),
+				"element_index": stringProperty("Element index to type into. When omitted, the app's focused element is used."),
+				"text":          stringProperty("Literal text to type"),
 			}, "app", "text"),
 		},
 	}

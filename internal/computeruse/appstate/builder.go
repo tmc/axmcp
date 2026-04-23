@@ -25,6 +25,7 @@ import (
 const axTimeout = 5
 
 var axSetMessagingTimeout func(element uintptr, timeoutInSeconds float32) int32
+var axCopyActionNames func(element uintptr, names *uintptr) int32
 
 func init() {
 	lib, err := purego.Dlopen("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices", purego.RTLD_LAZY|purego.RTLD_GLOBAL)
@@ -32,6 +33,7 @@ func init() {
 		return
 	}
 	purego.RegisterLibFunc(&axSetMessagingTimeout, lib, "AXUIElementSetMessagingTimeout")
+	purego.RegisterLibFunc(&axCopyActionNames, lib, "AXUIElementCopyActionNames")
 }
 
 type Builder struct{}
@@ -220,20 +222,59 @@ func snapshotNode(el *axuiautomation.Element, parentIndex, index int, windowFram
 		}
 	}
 	return computeruse.ElementNode{
-		Index:       index,
-		ParentIndex: parentIndex,
-		Role:        role,
-		Title:       strings.TrimSpace(el.Title()),
-		Value:       value,
-		Description: strings.TrimSpace(el.Description()),
-		Identifier:  strings.TrimSpace(el.Identifier()),
-		X:           x,
-		Y:           y,
-		Width:       int(math.Round(frame.Size.Width)),
-		Height:      int(math.Round(frame.Size.Height)),
-		Enabled:     el.IsEnabled(),
-		Settable:    isSettableRole(role),
+		Index:            index,
+		ParentIndex:      parentIndex,
+		Role:             role,
+		Title:            strings.TrimSpace(el.Title()),
+		Value:            value,
+		Description:      strings.TrimSpace(el.Description()),
+		Identifier:       strings.TrimSpace(el.Identifier()),
+		X:                x,
+		Y:                y,
+		Width:            int(math.Round(frame.Size.Width)),
+		Height:           int(math.Round(frame.Size.Height)),
+		Enabled:          el.IsEnabled(),
+		Settable:         isSettableRole(role),
+		SecondaryActions: actionNames(el),
 	}
+}
+
+func actionNames(el *axuiautomation.Element) []string {
+	if el == nil || axCopyActionNames == nil {
+		return nil
+	}
+	var names uintptr
+	if axCopyActionNames(el.Ref(), &names) != 0 || names == 0 {
+		return nil
+	}
+	defer corefoundation.CFRelease(corefoundation.CFTypeRef(names))
+
+	count := corefoundation.CFArrayGetCount(corefoundation.CFArrayRef(names))
+	out := make([]string, 0, count)
+	for i := range count {
+		ptr := corefoundation.CFArrayGetValueAtIndex(corefoundation.CFArrayRef(names), i)
+		name := cfStringToGo(corefoundation.CFStringRef(uintptr(ptr)))
+		if name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+func cfStringToGo(ref corefoundation.CFStringRef) string {
+	if ref == 0 {
+		return ""
+	}
+	buf := make([]byte, 1024)
+	if !corefoundation.CFStringGetCString(ref, &buf[0], len(buf), uint32(corefoundation.KCFStringEncodingUTF8)) {
+		return ""
+	}
+	for i, b := range buf {
+		if b == 0 {
+			return string(buf[:i])
+		}
+	}
+	return string(buf)
 }
 
 func isSettableRole(role string) bool {

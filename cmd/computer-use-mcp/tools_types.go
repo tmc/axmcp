@@ -43,8 +43,9 @@ type dragInput struct {
 }
 
 type typeTextInput struct {
-	App  string `json:"app"`
-	Text string `json:"text"`
+	App          string  `json:"app"`
+	ElementIndex *string `json:"element_index,omitempty"`
+	Text         string  `json:"text"`
 }
 
 type pressKeyInput struct {

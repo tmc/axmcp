@@ -180,6 +180,7 @@ func computerUseInstructions() string {
 		"",
 		"After each action, use the action result or fetch the latest state to verify the UI changed as expected.",
 		"Prefer element-targeted interactions over coordinate clicks when an index for the targeted element is available. Note that element indices are the sequential integers from the app state's accessibility tree.",
+		"Prefer type_text with element_index when a text target is available; omit element_index only when you intentionally want to type into the app's currently focused element.",
 		"Avoid falling back to AppleScript during a computer use session. Prefer Computer Use tools as much as possible to complete tasks.",
 		"Ask the user before taking destructive or externally visible actions such as sending, deleting, or purchasing. If helpful, you can ask follow-up questions before taking action to make sure you’re understanding the user’s request correctly.",
 	}, "\n")

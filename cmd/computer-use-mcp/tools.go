@@ -124,7 +124,7 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 		}
 		state, ok := rt.sessions.GetForApp(args.App)
 		if !ok {
-			return toolError(missingAppStateError(args.App)), nil, nil
+			return requiresRefreshResult("click", args.App)
 		}
 		clickCount := args.ClickCount
 		if clickCount <= 0 {
@@ -192,7 +192,7 @@ func registerPerformSecondaryAction(s *mcp.Server, rt *runtimeState) {
 		}
 		state, ok := rt.sessions.GetForApp(args.App)
 		if !ok {
-			return toolError(missingAppStateError(args.App)), nil, nil
+			return requiresRefreshResult(args.Action, args.App)
 		}
 		index, err := parseElementIndex(args.ElementIndex)
 		if err != nil {
@@ -231,7 +231,7 @@ func registerSetValue(s *mcp.Server, rt *runtimeState) {
 		}
 		state, ok := rt.sessions.GetForApp(args.App)
 		if !ok {
-			return toolError(missingAppStateError(args.App)), nil, nil
+			return requiresRefreshResult("set_value", args.App)
 		}
 		index, err := parseElementIndex(args.ElementIndex)
 		if err != nil {
@@ -271,7 +271,7 @@ func registerScroll(s *mcp.Server, rt *runtimeState) {
 		}
 		state, ok := rt.sessions.GetForApp(args.App)
 		if !ok {
-			return toolError(missingAppStateError(args.App)), nil, nil
+			return requiresRefreshResult("scroll", args.App)
 		}
 		index, err := parseElementIndex(args.ElementIndex)
 		if err != nil {
@@ -312,7 +312,7 @@ func registerDrag(s *mcp.Server, rt *runtimeState) {
 		}
 		state, ok := rt.sessions.GetForApp(args.App)
 		if !ok {
-			return toolError(missingAppStateError(args.App)), nil, nil
+			return requiresRefreshResult("drag", args.App)
 		}
 		root, _, err := rt.sessions.ResolveForApp(args.App, 0)
 		if err != nil {
@@ -358,9 +358,9 @@ func registerPressKey(s *mcp.Server, rt *runtimeState) {
 		}
 		state, ok := rt.sessions.GetForApp(args.App)
 		if !ok {
-			return toolError(missingAppStateError(args.App)), nil, nil
+			return requiresRefreshResult("press_key", args.App)
 		}
-		if err := input.SendKeyCombo(args.Key); err != nil {
+		if err := input.SendKeyComboToPID(int32(state.App.PID), args.Key); err != nil {
 			return toolError(err), nil, nil
 		}
 		return &mcp.CallToolResult{}, computeruse.ActionResult{
@@ -379,8 +379,9 @@ func registerTypeText(s *mcp.Server, rt *runtimeState) {
 		Description: "Type literal text using keyboard input",
 		Annotations: actionToolAnnotations(),
 		InputSchema: exactObjectSchema(map[string]any{
-			"app":  stringProperty("App name or bundle identifier"),
-			"text": stringProperty("Literal text to type"),
+			"app":           stringProperty("App name or bundle identifier"),
+			"element_index": stringProperty("Element index to type into. When omitted, the app's focused element is used."),
+			"text":          stringProperty("Literal text to type"),
 		}, "app", "text"),
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args typeTextInput) (*mcp.CallToolResult, any, error) {
 		if res, payload, ok := actionBlockedForPermissions("type_text"); ok {
@@ -388,7 +389,29 @@ func registerTypeText(s *mcp.Server, rt *runtimeState) {
 		}
 		state, ok := rt.sessions.GetForApp(args.App)
 		if !ok {
-			return toolError(missingAppStateError(args.App)), nil, nil
+			return requiresRefreshResult("type_text", args.App)
+		}
+		if args.ElementIndex != nil {
+			index, err := parseElementIndex(*args.ElementIndex)
+			if err != nil {
+				return toolError(err), nil, nil
+			}
+			el, node, err := rt.sessions.ResolveForApp(args.App, index)
+			if err != nil {
+				return toolError(err), nil, nil
+			}
+			endTypingCursor := beginTypingCursor(el)
+			defer endTypingCursor()
+			if err := el.TypeText(args.Text); err != nil {
+				return toolError(err), nil, nil
+			}
+			return &mcp.CallToolResult{}, computeruse.ActionResult{
+				SessionID: state.SessionID,
+				StateID:   state.StateID,
+				Action:    "type_text",
+				Target:    formatNode(node),
+				Message:   fmt.Sprintf("typed into %s", formatNode(node)),
+			}, nil
 		}
 		root, _, err := rt.sessions.ResolveForApp(args.App, 0)
 		if err != nil {
@@ -526,6 +549,15 @@ func parseElementIndex(raw string) (int, error) {
 
 func missingAppStateError(app string) error {
 	return fmt.Errorf("no current app state for %q; call get_app_state again", app)
+}
+
+func requiresRefreshResult(action, app string) (*mcp.CallToolResult, any, error) {
+	err := missingAppStateError(app)
+	return toolError(err), computeruse.ActionResult{
+		Action:          action,
+		Message:         err.Error(),
+		RequiresRefresh: true,
+	}, nil
 }
 
 func roundCoordinate(v float64) int {

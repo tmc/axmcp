@@ -44,3 +44,9 @@ func TestParseKeyCombo(t *testing.T) {
 		}
 	}
 }
+
+func TestSendKeyComboToPIDRejectsInvalidPID(t *testing.T) {
+	if err := SendKeyComboToPID(0, "cmd+a"); err == nil {
+		t.Fatalf("SendKeyComboToPID should reject invalid pid")
+	}
+}
