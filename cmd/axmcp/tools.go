@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -29,7 +30,9 @@ const axTimeout = 5 // seconds
 
 var (
 	axSetMessagingTimeout     func(element uintptr, timeoutInSeconds float32) int32
+	axCopyActionNames         func(element uintptr, names *uintptr) int32
 	axSetMessagingTimeoutOnce sync.Once
+	axCopyActionNamesOnce     sync.Once
 )
 
 func initAXSetMessagingTimeout() {
@@ -41,6 +44,43 @@ func initAXSetMessagingTimeout() {
 		}
 		purego.RegisterLibFunc(&axSetMessagingTimeout, lib, "AXUIElementSetMessagingTimeout")
 	})
+}
+
+func initAXCopyActionNames() {
+	axCopyActionNamesOnce.Do(func() {
+		lib, err := purego.Dlopen("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices", purego.RTLD_LAZY|purego.RTLD_GLOBAL)
+		if err != nil {
+			slog.Warn("failed to load ApplicationServices for AXUIElementCopyActionNames", "err", err)
+			return
+		}
+		purego.RegisterLibFunc(&axCopyActionNames, lib, "AXUIElementCopyActionNames")
+	})
+}
+
+func actionNamesForElement(element *axuiautomation.Element) []string {
+	if element == nil {
+		return nil
+	}
+	initAXCopyActionNames()
+	if axCopyActionNames == nil {
+		return nil
+	}
+	var names uintptr
+	if axCopyActionNames(element.Ref(), &names) != 0 || names == 0 {
+		return nil
+	}
+	defer corefoundation.CFRelease(corefoundation.CFTypeRef(names))
+
+	count := corefoundation.CFArrayGetCount(corefoundation.CFArrayRef(names))
+	out := make([]string, 0, count)
+	for i := range count {
+		ptr := corefoundation.CFArrayGetValueAtIndex(corefoundation.CFArrayRef(names), i)
+		name := cfStringToGo(corefoundation.CFStringRef(uintptr(ptr)))
+		if name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // setAXTimeout sets the messaging timeout on an AX element so that
@@ -61,6 +101,7 @@ func setAXTimeout(app *axuiautomation.Application) {
 func registerAXTools(s *mcp.Server) {
 	registerAXApps(s)
 	registerAXTree(s)
+	registerAXSnapshot(s)
 	registerAXFind(s)
 	registerAXPipe(s)
 	registerAXClick(s)
@@ -181,6 +222,7 @@ func elementAttrs(e *axuiautomation.Element) map[string]any {
 		"role_desc": e.RoleDescription(),
 		"desc":      e.Description(), "identifier": e.Identifier(),
 		"x": x, "y": y, "w": w, "h": h,
+		"secondary_actions": actionNamesForElement(e),
 	}
 }
 
@@ -200,6 +242,177 @@ func treeText(e *axuiautomation.Element, indent, maxDepth int) string {
 		b.WriteString(treeText(c, indent+1, maxDepth))
 	}
 	return b.String()
+}
+
+type axTreeNode struct {
+	Index            int      `json:"index"`
+	ParentIndex      int      `json:"parent_index"`
+	Depth            int      `json:"depth"`
+	Role             string   `json:"role,omitempty"`
+	Title            string   `json:"title,omitempty"`
+	Value            string   `json:"value,omitempty"`
+	Description      string   `json:"description,omitempty"`
+	Identifier       string   `json:"identifier,omitempty"`
+	RoleDescription  string   `json:"role_description,omitempty"`
+	X                int      `json:"x,omitempty"`
+	Y                int      `json:"y,omitempty"`
+	Width            int      `json:"width,omitempty"`
+	Height           int      `json:"height,omitempty"`
+	Enabled          bool     `json:"enabled"`
+	Visible          bool     `json:"visible"`
+	Actionable       bool     `json:"actionable"`
+	SecondaryActions []string `json:"secondary_actions,omitempty"`
+}
+
+type axWindowSnapshot struct {
+	Title            string `json:"title,omitempty"`
+	X                int    `json:"x,omitempty"`
+	Y                int    `json:"y,omitempty"`
+	Width            int    `json:"width,omitempty"`
+	Height           int    `json:"height,omitempty"`
+	ScreenshotWidth  int    `json:"screenshot_width,omitempty"`
+	ScreenshotHeight int    `json:"screenshot_height,omitempty"`
+}
+
+type axTreePayload struct {
+	App                 string           `json:"app,omitempty"`
+	Scope               string           `json:"scope,omitempty"`
+	Window              axWindowSnapshot `json:"window"`
+	Tree                []axTreeNode     `json:"tree"`
+	ScreenshotPNGBase64 string           `json:"screenshot_png_base64,omitempty"`
+}
+
+func collectAXTreeNodes(root *axuiautomation.Element, maxDepth int) []axTreeNode {
+	if root == nil {
+		return nil
+	}
+	if maxDepth < 0 {
+		maxDepth = 0
+	}
+	type queueItem struct {
+		element *axuiautomation.Element
+		parent  int
+		depth   int
+	}
+	queue := []queueItem{{element: root, parent: -1}}
+	nodes := make([]axTreeNode, 0, 128)
+	for len(queue) > 0 {
+		item := queue[0]
+		queue = queue[1:]
+		if item.element == nil || item.depth > maxDepth {
+			continue
+		}
+		index := len(nodes)
+		snapshot := snapshotElement(item.element, item.depth, index)
+		record := snapshot.record
+		nodes = append(nodes, axTreeNode{
+			Index:            index,
+			ParentIndex:      item.parent,
+			Depth:            item.depth,
+			Role:             record.role,
+			Title:            record.title,
+			Value:            record.value,
+			Description:      record.desc,
+			Identifier:       record.identifier,
+			RoleDescription:  record.roleDescription,
+			X:                record.x,
+			Y:                record.y,
+			Width:            record.w,
+			Height:           record.h,
+			Enabled:          record.enabled,
+			Visible:          record.visible,
+			Actionable:       record.actionable,
+			SecondaryActions: actionNamesForElement(item.element),
+		})
+		if item.depth == maxDepth {
+			continue
+		}
+		for _, child := range item.element.Children() {
+			queue = append(queue, queueItem{element: child, parent: index, depth: item.depth + 1})
+		}
+	}
+	return nodes
+}
+
+func treeTextIndexed(nodes []axTreeNode) string {
+	var b strings.Builder
+	for _, node := range nodes {
+		b.WriteString(strings.Repeat("  ", node.Depth))
+		fmt.Fprintf(&b, "[%d] %s", node.Index, node.Role)
+		if node.Title != "" {
+			fmt.Fprintf(&b, " title=%q", node.Title)
+		}
+		if node.Description != "" && node.Description != node.Title {
+			fmt.Fprintf(&b, " desc=%q", node.Description)
+		}
+		if node.Value != "" && node.Value != node.Title && node.Value != node.Description {
+			fmt.Fprintf(&b, " value=%q", node.Value)
+		}
+		if node.Identifier != "" {
+			fmt.Fprintf(&b, " id=%q", node.Identifier)
+		}
+		if len(node.SecondaryActions) > 0 {
+			fmt.Fprintf(&b, " actions=%q", strings.Join(node.SecondaryActions, ","))
+		}
+		fmt.Fprintf(&b, " bounds=(%d,%d %dx%d)\n", node.X, node.Y, node.Width, node.Height)
+	}
+	return b.String()
+}
+
+func resolveSnapshotRoot(app *axuiautomation.Application, window string, appRoot bool) (*axuiautomation.Element, string, error) {
+	if appRoot {
+		return app.Root(), fmt.Sprintf("app %q", app.BundleID()), nil
+	}
+	win, desc, err := resolveWindow(app, window)
+	if err == nil {
+		return win, desc, nil
+	}
+	if window != "" {
+		return nil, "", err
+	}
+	return app.Root(), fmt.Sprintf("app %q", app.BundleID()), nil
+}
+
+func windowSnapshot(root *axuiautomation.Element, png []byte) axWindowSnapshot {
+	if root == nil {
+		return axWindowSnapshot{}
+	}
+	record := snapshotElement(root, 0, 0).record
+	info := axWindowSnapshot{
+		Title:  record.title,
+		X:      record.x,
+		Y:      record.y,
+		Width:  record.w,
+		Height: record.h,
+	}
+	if len(png) > 0 {
+		if w, h, err := pngDimensions(png); err == nil {
+			info.ScreenshotWidth = w
+			info.ScreenshotHeight = h
+		}
+	}
+	return info
+}
+
+func buildAXTreePayload(appName string, root *axuiautomation.Element, scope string, depth int, includeScreenshot bool) (axTreePayload, error) {
+	var png []byte
+	if includeScreenshot {
+		var err error
+		png, err = root.Screenshot()
+		if err != nil {
+			return axTreePayload{}, fmt.Errorf("screenshot %s: %w", scope, err)
+		}
+	}
+	payload := axTreePayload{
+		App:    appName,
+		Scope:  scope,
+		Window: windowSnapshot(root, png),
+		Tree:   collectAXTreeNodes(root, depth),
+	}
+	if len(png) > 0 {
+		payload.ScreenshotPNGBase64 = base64.StdEncoding.EncodeToString(png)
+	}
+	return payload, nil
 }
 
 func textResult(text string) *mcp.CallToolResult {
@@ -264,14 +477,18 @@ func registerAXApps(s *mcp.Server) {
 // ── ax_tree ───────────────────────────────────────────────────────────────────
 
 type axTreeInput struct {
-	App   string `json:"app"`
-	Depth int    `json:"depth,omitempty"`
+	App        string `json:"app"`
+	Window     string `json:"window,omitempty"`
+	Depth      int    `json:"depth,omitempty"`
+	JSON       bool   `json:"json,omitempty"`
+	Screenshot bool   `json:"screenshot,omitempty"`
+	AppRoot    bool   `json:"app_root,omitempty"`
 }
 
 func registerAXTree(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "ax_tree",
-		Description: "Print the AX element tree for a running application. Returns role/title hierarchy.",
+		Description: "Print an indexed AX element tree. Defaults to the first app window; set window to a title substring, app_root=true for the full app tree, json=true for structured output, and screenshot=true to include a base64 PNG.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axTreeInput) (*mcp.CallToolResult, any, error) {
 		app, err := spinAndOpen(args.App)
 		if err != nil {
@@ -282,7 +499,62 @@ func registerAXTree(s *mcp.Server) {
 		if depth <= 0 {
 			depth = 4
 		}
-		return textResult(treeText(app.Root(), 0, depth)), nil, nil
+		root, scope, err := resolveSnapshotRoot(app, args.Window, args.AppRoot)
+		if err != nil {
+			return nil, nil, err
+		}
+		payload, err := buildAXTreePayload(args.App, root, scope, depth, args.Screenshot)
+		if err != nil {
+			return nil, nil, err
+		}
+		if args.JSON {
+			data, err := json.MarshalIndent(payload, "", "  ")
+			if err != nil {
+				return nil, nil, fmt.Errorf("marshal: %w", err)
+			}
+			return textResult(string(data)), nil, nil
+		}
+		return textResult(treeTextIndexed(payload.Tree)), nil, nil
+	})
+}
+
+// ── ax_snapshot ───────────────────────────────────────────────────────────────
+
+type axSnapshotInput struct {
+	App               string `json:"app"`
+	Window            string `json:"window,omitempty"`
+	Depth             int    `json:"depth,omitempty"`
+	IncludeScreenshot bool   `json:"include_screenshot,omitempty"`
+	AppRoot           bool   `json:"app_root,omitempty"`
+}
+
+func registerAXSnapshot(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "ax_snapshot",
+		Description: "Return a structured AX snapshot with app/window metadata, indexed tree, secondary actions, and optional base64 screenshot. Defaults to the first app window.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, args axSnapshotInput) (*mcp.CallToolResult, any, error) {
+		app, err := spinAndOpen(args.App)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer app.Close()
+		depth := args.Depth
+		if depth <= 0 {
+			depth = 6
+		}
+		root, scope, err := resolveSnapshotRoot(app, args.Window, args.AppRoot)
+		if err != nil {
+			return nil, nil, err
+		}
+		payload, err := buildAXTreePayload(args.App, root, scope, depth, args.IncludeScreenshot)
+		if err != nil {
+			return nil, nil, err
+		}
+		data, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			return nil, nil, fmt.Errorf("marshal: %w", err)
+		}
+		return textResult(string(data)), nil, nil
 	})
 }
 

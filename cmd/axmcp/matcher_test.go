@@ -144,6 +144,54 @@ func TestCompareMatchesOrdering(t *testing.T) {
 	}
 }
 
+func TestCompareMatchesPrefersWebAreaOverSelectedBrowserTab(t *testing.T) {
+	webArea := matchedElement{
+		snapshot: elementSnapshot{record: elementRecord{
+			role:       "AXWebArea",
+			title:      "GitHub - ahl/apfs - GitHub",
+			enabled:    true,
+			visible:    true,
+			actionable: false,
+			depth:      6,
+			index:      12,
+		}},
+		fieldName:     "title",
+		fieldPriority: 0,
+		matchKind:     matchExact,
+	}
+	selectedTab := matchedElement{
+		snapshot: elementSnapshot{record: elementRecord{
+			role:       "AXRadioButton",
+			desc:       "GitHub - ahl/apfs - GitHub",
+			value:      "1",
+			enabled:    true,
+			visible:    true,
+			actionable: true,
+			depth:      4,
+			index:      3,
+		}},
+		fieldName:     "desc",
+		fieldPriority: 1,
+		matchKind:     matchExact,
+	}
+
+	matches := []matchedElement{selectedTab, webArea}
+	slices.SortStableFunc(matches, func(a, b matchedElement) int {
+		switch {
+		case compareMatches(a, b):
+			return -1
+		case compareMatches(b, a):
+			return 1
+		default:
+			return 0
+		}
+	})
+
+	if matches[0] != webArea {
+		t.Fatalf("best match = %+v, want AXWebArea", matches[0])
+	}
+}
+
 func TestNoMatchMessageIncludesCandidates(t *testing.T) {
 	result := matchResult{
 		options: searchOptions{Contains: "mesh", Role: "AXButton"},

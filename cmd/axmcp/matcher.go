@@ -261,9 +261,13 @@ func compareMatches(a, b matchedElement) bool {
 	br := b.snapshot.record
 	aMenu := isMenuRole(ar.role)
 	bMenu := isMenuRole(br.role)
+	aContent := webContentPriority(a)
+	bContent := webContentPriority(b)
 	switch {
 	case aMenu != bMenu:
 		return !aMenu // prefer non-menu elements
+	case aContent != bContent:
+		return aContent > bContent
 	case ar.enabled != br.enabled:
 		return ar.enabled
 	case ar.visible != br.visible:
@@ -279,6 +283,22 @@ func compareMatches(a, b matchedElement) bool {
 	default:
 		return ar.index < br.index
 	}
+}
+
+func webContentPriority(match matchedElement) int {
+	record := match.snapshot.record
+	if isBrowserChromePageProxy(record) {
+		return -1
+	}
+	return 0
+}
+
+func isBrowserChromePageProxy(record elementRecord) bool {
+	switch record.role {
+	case "AXRadioButton", "AXTab":
+		return true
+	}
+	return false
 }
 
 func candidateScore(record elementRecord, query string) int {
