@@ -54,9 +54,7 @@ static void install_atexit(void) {
 
 static void install_signal_handlers(void) {
     signal(SIGTERM, axmcp_signal_handler);
-    signal(SIGINT, axmcp_signal_handler);
     signal(SIGHUP, axmcp_signal_handler);
-    signal(SIGQUIT, axmcp_signal_handler);
 }
 
 static void set_diag_fd(int fd) {
@@ -65,9 +63,13 @@ static void set_diag_fd(int fd) {
 */
 import "C"
 
+import "os"
+
 func installAtexitHandler() {
 	C.install_atexit()
-	C.install_signal_handlers()
+	if os.Getenv("AXMCP_C_SIGNAL_BACKTRACE") == "1" {
+		C.install_signal_handlers()
+	}
 }
 
 // setDiagFd tells the C atexit/signal handlers where to write.

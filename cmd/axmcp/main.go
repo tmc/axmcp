@@ -13,24 +13,19 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/tmc/apple/appkit"
 	"github.com/tmc/apple/foundation"
-	"github.com/tmc/macgo"
+	"github.com/tmc/axmcp/internal/cmdflag"
+	"github.com/tmc/axmcp/internal/ghostcursor"
+	"github.com/tmc/axmcp/internal/macsigning"
 	"github.com/tmc/axmcp/internal/ui"
+	"github.com/tmc/axmcp/internal/ui/permissions"
+	"github.com/tmc/macgo"
 )
-
-// hasArg reports whether arg appears anywhere in os.Args[1:].
-func hasArg(arg string) bool {
-	for _, a := range os.Args[1:] {
-		if a == arg {
-			return true
-		}
-	}
-	return false
-}
 
 const (
 	permissionWaitTimeout  = 120 * time.Second
@@ -38,8 +33,10 @@ const (
 )
 
 var (
-	diagnosticWriter io.Writer = os.Stderr
-	diagnosticFile   *os.File
+	diagnosticWriter       io.Writer = os.Stderr
+	diagnosticFile         *os.File
+	screenRecordingTrusted = ui.IsScreenRecordingTrusted
+	stdinTransportReady    = stdinLooksLikeTransport
 )
 
 func diagf(format string, args ...any) {
@@ -113,31 +110,148 @@ func failPermission(err error) {
 	os.Exit(1)
 }
 
+func stdinLooksLikeTransport() bool {
+	info, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return stdinModeLooksLikeTransport(info.Mode())
+}
+
+func stdinModeLooksLikeTransport(mode os.FileMode) bool {
+	return mode&os.ModeNamedPipe != 0 || mode&os.ModeSocket != 0
+}
+
+func directWindowScreenshotArgs(args []string) (app string, out string, ok bool) {
+	trimmed := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-v" || arg == "--verbose" || arg == "--ghost-cursor" || arg == "--no-ghost-cursor" || arg == "--eyecandy" || arg == "--no-eyecandy" || arg == "--visibility":
+			continue
+		case arg == "--visibility-delay":
+			if i+1 < len(args) {
+				i++
+			}
+			continue
+		case strings.HasPrefix(arg, "--ghost-cursor=") || strings.HasPrefix(arg, "--eyecandy=") || strings.HasPrefix(arg, "--visibility=") || strings.HasPrefix(arg, "--visibility-delay="):
+			continue
+		default:
+			trimmed = append(trimmed, arg)
+		}
+	}
+	if len(trimmed) < 2 || trimmed[0] != "screenshot" {
+		return "", "", false
+	}
+	app = trimmed[1]
+	for i := 2; i < len(trimmed); i++ {
+		switch trimmed[i] {
+		case "--contains", "--role":
+			return "", "", false
+		case "-o", "--out":
+			if i+1 >= len(trimmed) {
+				return "", "", false
+			}
+			out = trimmed[i+1]
+			i++
+		case "":
+		default:
+			if strings.HasPrefix(trimmed[i], "--contains=") || strings.HasPrefix(trimmed[i], "--role=") {
+				return "", "", false
+			}
+		}
+	}
+	return app, out, true
+}
+
+func tryDirectWindowScreenshot(args []string) bool {
+	app, out, ok := directWindowScreenshotArgs(args)
+	if !ok {
+		return false
+	}
+	if !screenRecordingTrusted() {
+		diagf("axmcp: skipping direct screenshot fast path for %q because Screen Recording is not granted\n", app)
+		return false
+	}
+	diagf("axmcp: trying direct screenshot fast path for %q\n", app)
+	png, err := captureWindowByName(app)
+	if err != nil {
+		diagf("axmcp: direct screenshot fast path failed: %v; falling back to app-backed flow\n", err)
+		return false
+	}
+	if err := writeScreenshot(out, png); err != nil {
+		diagf("axmcp: direct screenshot write failed: %v\n", err)
+		os.Exit(1)
+	}
+	return true
+}
+
+func ensureAccessibilityPermission(ctx context.Context) error {
+	if permissions.Check(permissions.ReqAccessibility) == permissions.StatusGranted {
+		return nil
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	status, err := permissions.Request(requestCtx, permissions.ReqAccessibility)
+	if status == permissions.StatusGranted {
+		return nil
+	}
+	if err != nil && err != context.Canceled && err != context.DeadlineExceeded {
+		return err
+	}
+	if err := permissions.OnboardingWindow(ctx, permissions.ReqAccessibility); err != nil && err != context.Canceled {
+		return err
+	}
+	return waitForPermission("Accessibility", permissionWaitTimeout, permissionPollInterval, ui.IsTrusted)
+}
+
 func main() {
 	installAtexitHandler()
 	runtime.LockOSThread()
 
-	verbose := hasArg("-v")
+	args := os.Args[1:]
+	verbose := cmdflag.Bool(args, "-v", false) || cmdflag.Bool(args, "--verbose", false)
+	ghostCursorEnabled := cmdflag.Bool(args, "--ghost-cursor", true)
+	eyecandyEnabled := cmdflag.Bool(args, "--eyecandy", true)
 	if err := configureLogging(verbose); err != nil {
 		log.Fatalf("configure logging: %v", err)
+	}
+	if tryDirectWindowScreenshot(args) {
+		return
 	}
 
 	cfg := macgo.NewConfig().
 		WithAppName("axmcp").
-		WithPermissions(macgo.Accessibility, macgo.ScreenRecording).
+		WithPermissions(macgo.Accessibility).
+		WithUsageDescription("NSAccessibilityUsageDescription", "axmcp uses Accessibility to inspect and interact with user interface elements.").
+		WithUsageDescription("NSAppleEventsUsageDescription", "axmcp may coordinate with other macOS apps while driving UI automation.").
 		WithUsageDescription("NSScreenCaptureUsageDescription", "axmcp needs to capture screenshots of specific UI elements and windows.").
 		WithInfo("NSSupportsAutomaticTermination", false).
-		WithUIMode(macgo.UIModeAccessory).
-		WithAdHocSign()
+		WithUIMode(macgo.UIModeAccessory)
 	if verbose {
 		cfg = cfg.WithDebug()
 	}
 	cfg.BundleID = "dev.tmc.axmcp"
+	cfg = macsigning.Configure(cfg)
 	ui.ConfigureIdentity("axmcp", cfg.BundleID)
+	permissions.ConfigureIdentity("axmcp", cfg.BundleID)
 
 	if err := macgo.Start(cfg); err != nil {
 		log.Fatalf("macgo start failed: %v", err)
 	}
+
+	eyecandy := ghostcursor.DefaultEyecandyConfig()
+	eyecandy.SharingVisible = envFlag("ux.ghostcursor.sharing_visible", false)
+	eyecandy.RippleOnClick = eyecandyEnabled && envFlag("ux.ghostcursor.ripple_on_click", eyecandy.RippleOnClick)
+	eyecandy.CometTrail = eyecandyEnabled && envFlag("ux.ghostcursor.comet_trail", eyecandy.CometTrail)
+	eyecandy.VelocityTilt = eyecandyEnabled && envFlag("ux.ghostcursor.velocity_tilt", eyecandy.VelocityTilt)
+	eyecandy.HolographicOCR = eyecandyEnabled && envFlag("ux.ghostcursor.holographic_ocr", false)
+	eyecandy.LiquidLens = eyecandyEnabled && envFlag("ux.ghostcursor.liquid_lens", false)
+	ghostcursor.Configure(ghostcursor.Config{
+		Enabled:  ghostCursorEnabled,
+		Theme:    ghostcursor.ThemeCodex,
+		Eyecandy: eyecandy,
+	})
 
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "axmcp",
@@ -157,9 +271,18 @@ func main() {
 	// Without this, app.Run() calls exit(0) when ScreenCaptureKit
 	// dispatches work to the main thread.
 	delegate := appkit.NewNSApplicationDelegate(appkit.NSApplicationDelegateConfig{
-		ShouldTerminate: func(_ appkit.NSApplication) appkit.NSApplicationTerminateReply {
+		ShouldTerminate: func(app appkit.NSApplication) appkit.NSApplicationTerminateReply {
+			reply := ui.ShouldTerminateReply(app)
+			if reply == appkit.NSTerminateNow {
+				diagf("axmcp: applicationShouldTerminate — allowing user quit\n")
+				return reply
+			}
+			if ui.ScreenCaptureTerminateGuardActive() {
+				diagf("axmcp: applicationShouldTerminate — cancelling during screen capture permission flow\n")
+				return reply
+			}
 			diagf("axmcp: applicationShouldTerminate — cancelling\n")
-			return appkit.NSTerminateCancel
+			return reply
 		},
 		ShouldTerminateAfterLastWindowClosed: func(_ appkit.NSApplication) bool {
 			return false
@@ -182,9 +305,11 @@ func main() {
 		"axmcp server",
 	)
 
-	ui.CheckTrust()
+	stdinTTY := isTTY()
+	cliMode := shouldRunCLI(stdinTTY, args)
+	serverTransport := stdinTransportReady()
 
-	if isTTY() || len(os.Args) > 1 {
+	if cliMode {
 		// Run CLI in goroutine so main thread can drive the AppKit run loop.
 		go func() {
 			diagf("axmcp: CLI goroutine started\n")
@@ -194,25 +319,31 @@ func main() {
 			procInfo.SetAutomaticTerminationSupportEnabled(false)
 			procInfo.DisableAutomaticTermination("axmcp cli")
 			diagf("axmcp: auto-termination disabled\n")
-			if err := waitForPermission("Accessibility", permissionWaitTimeout, permissionPollInterval, ui.IsTrusted); err != nil {
-				failPermission(err)
-			}
 			diagf("axmcp: running CLI\n")
 			runCLI()
 			// runCLI calls os.Exit on completion, so this goroutine won't return
 		}()
-	} else {
+	} else if serverTransport {
 		// Run MCP server in goroutine so main thread can drive the AppKit run loop.
 		go func() {
 			time.Sleep(100 * time.Millisecond)
 			procInfo.SetAutomaticTerminationSupportEnabled(false)
 			procInfo.DisableAutomaticTermination("axmcp server goroutine")
-			if err := waitForPermission("Accessibility", permissionWaitTimeout, permissionPollInterval, ui.IsTrusted); err != nil {
+			ui.CheckTrust()
+			ui.CheckScreenCapture()
+			if err := ensureAccessibilityPermission(context.Background()); err != nil {
 				failPermission(err)
 			}
 			if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 				log.Printf("server error: %v", err)
 			}
+			ui.WaitForWindows()
+			os.Exit(0)
+		}()
+	} else {
+		go func() {
+			diagf("axmcp: no CLI args and no stdio transport; assuming TCC relaunch and exiting\n")
+			time.Sleep(250 * time.Millisecond)
 			ui.WaitForWindows()
 			os.Exit(0)
 		}()
@@ -233,4 +364,36 @@ func main() {
 		diagf("axmcp: app.Run() returned — re-entering run loop\n")
 		flushDiagLog()
 	}
+}
+
+func shouldRunCLI(stdinTTY bool, args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	if stdinTTY {
+		return true
+	}
+	for _, arg := range args {
+		switch {
+		case arg == "-v", arg == "--verbose", arg == "--ghost-cursor", arg == "--no-ghost-cursor", arg == "--eyecandy", arg == "--no-eyecandy", arg == "--visibility":
+			continue
+		case strings.HasPrefix(arg, "--ghost-cursor="):
+			continue
+		case strings.HasPrefix(arg, "--eyecandy="):
+			continue
+		case strings.HasPrefix(arg, "--visibility="):
+			continue
+		case arg == "--visibility-delay":
+			continue
+		case strings.HasPrefix(arg, "--visibility-delay="):
+			continue
+		case strings.HasPrefix(arg, "--verbose="):
+			continue
+		case strings.HasPrefix(arg, "-"):
+			return true
+		default:
+			return true
+		}
+	}
+	return false
 }

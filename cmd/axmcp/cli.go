@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -16,21 +17,77 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const defaultCLIVisibilityDelay = 400 * time.Millisecond
+
+var cliVisibilityState struct {
+	enabled atomic.Bool
+	pending atomic.Bool
+	delayNS atomic.Int64
+}
+
 // isTTY reports whether stdin is an interactive terminal.
 func isTTY() bool {
 	_, err := unix.IoctlGetTermios(int(os.Stdin.Fd()), unix.TIOCGETA)
 	return err == nil
 }
 
+func setCLIVisibility(enabled bool, delay time.Duration) {
+	if delay < 0 {
+		delay = 0
+	}
+	cliVisibilityState.enabled.Store(enabled)
+	cliVisibilityState.delayNS.Store(int64(delay))
+	if !enabled {
+		cliVisibilityState.pending.Store(false)
+	}
+}
+
+func noteCLIVisualFeedback() {
+	if !cliVisibilityState.enabled.Load() {
+		return
+	}
+	cliVisibilityState.pending.Store(true)
+}
+
+func clearCLIVisualFeedback() {
+	cliVisibilityState.pending.Store(false)
+}
+
+func cliVisibilityEnabled() bool {
+	return cliVisibilityState.enabled.Load()
+}
+
+func waitForCLIVisualFeedback() {
+	if !cliVisibilityEnabled() || !cliVisibilityState.pending.Load() {
+		return
+	}
+	delay := time.Duration(cliVisibilityState.delayNS.Load())
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+	clearCLIVisualFeedback()
+}
+
 // runCLI runs the interactive CLI mode and does not return on success.
 func runCLI() {
+	visibility := true
+	visibilityDelay := defaultCLIVisibilityDelay
+	setCLIVisibility(visibility, visibilityDelay)
+
 	root := &cobra.Command{
 		Use:   "axmcp",
 		Short: "Accessibility automation CLI (MCP server when stdin is not a TTY)",
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			setCLIVisibility(visibility, visibilityDelay)
+		},
 	}
 	// -v is handled early in main() before macgo; declare here so cobra
 	// doesn't reject it as an unknown flag.
 	root.PersistentFlags().BoolP("verbose", "v", false, "enable verbose debug logging")
+	root.PersistentFlags().Bool("ghost-cursor", true, "draw the ghost cursor overlay for pointer actions")
+	root.PersistentFlags().Bool("eyecandy", true, "enable ghost cursor eyecandy effects")
+	root.PersistentFlags().BoolVar(&visibility, "visibility", true, "keep the CLI alive briefly so visual feedback is perceptible")
+	root.PersistentFlags().DurationVar(&visibilityDelay, "visibility-delay", defaultCLIVisibilityDelay, "how long to linger after visual feedback before exiting")
 
 	root.AddCommand(
 		cliApps(),
@@ -47,8 +104,10 @@ func runCLI() {
 	)
 
 	if err := root.Execute(); err != nil {
+		ui.WaitForWindows()
 		os.Exit(1)
 	}
+	waitForCLIVisualFeedback()
 	ui.WaitForWindows()
 	os.Exit(0)
 }
@@ -209,6 +268,8 @@ Available stages:
   rightclick                  Right-click element
   click-at <x> <y>            Click at offset
   hover                       Move mouse to element
+  screenshot [--out PATH]     Capture current scope and save a PNG artifact
+        [--padding N]         Expand element captures by N pixels on each side
   ocr-hover <text>            Move mouse to OCR text
   highlight <text>            Draw a 2s highlight around OCR text
   type <text>                 Type text
@@ -433,6 +494,8 @@ func cliType() *cobra.Command {
 			if err := focusElement(el); err != nil {
 				return fmt.Errorf("focus %s: %w", formatMatch(result.matches[0]), err)
 			}
+			endTypingCursor := beginTypingCursor(el)
+			defer endTypingCursor()
 			if err := el.TypeText(args[2]); err != nil {
 				return fmt.Errorf("type %s: %w", formatMatch(result.matches[0]), err)
 			}
@@ -523,9 +586,8 @@ func cliScreenshot() *cobra.Command {
 
 			// Screen Recording is required for the AX/SCK fallback paths.
 			diagf("screenshot: checking screen recording permission\n")
-			if !ui.IsScreenRecordingTrusted() {
-				ui.CheckScreenCapture()
-				return fmt.Errorf("Screen Recording permission required — grant access in System Settings > Privacy & Security")
+			if !ui.WaitForScreenRecording(30 * time.Second) {
+				return fmt.Errorf("Screen Recording is still not granted — enable axmcp.app in System Settings > Privacy & Security and retry")
 			}
 
 			diagf("screenshot: opening %s via AX\n", args[0])

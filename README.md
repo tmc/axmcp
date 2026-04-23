@@ -106,13 +106,17 @@ Representative tools include:
 
 ### `computer-use-mcp`
 
-`computer-use-mcp` is the stateful, session-oriented compatibility server. It keeps a narrow computer-use contract on top of macOS accessibility and screenshot capture.
+`computer-use-mcp` is the stateful, session-oriented compatibility server. It keeps the narrow Codex Computer Use tool contract on top of macOS accessibility and screenshot capture.
 
-Representative tools include:
+It exposes exactly these tools:
 
 - `list_apps`, `get_app_state`
-- `click`, `perform_secondary_action`, `scroll`, `drag`
-- `type_text`, `press_key`, `set_value`
+- `click`, `perform_secondary_action`, `set_value`, `scroll`, `drag`
+- `press_key`, `type_text`
+
+It is tools-only: it does not publish MCP resources or resource templates.
+
+Call `get_app_state` once per assistant turn before using the action tools. The action surface is app-scoped, and indexed element references are passed as string `element_index` values.
 
 ### `xcmcp`
 

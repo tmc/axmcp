@@ -11,6 +11,7 @@ import (
 	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/x/axuiautomation"
 	"github.com/tmc/axmcp/internal/computeruse"
+	"github.com/tmc/axmcp/internal/ghostcursor"
 )
 
 type LocalPoint struct {
@@ -41,8 +42,12 @@ const (
 	cgEventRightMouseUp      = 4
 	cgEventLeftMouseDragged  = 6
 	cgEventRightMouseDragged = 7
+	cgEventOtherMouseDown    = 25
+	cgEventOtherMouseUp      = 26
+	cgEventOtherMouseDragged = 27
 	cgMouseButtonLeft        = 0
 	cgMouseButtonRight       = 1
+	cgMouseButtonMiddle      = 2
 	cgHIDEventTap            = 0
 )
 
@@ -98,19 +103,40 @@ func ClickElement(el *axuiautomation.Element, button string, clickCount int) err
 	if el == nil {
 		return fmt.Errorf("target disappeared")
 	}
+	center := elementCenter(el)
 	switch strings.ToLower(strings.TrimSpace(button)) {
 	case "", "left":
 		if clickCount <= 1 {
-			return el.Click()
+			ghostcursor.PressAt(center.X, center.Y)
+			if err := el.Click(); err != nil {
+				ghostcursor.Hide()
+				return err
+			}
+			ghostcursor.ReleaseAt(center.X, center.Y)
+			return nil
 		}
 		if clickCount == 2 {
-			return el.DoubleClick()
+			ghostcursor.PressAt(center.X, center.Y)
+			if err := el.DoubleClick(); err != nil {
+				ghostcursor.Hide()
+				return err
+			}
+			ghostcursor.ReleaseAt(center.X, center.Y)
+			return nil
 		}
 		return fmt.Errorf("unsupported click_count %d", clickCount)
 	case "right":
-		return el.PerformAction("AXShowMenu")
+		ghostcursor.PressAt(center.X, center.Y)
+		if err := el.PerformAction("AXShowMenu"); err != nil {
+			ghostcursor.Hide()
+			return err
+		}
+		ghostcursor.ReleaseAt(center.X, center.Y)
+		return nil
+	case "middle":
+		return clickScreenPoint(elementCenter(el), cgEventOtherMouseDown, cgEventOtherMouseUp, cgMouseButtonMiddle, clickCount)
 	default:
-		return fmt.Errorf("invalid button %q; use left or right", button)
+		return fmt.Errorf("invalid button %q; use left, right, or middle", button)
 	}
 }
 
@@ -126,8 +152,10 @@ func ClickElementAt(el *axuiautomation.Element, point LocalPoint, button string,
 		return clickScreenPoint(localPointToScreen(el, point), cgEventLeftMouseDown, cgEventLeftMouseUp, cgMouseButtonLeft, clickCount)
 	case "right":
 		return clickScreenPoint(localPointToScreen(el, point), cgEventRightMouseDown, cgEventRightMouseUp, cgMouseButtonRight, 1)
+	case "middle":
+		return clickScreenPoint(localPointToScreen(el, point), cgEventOtherMouseDown, cgEventOtherMouseUp, cgMouseButtonMiddle, clickCount)
 	default:
-		return fmt.Errorf("invalid button %q; use left or right", button)
+		return fmt.Errorf("invalid button %q; use left, right, or middle", button)
 	}
 }
 
@@ -227,6 +255,14 @@ func localPointToScreen(el *axuiautomation.Element, point LocalPoint) LocalPoint
 	}
 }
 
+func elementCenter(el *axuiautomation.Element) LocalPoint {
+	frame := el.Frame()
+	return LocalPoint{
+		X: int(math.Round(frame.Origin.X + frame.Size.Width/2)),
+		Y: int(math.Round(frame.Origin.Y + frame.Size.Height/2)),
+	}
+}
+
 func clickScreenPoint(point LocalPoint, downType, upType, button int32, clickCount int) error {
 	initCGMouseEvents()
 	switch {
@@ -237,11 +273,13 @@ func clickScreenPoint(point LocalPoint, downType, upType, button int32, clickCou
 	case cgEventPost == nil:
 		return fmt.Errorf("CGEventPost not available")
 	}
+	ghostcursor.PressAt(point.X, point.Y)
 	cgWarpMouseCursorPosition(float64(point.X), float64(point.Y))
 	time.Sleep(10 * time.Millisecond)
 	for i := 0; i < clickCount; i++ {
 		mouseDown := cgEventCreateMouseEvent(0, downType, float64(point.X), float64(point.Y), button)
 		if mouseDown == 0 {
+			ghostcursor.Hide()
 			return fmt.Errorf("failed to create mouse down event")
 		}
 		cgEventPost(cgHIDEventTap, mouseDown)
@@ -249,6 +287,7 @@ func clickScreenPoint(point LocalPoint, downType, upType, button int32, clickCou
 		time.Sleep(40 * time.Millisecond)
 		mouseUp := cgEventCreateMouseEvent(0, upType, float64(point.X), float64(point.Y), button)
 		if mouseUp == 0 {
+			ghostcursor.Hide()
 			return fmt.Errorf("failed to create mouse up event")
 		}
 		cgEventPost(cgHIDEventTap, mouseUp)
@@ -257,6 +296,7 @@ func clickScreenPoint(point LocalPoint, downType, upType, button int32, clickCou
 			time.Sleep(40 * time.Millisecond)
 		}
 	}
+	ghostcursor.ReleaseAt(point.X, point.Y)
 	return nil
 }
 
@@ -279,32 +319,59 @@ func dragScreenPoint(start, end LocalPoint, button int32) error {
 	if steps < 4 {
 		steps = 4
 	}
+	duration := time.Duration(steps*10) * time.Millisecond
+	path, err := ghostcursor.SamplePath(
+		ghostcursor.ScreenPosition(start.X, start.Y),
+		ghostcursor.ScreenPosition(end.X, end.Y),
+		ghostcursor.MoveOptions{
+			Duration:   duration,
+			Activity:   ghostcursor.ActivityDragging,
+			CurveStyle: ghostcursor.CurveBezier,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("sample drag path: %w", err)
+	}
+	stepSleep := 10 * time.Millisecond
+	if len(path) > 1 {
+		stepSleep = duration / time.Duration(len(path)-1)
+		if stepSleep <= 0 {
+			stepSleep = 10 * time.Millisecond
+		}
+	}
+	ghostcursor.PressAt(start.X, start.Y)
 	cgWarpMouseCursorPosition(float64(start.X), float64(start.Y))
 	time.Sleep(10 * time.Millisecond)
 	mouseDown := cgEventCreateMouseEvent(0, downType, float64(start.X), float64(start.Y), button)
 	if mouseDown == 0 {
+		ghostcursor.Hide()
 		return fmt.Errorf("failed to create mouse down event")
 	}
 	cgEventPost(cgHIDEventTap, mouseDown)
 	corefoundation.CFRelease(corefoundation.CFTypeRef(mouseDown))
-	for i := 1; i <= steps; i++ {
-		progress := float64(i) / float64(steps)
-		x := int(math.Round(float64(start.X) + float64(end.X-start.X)*progress))
-		y := int(math.Round(float64(start.Y) + float64(end.Y-start.Y)*progress))
+	for i := 1; i < len(path); i++ {
+		x := int(math.Round(path[i].X))
+		y := int(math.Round(path[i].Y))
+		ghostcursor.DragTo(x, y)
 		dragged := cgEventCreateMouseEvent(0, dragType, float64(x), float64(y), button)
 		if dragged == 0 {
+			ghostcursor.Hide()
 			return fmt.Errorf("failed to create mouse drag event")
 		}
 		cgEventPost(cgHIDEventTap, dragged)
 		corefoundation.CFRelease(corefoundation.CFTypeRef(dragged))
-		time.Sleep(10 * time.Millisecond)
+		if i+1 < len(path) {
+			time.Sleep(stepSleep)
+		}
 	}
 	mouseUp := cgEventCreateMouseEvent(0, upType, float64(end.X), float64(end.Y), button)
 	if mouseUp == 0 {
+		ghostcursor.Hide()
 		return fmt.Errorf("failed to create mouse up event")
 	}
 	cgEventPost(cgHIDEventTap, mouseUp)
 	corefoundation.CFRelease(corefoundation.CFTypeRef(mouseUp))
+	ghostcursor.ReleaseAt(end.X, end.Y)
 	return nil
 }
 
@@ -314,6 +381,8 @@ func dragEventTypes(button int32) (downType, draggedType, upType int32, err erro
 		return cgEventLeftMouseDown, cgEventLeftMouseDragged, cgEventLeftMouseUp, nil
 	case cgMouseButtonRight:
 		return cgEventRightMouseDown, cgEventRightMouseDragged, cgEventRightMouseUp, nil
+	case cgMouseButtonMiddle:
+		return cgEventOtherMouseDown, cgEventOtherMouseDragged, cgEventOtherMouseUp, nil
 	default:
 		return 0, 0, 0, fmt.Errorf("unsupported drag button %d", button)
 	}
@@ -325,8 +394,10 @@ func parseButton(button string) (int32, error) {
 		return cgMouseButtonLeft, nil
 	case "right":
 		return cgMouseButtonRight, nil
+	case "middle":
+		return cgMouseButtonMiddle, nil
 	default:
-		return 0, fmt.Errorf("invalid button %q; use left or right", button)
+		return 0, fmt.Errorf("invalid button %q; use left, right, or middle", button)
 	}
 }
 

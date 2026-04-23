@@ -8,7 +8,10 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/tmc/apple/corefoundation"
+	"github.com/tmc/apple/coregraphics"
 	"github.com/tmc/apple/x/axuiautomation"
+	"github.com/tmc/axmcp/internal/computeruse/magnify"
 )
 
 func registerAXInteractionTools(s *mcp.Server) {
@@ -184,12 +187,16 @@ func registerAXZoom(s *mcp.Server) {
 			`When contains/role are provided, focuses that target first. ` +
 			`This uses common zoom shortcuts because public macOS APIs do not expose generic cross-process magnify gesture injection.`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axZoomInput) (*mcp.CallToolResult, any, error) {
-		desc, note, err := performZoomShortcut(args.App, args.Contains, args.Role, args.Action)
+		action, err := magnify.ParseZoomAction(args.Action)
+		if err != nil {
+			return nil, nil, err
+		}
+		desc, note, err := performMagnifyAction(args.App, args.Contains, args.Role, magnify.StrategyShortcut, action)
 		if err != nil {
 			return nil, nil, err
 		}
 		var buf bytes.Buffer
-		fmt.Fprintf(&buf, "zoomed %s on %s", strings.ToLower(args.Action), desc)
+		fmt.Fprintf(&buf, "zoomed %s on %s", action, desc)
 		if note != "" {
 			fmt.Fprintf(&buf, "\n%s", note)
 		}
@@ -213,12 +220,16 @@ func registerAXPinch(s *mcp.Server) {
 			`Supported directions: "in", "out". ` +
 			`The current implementation uses standard zoom shortcuts because public macOS APIs do not expose generic cross-process magnify gesture injection.`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axPinchInput) (*mcp.CallToolResult, any, error) {
-		desc, note, err := performZoomShortcut(args.App, args.Contains, args.Role, args.Direction)
+		action, err := magnify.ParsePinchDirection(args.Direction)
+		if err != nil {
+			return nil, nil, err
+		}
+		desc, note, err := performMagnifyAction(args.App, args.Contains, args.Role, magnify.StrategyShortcut, action)
 		if err != nil {
 			return nil, nil, err
 		}
 		var buf bytes.Buffer
-		fmt.Fprintf(&buf, "pinched %s on %s", strings.ToLower(args.Direction), desc)
+		fmt.Fprintf(&buf, "pinched %s on %s", action, desc)
 		if note != "" {
 			fmt.Fprintf(&buf, "\n%s", note)
 		}
@@ -277,6 +288,7 @@ func registerAXSetValue(s *mcp.Server) {
 // ── ax_keystroke ──────────────────────────────────────────────────────────────
 
 type axKeyStrokeInput struct {
+	App     string `json:"app,omitempty"`
 	Key     string `json:"key"`
 	Shift   bool   `json:"shift,omitempty"`
 	Control bool   `json:"control,omitempty"`
@@ -319,36 +331,105 @@ var knownKeys = map[string]uint16{
 	"-": 0x1B, "=": 0x18,
 }
 
+func parseAXKeyCode(key string) (uint16, error) {
+	keyName := strings.ToLower(strings.TrimSpace(key))
+	code, ok := knownKeys[keyName]
+	if !ok {
+		return 0, fmt.Errorf("unknown key %q; supported: letters, numbers, return, tab, escape, delete, arrows, space, home, end, pageup, pagedown, f1-f12, -, =", key)
+	}
+	return code, nil
+}
+
+func keyEventFlags(args axKeyStrokeInput) coregraphics.CGEventFlags {
+	var flags coregraphics.CGEventFlags
+	if args.Shift {
+		flags |= coregraphics.KCGEventFlagMaskShift
+	}
+	if args.Control {
+		flags |= coregraphics.KCGEventFlagMaskControl
+	}
+	if args.Option {
+		flags |= coregraphics.KCGEventFlagMaskAlternate
+	}
+	if args.Command {
+		flags |= coregraphics.KCGEventFlagMaskCommand
+	}
+	return flags
+}
+
+func describeAXKeyStroke(args axKeyStrokeInput) string {
+	var desc strings.Builder
+	if args.Command {
+		desc.WriteString("Cmd+")
+	}
+	if args.Control {
+		desc.WriteString("Ctrl+")
+	}
+	if args.Option {
+		desc.WriteString("Opt+")
+	}
+	if args.Shift {
+		desc.WriteString("Shift+")
+	}
+	desc.WriteString(strings.TrimSpace(args.Key))
+	return desc.String()
+}
+
+func sendKeyComboToPID(pid int32, keyCode uint16, flags coregraphics.CGEventFlags) error {
+	if pid <= 0 {
+		return fmt.Errorf("invalid pid %d", pid)
+	}
+
+	keyDown := coregraphics.CGEventCreateKeyboardEvent(0, keyCode, true)
+	if keyDown == 0 {
+		return fmt.Errorf("failed to create key down event")
+	}
+	defer corefoundation.CFRelease(corefoundation.CFTypeRef(keyDown))
+	coregraphics.CGEventSetFlags(keyDown, flags)
+	coregraphics.CGEventPostToPid(pid, keyDown)
+
+	time.Sleep(10 * time.Millisecond)
+
+	keyUp := coregraphics.CGEventCreateKeyboardEvent(0, keyCode, false)
+	if keyUp == 0 {
+		return fmt.Errorf("failed to create key up event")
+	}
+	defer corefoundation.CFRelease(corefoundation.CFTypeRef(keyUp))
+	coregraphics.CGEventSetFlags(keyUp, flags)
+	coregraphics.CGEventPostToPid(pid, keyUp)
+
+	return nil
+}
+
 func registerAXKeyStroke(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "ax_keystroke",
-		Description: `Send a keyboard shortcut or key press. Key can be a letter, number, or special key ` +
+		Description: `Send a keyboard shortcut or key press. Optional app targets the keystroke at a specific ` +
+			`application PID without changing the current frontmost app. When app is omitted, the keystroke ` +
+			`is sent to the current frontmost app. Key can be a letter, number, or special key ` +
 			`(return, tab, escape, delete, up, down, left, right, space, home, end, pageup, pagedown, f1-f12, -, =). ` +
 			`Combine with modifier flags for shortcuts like Cmd+S (key="s", command=true).`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axKeyStrokeInput) (*mcp.CallToolResult, any, error) {
-		keyName := strings.ToLower(args.Key)
-		code, ok := knownKeys[keyName]
-		if !ok {
-			return nil, nil, fmt.Errorf("unknown key %q; supported: letters, numbers, return, tab, escape, delete, arrows, space, home, end, pageup, pagedown, f1-f12, -, =", args.Key)
+		code, err := parseAXKeyCode(args.Key)
+		if err != nil {
+			return nil, nil, err
+		}
+		desc := describeAXKeyStroke(args)
+		if appName := strings.TrimSpace(args.App); appName != "" {
+			app, err := spinAndOpen(appName)
+			if err != nil {
+				return nil, nil, err
+			}
+			defer app.Close()
+			if err := sendKeyComboToPID(app.PID(), code, keyEventFlags(args)); err != nil {
+				return nil, nil, fmt.Errorf("keystroke %s on %s: %w", desc, appName, err)
+			}
+			return textResult(fmt.Sprintf("sent keystroke to %s: %s", appName, desc)), nil, nil
 		}
 		if err := axuiautomation.SendKeyCombo(code, args.Shift, args.Control, args.Option, args.Command); err != nil {
-			return nil, nil, fmt.Errorf("keystroke: %w", err)
+			return nil, nil, fmt.Errorf("keystroke %s: %w", desc, err)
 		}
-		var desc strings.Builder
-		if args.Command {
-			desc.WriteString("Cmd+")
-		}
-		if args.Control {
-			desc.WriteString("Ctrl+")
-		}
-		if args.Option {
-			desc.WriteString("Opt+")
-		}
-		if args.Shift {
-			desc.WriteString("Shift+")
-		}
-		desc.WriteString(args.Key)
-		return textResult(fmt.Sprintf("sent keystroke: %s", desc.String())), nil, nil
+		return textResult(fmt.Sprintf("sent keystroke: %s", desc)), nil, nil
 	})
 }
 
@@ -439,7 +520,7 @@ func dragStartPoint(snapshot elementSnapshot, startX, startY *int) (int, int, er
 	return 0, 0, fmt.Errorf("no usable drag start point")
 }
 
-func performZoomShortcut(appName, contains, role, action string) (desc, note string, err error) {
+func performMagnifyAction(appName, contains, role string, strategy magnify.Strategy, action magnify.Action) (desc, note string, err error) {
 	app, err := spinAndOpen(appName)
 	if err != nil {
 		return "", "", err
@@ -466,41 +547,22 @@ func performZoomShortcut(appName, contains, role, action string) (desc, note str
 		desc = targetDesc
 	}
 
-	if err := sendZoomShortcut(action); err != nil {
+	note, err = sendMagnifyAction(strategy, action)
+	if err != nil {
 		return "", "", err
 	}
-	note = "used the standard app zoom shortcut; public macOS APIs do not expose a generic cross-process magnify gesture injector"
 	return desc, note, nil
 }
 
-func sendZoomShortcut(action string) error {
-	spec, err := zoomShortcutForAction(action)
+func sendMagnifyAction(strategy magnify.Strategy, action magnify.Action) (string, error) {
+	shortcut, note, err := magnify.Send(strategy, action)
 	if err != nil {
-		return err
+		if shortcut.Label != "" {
+			return "", fmt.Errorf("magnify %s: %w", shortcut.Label, err)
+		}
+		return "", err
 	}
-	if err := axuiautomation.SendKeyCombo(spec.keyCode, spec.shift, false, false, true); err != nil {
-		return fmt.Errorf("zoom %s: %w", spec.label, err)
-	}
-	return nil
-}
-
-type zoomShortcut struct {
-	keyCode uint16
-	shift   bool
-	label   string
-}
-
-func zoomShortcutForAction(action string) (zoomShortcut, error) {
-	switch strings.ToLower(strings.TrimSpace(action)) {
-	case "in", "zoom_in", "pinch_in":
-		return zoomShortcut{keyCode: knownKeys["="], shift: true, label: "in"}, nil
-	case "out", "zoom_out", "pinch_out":
-		return zoomShortcut{keyCode: knownKeys["-"], label: "out"}, nil
-	case "reset", "actual", "actual_size":
-		return zoomShortcut{keyCode: knownKeys["0"], label: "reset"}, nil
-	default:
-		return zoomShortcut{}, fmt.Errorf("invalid zoom action %q; use in, out, or reset", action)
-	}
+	return note, nil
 }
 
 func resolveTarget(app *axuiautomation.Application, contains, role string) (*axuiautomation.Element, string, error) {

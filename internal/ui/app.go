@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -16,6 +15,7 @@ import (
 	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/coregraphics"
 	"github.com/tmc/apple/dispatch"
+	"github.com/tmc/apple/foundation"
 	"github.com/tmc/apple/objc"
 )
 
@@ -79,9 +79,7 @@ func MkString(s string) uintptr {
 		return cfStringCreateWithCString(0, unsafe.Pointer(&b[0]), kCFStringEncodingUTF8)
 	}
 
-	// Fallback (unsafe/leaky without autorelease pool)
-	cls := objc.GetClass("NSString")
-	return objc.Send[uintptr](objc.ID(cls), objc.Sel("stringWithUTF8String:"), unsafe.Pointer(&b[0]))
+	return uintptr(foundation.NewStringWithUTF8String(s).GetID())
 }
 
 // (Inside Element)
@@ -154,8 +152,6 @@ type App struct {
 	pid     int32
 }
 
-var trustOnce sync.Once
-
 // activeWindows tracks permission windows that are animating their close
 // transition. Call WaitForWindows before os.Exit to let animations finish.
 var activeWindows sync.WaitGroup
@@ -221,10 +217,10 @@ func uiIsTrustedFresh() bool {
 	if axIsProcessTrustedWithOptions == nil {
 		return false
 	}
-	key := MkString("AXTrustedCheckOptionPrompt")
-	val := objc.Send[uintptr](objc.ID(objc.GetClass("NSNumber")), objc.Sel("numberWithBool:"), false)
-	dict := objc.Send[uintptr](objc.ID(objc.GetClass("NSDictionary")), objc.Sel("dictionaryWithObject:forKey:"), val, key)
-	return axIsProcessTrustedWithOptions(dict)
+	key := foundation.NewStringWithString("AXTrustedCheckOptionPrompt")
+	val := foundation.NewNumberWithBool(false)
+	dict := foundation.NewDictionaryWithObjectForKey(val, key)
+	return axIsProcessTrustedWithOptions(uintptr(dict.GetID()))
 }
 
 func waitForAccessibilityTrust(timeout time.Duration) bool {
@@ -266,10 +262,14 @@ func uiRequestPermission() {
 	if axIsProcessTrustedWithOptions == nil {
 		return
 	}
-	key := MkString("AXTrustedCheckOptionPrompt")
-	val := objc.Send[uintptr](objc.ID(objc.GetClass("NSNumber")), objc.Sel("numberWithBool:"), true)
-	dict := objc.Send[uintptr](objc.ID(objc.GetClass("NSDictionary")), objc.Sel("dictionaryWithObject:forKey:"), val, key)
-	axIsProcessTrustedWithOptions(dict)
+	key := foundation.NewStringWithString("AXTrustedCheckOptionPrompt")
+	val := foundation.NewNumberWithBool(true)
+	dict := foundation.NewDictionaryWithObjectForKey(val, key)
+	axIsProcessTrustedWithOptions(uintptr(dict.GetID()))
+}
+
+func RequestAccessibilityPermission() {
+	uiRequestPermission()
 }
 
 func requestAccessibilityPermissionAsync() {
@@ -289,6 +289,10 @@ func uiPrivacySettingsURL(service string) string {
 	default:
 		return "x-apple.systempreferences:com.apple.preference.security"
 	}
+}
+
+func PrivacySettingsURL(service string) string {
+	return uiPrivacySettingsURL(service)
 }
 
 func uiPreparePermissionRequest(win appkit.NSWindow) {
@@ -317,23 +321,42 @@ func IsTrusted() bool {
 }
 
 func CheckTrust() {
-	trustOnce.Do(func() {
-		if waitForAccessibilityTrust(1500 * time.Millisecond) {
-			return
-		}
-		if axIsProcessTrustedWithOptions == nil {
-			fmt.Fprintln(os.Stderr, "Warning: Process is NOT trusted as an accessibility client. Grant Accessibility permissions in System Settings.")
-			return
-		}
-		showPermissionWindow(permissionWindowConfig{
-			iconSymbol:  "lock.shield",
-			iconDescr:   "Accessibility permission",
-			titleSuffix: "Accessibility",
-			checkFunc:   uiIsTrustedFresh,
-			requestFunc: requestAccessibilityPermissionAsync,
-			successText: "Accessibility permission granted.",
-		})
+	if waitForAccessibilityTrust(1500 * time.Millisecond) {
+		return
+	}
+	if permissionInProgress("Accessibility") {
+		return
+	}
+	if axIsProcessTrustedWithOptions == nil {
+		fmt.Fprintln(os.Stderr, "Warning: Process is NOT trusted as an accessibility client. Grant Accessibility permissions in System Settings.")
+		return
+	}
+	showPermissionWindow(permissionWindowConfig{
+		service:     "Accessibility",
+		iconSymbol:  "lock.shield",
+		iconDescr:   "Accessibility permission",
+		titleSuffix: "Accessibility",
+		checkFunc:   uiIsTrustedFresh,
+		requestFunc: requestAccessibilityPermissionAsync,
+		successText: "Accessibility permission granted.",
 	})
+}
+
+func WaitForAccessibility(timeout time.Duration) bool {
+	if waitForAccessibilityTrust(1500 * time.Millisecond) {
+		return true
+	}
+	go CheckTrust()
+	deadline := time.Now().Add(timeout)
+	for {
+		if uiIsTrustedFresh() {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 // IsScreenRecordingTrusted checks if screen recording permission is granted
@@ -341,7 +364,7 @@ func CheckTrust() {
 // when the preflight API returns false, which handles post-re-sign scenarios
 // where the TCC grant no longer matches the code signature.
 func IsScreenRecordingTrusted() bool {
-	return isScreenRecordingAvailable()
+	return screenRecordingAvailable()
 }
 
 // isScreenRecordingAvailable checks whether screen recording permission is
@@ -352,24 +375,23 @@ func isScreenRecordingAvailable() bool {
 	return coregraphics.CGPreflightScreenCaptureAccess()
 }
 
-var screenCaptureRequested atomic.Bool
+var screenRecordingAvailable = isScreenRecordingAvailable
+
+func screenCaptureTerminateGuardActive() bool {
+	return permissionInProgress("ScreenCapture")
+}
+
+func ScreenCaptureTerminateGuardActive() bool {
+	return screenCaptureTerminateGuardActive()
+}
 
 func requestScreenCapture() {
-	if screenCaptureRequested.CompareAndSwap(false, true) {
-		// First request: CGRequestScreenCaptureAccess triggers the TCC prompt.
-		fmt.Fprintln(os.Stderr, "axmcp: requesting screen capture access (first time)")
-		coregraphics.CGRequestScreenCaptureAccess()
-		return
-	}
-	// Subsequent requests: CGRequestScreenCaptureAccess is a no-op after the
-	// first call. Reset TCC and re-request. CGRequestScreenCaptureAccess may
-	// not trigger a new prompt, so also open System Settings as fallback.
-	fmt.Fprintln(os.Stderr, "axmcp: re-requesting screen capture — resetting TCC")
-	resetTCC("ScreenCapture")
+	fmt.Fprintln(os.Stderr, "axmcp: requesting screen capture access")
 	coregraphics.CGRequestScreenCaptureAccess()
-	// Open System Settings as fallback in case the OS doesn't re-prompt.
-	url := uiPrivacySettingsURL("ScreenCapture")
-	go exec.Command("open", url).Run()
+}
+
+func RequestScreenCapturePermission() {
+	requestScreenCapture()
 }
 
 func requestScreenCaptureAsync() {
@@ -378,6 +400,13 @@ func requestScreenCaptureAsync() {
 			requestScreenCapture()
 		})
 	}()
+}
+
+func resetAndRerequestScreenCapture() {
+	fmt.Fprintln(os.Stderr, "axmcp: re-requesting screen capture — resetting TCC")
+	resetTCC("ScreenCapture")
+	coregraphics.CGRequestScreenCaptureAccess()
+	go exec.Command("open", uiPrivacySettingsURL("ScreenCapture")).Run()
 }
 
 // resetTCC clears stale TCC entries for the current bundle so the OS will
@@ -389,20 +418,21 @@ func resetTCC(service string) {
 	_ = cmd.Run()
 }
 
-var screenCaptureOnce sync.Once
+func ResetTCC(service string) {
+	resetTCC(service)
+}
 
 // WaitForScreenRecording shows the permission window if screen recording is not
 // already granted and blocks until permission is granted or the timeout expires.
 // It returns true if permission was granted, false on timeout.
 func WaitForScreenRecording(timeout time.Duration) bool {
-	if isScreenRecordingAvailable() {
+	if screenRecordingAvailable() {
 		return true
 	}
-	// Trigger the permission window (runs at most once via screenCaptureOnce).
 	go CheckScreenCapture()
 	deadline := time.Now().Add(timeout)
 	for {
-		if isScreenRecordingAvailable() {
+		if screenRecordingAvailable() {
 			return true
 		}
 		if time.Now().After(deadline) {
@@ -416,35 +446,81 @@ func WaitForScreenRecording(timeout time.Duration) bool {
 // if not, shows a floating HIG-style window. It polls until permission is granted,
 // then briefly shows a green checkmark before closing.
 func CheckScreenCapture() {
-	screenCaptureOnce.Do(func() {
-		if isScreenRecordingAvailable() {
-			return
-		}
-		showPermissionWindow(permissionWindowConfig{
-			iconSymbol:  "rectangle.inset.filled.and.person.filled",
-			iconDescr:   "Screen recording permission",
-			titleSuffix: "Screen Recording",
-			checkFunc:   isScreenRecordingAvailable,
-			requestFunc: requestScreenCaptureAsync,
-			successText: "Screen Recording permission granted.",
-			timeoutText: "Permission may require restart. Re-run axmcp to try again.",
-		})
+	if screenRecordingAvailable() {
+		return
+	}
+	if permissionInProgress("ScreenCapture") {
+		return
+	}
+	showPermissionWindow(permissionWindowConfig{
+		service:     "ScreenCapture",
+		iconSymbol:  "rectangle.inset.filled.and.person.filled",
+		iconDescr:   "Screen recording permission",
+		titleSuffix: "Screen Recording",
+		checkFunc:   screenRecordingAvailable,
+		requestFunc: requestScreenCaptureAsync,
+		resetFunc:   resetAndRerequestScreenCapture,
+		successText: "Screen Recording permission granted.",
+		timeoutText: "Permission may require restart. Re-run axmcp to try again.",
 	})
 }
 
 // permissionWindowConfig holds the parameters that differ between
 // permission request windows (e.g. Accessibility vs Screen Recording).
 type permissionWindowConfig struct {
-	iconSymbol  string // SF Symbol name for the window icon
-	iconDescr   string // accessibility description for the icon
-	titleSuffix string // e.g. "Accessibility" or "Screen Recording"
-	checkFunc   func() bool
-	requestFunc func()
-	successText string // e.g. "Accessibility permission granted."
-	timeoutText string // shown on timeout; defaults to "Timed out. Re-run to try again."
+	service      string
+	iconSymbol   string // SF Symbol name for the window icon
+	iconDescr    string // accessibility description for the icon
+	titleSuffix  string // e.g. "Accessibility" or "Screen Recording"
+	checkFunc    func() bool
+	requestFunc  func()
+	resetFunc    func()
+	requestTitle string
+	bodyText     string
+	waitText     func(time.Duration) string
+	successText  string // e.g. "Accessibility permission granted."
+	timeoutText  string // shown on timeout; defaults to "Timed out. Re-run to try again."
+}
+
+func permissionRequestButtonTitle(service string) string {
+	return "Request Permission"
+}
+
+func permissionBodyText(service string) string {
+	return "Grant access in System Settings > Privacy & Security."
+}
+
+func permissionWaitText(service string, elapsed time.Duration) string {
+	secs := int(elapsed.Seconds())
+	if secs <= 0 {
+		return "Waiting for permission…"
+	}
+	return fmt.Sprintf("Waiting for permission… (%ds)", secs)
+}
+
+func (cfg permissionWindowConfig) resolvedRequestTitle() string {
+	if cfg.requestTitle != "" {
+		return cfg.requestTitle
+	}
+	return permissionRequestButtonTitle(cfg.service)
+}
+
+func (cfg permissionWindowConfig) resolvedBodyText() string {
+	if cfg.bodyText != "" {
+		return cfg.bodyText
+	}
+	return permissionBodyText(cfg.service)
+}
+
+func (cfg permissionWindowConfig) resolvedWaitText(elapsed time.Duration) string {
+	if cfg.waitText != nil {
+		return cfg.waitText(elapsed)
+	}
+	return permissionWaitText(cfg.service, elapsed)
 }
 
 func showPermissionWindow(cfg permissionWindowConfig) {
+	setPermissionInProgress(cfg.service, true)
 	activeWindows.Add(1)
 	dispatch.MainQueue().Async(func() {
 		app := appkit.GetNSApplicationClass().SharedApplication()
@@ -452,17 +528,21 @@ func showPermissionWindow(cfg permissionWindowConfig) {
 
 		const (
 			w       = 420.0
-			h       = 150.0
+			h       = 166.0
 			pad     = 16.0
 			iconSz  = 40.0
 			iconPad = 12.0
 			btnH    = 26.0
 			btnW    = 155.0
+			btnGap  = 8.0
 			btnPadB = 12.0
 		)
 
 		name := uiExecName()
 		fontClass := appkit.GetNSFontClass()
+		screenCaptureFlow := cfg.service == "ScreenCapture"
+		requested := false
+		requestTime := time.Time{}
 
 		win := appkit.NewWindowWithContentRectStyleMaskBackingDefer(
 			corefoundation.CGRect{Size: corefoundation.CGSize{Width: w, Height: h}},
@@ -510,51 +590,129 @@ func showPermissionWindow(cfg permissionWindowConfig) {
 
 		// Informative text.
 		bodyLabel := appkit.NewTextFieldLabelWithString(
-			"Grant access in System Settings > Privacy & Security.",
+			cfg.resolvedBodyText(),
 		)
 		bodyLabel.SetFont(fontClass.SystemFontOfSize(11))
+		bodyLabel.SetUsesSingleLineMode(false)
+		bodyLabel.SetLineBreakMode(appkit.NSLineBreakByWordWrapping)
+		bodyLabel.SetMaximumNumberOfLines(2)
+		bodyLabel.SetPreferredMaxLayoutWidth(textW)
 		bodyLabel.SetFrame(corefoundation.CGRect{
-			Origin: corefoundation.CGPoint{X: textX, Y: h - pad - 46},
-			Size:   corefoundation.CGSize{Width: textW, Height: 14},
+			Origin: corefoundation.CGPoint{X: textX, Y: h - pad - 58},
+			Size:   corefoundation.CGSize{Width: textW, Height: 34},
 		})
 		content.AddSubview(bodyLabel)
 
 		// Spinner — small, inline, indicates waiting.
 		spinSz := 14.0
-		spinY := h - pad - 66
+		spinY := h - pad - 90
 		spinner := appkit.NewProgressIndicatorWithFrame(corefoundation.CGRect{
 			Origin: corefoundation.CGPoint{X: textX, Y: spinY},
 			Size:   corefoundation.CGSize{Width: spinSz, Height: spinSz},
 		})
 		spinner.SetStyle(appkit.NSProgressIndicatorStyleSpinning)
 		spinner.SetIndeterminate(true)
-		spinner.StartAnimation(nil)
 		content.AddSubview(spinner)
 
-		waitLabel := appkit.NewTextFieldLabelWithString("Waiting for permission…")
+		waitLabel := appkit.NewTextFieldLabelWithString(cfg.resolvedWaitText(0))
 		waitLabel.SetFont(fontClass.SystemFontOfSize(11))
+		waitLabel.SetUsesSingleLineMode(false)
+		waitLabel.SetLineBreakMode(appkit.NSLineBreakByWordWrapping)
+		waitLabel.SetMaximumNumberOfLines(2)
+		waitLabel.SetPreferredMaxLayoutWidth(textW - spinSz - 6)
 		waitLabel.SetFrame(corefoundation.CGRect{
-			Origin: corefoundation.CGPoint{X: textX + spinSz + 6, Y: spinY - 1},
-			Size:   corefoundation.CGSize{Width: textW - spinSz - 6, Height: 16},
+			Origin: corefoundation.CGPoint{X: textX + spinSz + 6, Y: spinY - 2},
+			Size:   corefoundation.CGSize{Width: textW - spinSz - 6, Height: 22},
 		})
 		content.AddSubview(waitLabel)
 
-		// Single default button, right-aligned at the bottom.
+		// Default button, right-aligned at the bottom.
 		btnY := btnPadB
 		primaryX := w - pad - btnW
 
-		requestBtn := uiMakeButton("Request Permission", corefoundation.CGRect{
+		var requestBtn appkit.NSButton
+		var resetBtn appkit.NSButton
+		applyState := func() {
+			if screenCaptureFlow {
+				state := currentScreenCaptureWindowState(requested, requestTime)
+				requestBtn.SetTitle(state.requestTitle)
+				requestBtn.SetEnabled(state.requestEnabled)
+				bodyLabel.SetStringValue(state.bodyText)
+				waitLabel.SetStringValue(state.waitText)
+				waitLabel.SetHidden(!state.showWait)
+				spinner.SetHidden(!state.showSpinner)
+				if state.showSpinner {
+					spinner.StartAnimation(nil)
+				} else {
+					spinner.StopAnimation(nil)
+				}
+				if resetBtn.GetID() != 0 {
+					resetBtn.SetHidden(!state.showReset)
+				}
+				return
+			}
+
+			elapsed := time.Duration(0)
+			if requested && !requestTime.IsZero() {
+				elapsed = time.Since(requestTime)
+			}
+			requestBtn.SetTitle(cfg.resolvedRequestTitle())
+			requestBtn.SetEnabled(true)
+			bodyLabel.SetStringValue(cfg.resolvedBodyText())
+			waitLabel.SetStringValue(cfg.resolvedWaitText(elapsed))
+			waitLabel.SetHidden(false)
+			spinner.SetHidden(false)
+			spinner.StartAnimation(nil)
+			if resetBtn.GetID() != 0 {
+				resetBtn.SetHidden(false)
+			}
+		}
+		requestBtn = uiMakeButton(cfg.resolvedRequestTitle(), corefoundation.CGRect{
 			Origin: corefoundation.CGPoint{X: primaryX, Y: btnY},
 			Size:   corefoundation.CGSize{Width: btnW, Height: btnH},
 		}, func() {
 			uiPreparePermissionRequest(win)
-			// A normal request should not clear an existing TCC decision.
-			// Resetting here forces macOS to prompt again on every click.
+			if screenCaptureFlow && requested {
+				state := currentScreenCaptureWindowState(requested, requestTime)
+				if state.phase == screenCaptureWindowPhaseSettings {
+					go exec.Command("open", uiPrivacySettingsURL("ScreenCapture")).Run()
+				}
+				applyState()
+				return
+			}
+			if screenCaptureFlow {
+				requested = true
+				requestTime = time.Now()
+				cfg.requestFunc()
+				applyState()
+				return
+			}
+			requested = true
+			requestTime = time.Now()
 			cfg.requestFunc()
+			applyState()
 		})
 		requestBtn.SetBezelStyle(appkit.NSBezelStylePush)
 		requestBtn.SetKeyEquivalent("\r")
 		content.AddSubview(requestBtn)
+
+		if cfg.resetFunc != nil {
+			resetBtn = uiMakeButton("Reset & Retry", corefoundation.CGRect{
+				Origin: corefoundation.CGPoint{X: primaryX - btnGap - btnW, Y: btnY},
+				Size:   corefoundation.CGSize{Width: btnW, Height: btnH},
+			}, func() {
+				uiPreparePermissionRequest(win)
+				requested = true
+				requestTime = time.Now()
+				cfg.resetFunc()
+				applyState()
+			})
+			resetBtn.SetBezelStyle(appkit.NSBezelStyleAccessoryBar)
+			resetBtn.SetHidden(screenCaptureFlow)
+			content.AddSubview(resetBtn)
+		}
+
+		applyState()
 
 		win.Center()
 		win.MakeKeyAndOrderFront(nil)
@@ -562,11 +720,13 @@ func showPermissionWindow(cfg permissionWindowConfig) {
 
 		// Poll for trust on the main thread with timeout.
 		const pollTimeout = 120 * time.Second
-		startTime := time.Now()
 		var pollTimer *time.Timer
 		var poll func()
 		poll = func() {
-			elapsed := time.Since(startTime)
+			elapsed := time.Duration(0)
+			if requested && !requestTime.IsZero() {
+				elapsed = time.Since(requestTime)
+			}
 			if !cfg.checkFunc() {
 				if elapsed >= pollTimeout {
 					msg := cfg.timeoutText
@@ -575,17 +735,17 @@ func showPermissionWindow(cfg permissionWindowConfig) {
 					}
 					waitLabel.SetStringValue(msg)
 					spinner.StopAnimation(nil)
-					spinner.SetIsHidden(true)
+					spinner.SetHidden(true)
 					time.AfterFunc(2*time.Second, func() {
 						dispatch.MainQueue().Async(func() {
+							setPermissionInProgress(cfg.service, false)
 							win.Close()
 							activeWindows.Done()
 						})
 					})
 					return
 				}
-				secs := int(elapsed.Seconds())
-				waitLabel.SetStringValue(fmt.Sprintf("Waiting for permission… (%ds)", secs))
+				applyState()
 				pollTimer = time.AfterFunc(500*time.Millisecond, func() {
 					dispatch.MainQueue().Async(poll)
 				})
@@ -593,10 +753,13 @@ func showPermissionWindow(cfg permissionWindowConfig) {
 			}
 			// Permission granted — transition to success state.
 			spinner.StopAnimation(nil)
-			spinner.SetIsHidden(true)
-			waitLabel.SetIsHidden(true)
-			requestBtn.SetIsHidden(true)
-			bodyLabel.SetIsHidden(true)
+			spinner.SetHidden(true)
+			waitLabel.SetHidden(true)
+			requestBtn.SetHidden(true)
+			if resetBtn.GetID() != 0 {
+				resetBtn.SetHidden(true)
+			}
+			bodyLabel.SetHidden(true)
 
 			// Resize window for compact success state.
 			const successH = 100.0
@@ -612,7 +775,7 @@ func showPermissionWindow(cfg permissionWindowConfig) {
 			)
 			checkCfg := appkit.NewImageSymbolConfigurationWithPointSizeWeight(checkSz*0.6, appkit.NSFontWeights.Medium)
 			checkColorCfg := appkit.NewImageSymbolConfigurationWithHierarchicalColor(
-				appkit.GetNSColorClass().SystemGreen(),
+				appkit.GetNSColorClass().SystemGreenColor(),
 			)
 			checkFinalCfg := checkCfg.ConfigurationByApplyingConfiguration(checkColorCfg)
 			checkImg := appkit.NSImageFromID(checkBase.ImageWithSymbolConfiguration(checkFinalCfg).GetID())
@@ -632,6 +795,7 @@ func showPermissionWindow(cfg permissionWindowConfig) {
 
 			time.AfterFunc(1200*time.Millisecond, func() {
 				dispatch.MainQueue().Async(func() {
+					setPermissionInProgress(cfg.service, false)
 					win.Close()
 					activeWindows.Done()
 				})
@@ -652,26 +816,12 @@ func NewApp(bundleID string) *App {
 		bundleID = "com.apple.iphonesimulator"
 	}
 
-	wsClass := objc.GetClass("NSWorkspace")
-	workspace := objc.Send[objc.ID](objc.ID(wsClass), objc.Sel("sharedWorkspace"))
-	appsPtr := objc.Send[objc.ID](workspace, objc.Sel("runningApplications"))
-
-	count := objc.Send[uint](appsPtr, objc.Sel("count"))
-
 	var targetPid int32
 
-	for i := uint(0); i < uint(count); i++ {
-		app := objc.Send[objc.ID](appsPtr, objc.Sel("objectAtIndex:"), int(i))
-		bidPtr := objc.Send[uintptr](app, objc.Sel("bundleIdentifier"))
-		if bidPtr == 0 {
-			continue
-		}
-
-		utf8 := objc.Send[uintptr](objc.ID(bidPtr), objc.Sel("UTF8String"))
-		bid := BytePtrToString(utf8)
-
+	for _, app := range appkit.GetNSWorkspaceClass().SharedWorkspace().RunningApplications() {
+		bid := app.BundleIdentifier()
 		if bid == bundleID {
-			targetPid = objc.Send[int32](app, objc.Sel("processIdentifier"))
+			targetPid = app.ProcessIdentifier()
 			break
 		}
 	}
@@ -801,12 +951,12 @@ func (e *Element) Children() []*Element {
 	var ptr uintptr
 	key := MkString("AXChildren")
 	if axCopyAttributeValue != nil && axCopyAttributeValue(e.ax, key, &ptr) == 0 {
-		// ptr is CFArrayRef (NSArray)
-		count := objc.Send[uint](objc.ID(ptr), objc.Sel("count"))
+		arr := foundation.NSArrayFromID(objc.ID(ptr))
+		count := arr.Count()
 		res := make([]*Element, count)
-		for i := uint(0); i < uint(count); i++ {
-			itemPtr := objc.Send[uintptr](objc.ID(ptr), objc.Sel("objectAtIndex:"), int(i))
-			res[i] = &Element{ax: itemPtr}
+		for i := range res {
+			item := arr.ObjectAtIndex(uint(i))
+			res[i] = &Element{ax: uintptr(item.GetID())}
 		}
 		return res
 	}
@@ -909,9 +1059,7 @@ func (e *Element) getStringAttr(attr string) string {
 	if axCopyAttributeValue != nil {
 		err := axCopyAttributeValue(e.ax, key, &ptr)
 		if err == 0 {
-			// ptr is NSString
-			utf8 := objc.Send[uintptr](objc.ID(ptr), objc.Sel("UTF8String"))
-			return BytePtrToString(utf8)
+			return foundation.NSStringFromID(objc.ID(ptr)).UTF8String()
 		}
 	}
 	return ""

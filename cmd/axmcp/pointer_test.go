@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/tmc/axmcp/internal/computeruse/magnify"
+)
 
 func TestPreferredClickPoint(t *testing.T) {
 	tests := []struct {
@@ -213,27 +217,30 @@ func TestParseMouseButton(t *testing.T) {
 
 func TestZoomShortcutForAction(t *testing.T) {
 	tests := []struct {
-		action    string
-		wantKey   uint16
-		wantShift bool
-		wantErr   bool
+		action  string
+		want    magnify.Shortcut
+		wantErr bool
 	}{
-		{action: "in", wantKey: knownKeys["="], wantShift: true},
-		{action: "out", wantKey: knownKeys["-"]},
-		{action: "reset", wantKey: knownKeys["0"]},
+		{action: "in", want: magnify.Shortcut{Keys: "cmd+shift+=", Label: "in"}},
+		{action: "out", want: magnify.Shortcut{Keys: "cmd+-", Label: "out"}},
+		{action: "reset", want: magnify.Shortcut{Keys: "cmd+0", Label: "reset"}},
 		{action: "bogus", wantErr: true},
 	}
 
 	for _, tt := range tests {
-		got, err := zoomShortcutForAction(tt.action)
+		action, err := magnify.ParseZoomAction(tt.action)
 		if (err != nil) != tt.wantErr {
-			t.Fatalf("zoomShortcutForAction(%q) error = %v, wantErr %v", tt.action, err, tt.wantErr)
+			t.Fatalf("ParseZoomAction(%q) error = %v, wantErr %v", tt.action, err, tt.wantErr)
 		}
 		if tt.wantErr {
 			continue
 		}
-		if got.keyCode != tt.wantKey || got.shift != tt.wantShift {
-			t.Fatalf("zoomShortcutForAction(%q) = {%d %v}, want {%d %v}", tt.action, got.keyCode, got.shift, tt.wantKey, tt.wantShift)
+		got, err := magnify.ShortcutForAction(action)
+		if err != nil {
+			t.Fatalf("ShortcutForAction(%q): %v", tt.action, err)
+		}
+		if got != tt.want {
+			t.Fatalf("ShortcutForAction(%q) = %+v, want %+v", tt.action, got, tt.want)
 		}
 	}
 }

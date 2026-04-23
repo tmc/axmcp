@@ -41,17 +41,44 @@ type ElementNode struct {
 // computer-use actions.
 type PermissionState struct {
 	AccessibilityGranted   bool   `json:"accessibility_granted"`
+	AccessibilityStatus    string `json:"accessibility_status,omitempty"`
 	ScreenRecordingGranted bool   `json:"screen_recording_granted"`
+	ScreenRecordingStatus  string `json:"screen_recording_status,omitempty"`
 	Pending                bool   `json:"pending"`
 	Message                string `json:"message,omitempty"`
 }
 
-// ApprovalState reports whether control of an app has been approved.
+// ApprovalOutcome reports the current approval status or the result of a
+// recent approval request.
+type ApprovalOutcome string
+
+const (
+	ApprovalOutcomeRequired          ApprovalOutcome = "required"
+	ApprovalOutcomeApproved          ApprovalOutcome = "approved"
+	ApprovalOutcomeDenied            ApprovalOutcome = "denied"
+	ApprovalOutcomeCanceled          ApprovalOutcome = "canceled"
+	ApprovalOutcomePersistenceFailed ApprovalOutcome = "persistence_failed"
+)
+
+// ApprovalDecision reports how an approval request should be resolved.
+type ApprovalDecision string
+
+const (
+	ApprovalDecisionRequire           ApprovalDecision = "require"
+	ApprovalDecisionApprove           ApprovalDecision = "approve"
+	ApprovalDecisionApprovePersistent ApprovalDecision = "approve_persistent"
+	ApprovalDecisionDeny              ApprovalDecision = "deny"
+	ApprovalDecisionCancel            ApprovalDecision = "cancel"
+)
+
+// ApprovalState reports the current approval state and, when applicable, the
+// outcome of the decision that produced it.
 type ApprovalState struct {
-	Required   bool   `json:"required"`
-	Approved   bool   `json:"approved"`
-	Persistent bool   `json:"persistent"`
-	Message    string `json:"message,omitempty"`
+	Outcome    ApprovalOutcome `json:"outcome,omitempty"`
+	Required   bool            `json:"required"`
+	Approved   bool            `json:"approved"`
+	Persistent bool            `json:"persistent"`
+	Message    string          `json:"message,omitempty"`
 }
 
 // AppState is the canonical snapshot returned by get_app_state.
@@ -84,6 +111,5 @@ type InstructionProvider interface {
 
 // ApprovalStore manages app-control approvals.
 type ApprovalStore interface {
-	Status(bundleID string) ApprovalState
-	Approve(bundleID string, persistent bool) (ApprovalState, error)
+	Resolve(bundleID string, decision ApprovalDecision) (ApprovalState, error)
 }

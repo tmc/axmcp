@@ -2,24 +2,25 @@ package approval
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/tmc/axmcp/internal/computeruse"
 )
 
 func TestMemoryStatus(t *testing.T) {
 	store := NewMemory()
 
 	state := store.Status("com.apple.Music")
-	if !state.Required {
-		t.Fatal("Status().Required = false, want true")
+	checkState(t, state, computeruse.ApprovalOutcomeRequired, true, false, false)
+
+	state, err := store.Resolve("com.apple.Music", computeruse.ApprovalDecisionRequire)
+	if err != nil {
+		t.Fatalf("Resolve(..., require): %v", err)
 	}
-	if state.Approved {
-		t.Fatal("Status().Approved = true, want false")
-	}
-	if state.Persistent {
-		t.Fatal("Status().Persistent = true, want false")
-	}
+	checkState(t, state, computeruse.ApprovalOutcomeRequired, true, false, false)
 }
 
 func TestApproveSession(t *testing.T) {
@@ -29,26 +30,13 @@ func TestApproveSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Approve(..., false): %v", err)
 	}
-	if !state.Approved {
-		t.Fatal("Approve(..., false).Approved = false, want true")
-	}
-	if state.Persistent {
-		t.Fatal("Approve(..., false).Persistent = true, want false")
-	}
+	checkState(t, state, computeruse.ApprovalOutcomeApproved, false, true, false)
 
 	state = store.Status("com.apple.music")
-	if !state.Approved {
-		t.Fatal("Status().Approved = false, want true")
-	}
-	if state.Persistent {
-		t.Fatal("Status().Persistent = true, want false")
-	}
-	if state.Required {
-		t.Fatal("Status().Required = true, want false")
-	}
+	checkState(t, state, computeruse.ApprovalOutcomeApproved, false, true, false)
 }
 
-func TestApprovePersistentReloads(t *testing.T) {
+func TestResolveUpgradesSessionApprovalToPersistent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "approvals.json")
 
 	store, err := Open(path)
@@ -56,22 +44,24 @@ func TestApprovePersistentReloads(t *testing.T) {
 		t.Fatalf("Open(%q): %v", path, err)
 	}
 
-	state, err := store.Approve("com.apple.Music", true)
+	state, err := store.Resolve("com.apple.Music", computeruse.ApprovalDecisionApprove)
 	if err != nil {
-		t.Fatalf("Approve(..., true): %v", err)
+		t.Fatalf("Resolve(..., approve): %v", err)
 	}
-	if !state.Approved || !state.Persistent {
-		t.Fatalf("Approve(..., true) = %+v, want approved persistent", state)
+	checkState(t, state, computeruse.ApprovalOutcomeApproved, false, true, false)
+
+	state, err = store.Resolve("com.apple.Music", computeruse.ApprovalDecisionApprovePersistent)
+	if err != nil {
+		t.Fatalf("Resolve(..., approve_persistent): %v", err)
 	}
+	checkState(t, state, computeruse.ApprovalOutcomeApproved, false, true, true)
 
 	loaded, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open(%q) after save: %v", path, err)
 	}
 	state = loaded.Status("com.apple.music")
-	if !state.Approved || !state.Persistent {
-		t.Fatalf("Status() after reload = %+v, want approved persistent", state)
-	}
+	checkState(t, state, computeruse.ApprovalOutcomeApproved, false, true, true)
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -98,22 +88,49 @@ func TestApprovePersistentFallsBackToSession(t *testing.T) {
 	store := NewMemory()
 
 	state, err := store.Approve("com.apple.Music", true)
-	if err == nil {
-		t.Fatal("Approve(..., true) error = nil, want error")
+	if !errors.Is(err, ErrApprovalPersistenceFailed) {
+		t.Fatalf("Approve(..., true) error = %v, want %v", err, ErrApprovalPersistenceFailed)
 	}
-	if !state.Approved {
-		t.Fatal("Approve(..., true).Approved = false, want true")
-	}
-	if state.Persistent {
-		t.Fatal("Approve(..., true).Persistent = true, want false")
-	}
+	checkState(t, state, computeruse.ApprovalOutcomePersistenceFailed, false, true, false)
 
 	state = store.Status("com.apple.music")
-	if !state.Approved {
-		t.Fatal("Status().Approved = false, want true")
+	checkState(t, state, computeruse.ApprovalOutcomeApproved, false, true, false)
+}
+
+func TestResolveDeniedAndCanceled(t *testing.T) {
+	tests := []struct {
+		name        string
+		decision    computeruse.ApprovalDecision
+		wantErr     error
+		wantOutcome computeruse.ApprovalOutcome
+	}{
+		{
+			name:        "deny",
+			decision:    computeruse.ApprovalDecisionDeny,
+			wantErr:     ErrApprovalDenied,
+			wantOutcome: computeruse.ApprovalOutcomeDenied,
+		},
+		{
+			name:        "cancel",
+			decision:    computeruse.ApprovalDecisionCancel,
+			wantErr:     ErrApprovalCanceled,
+			wantOutcome: computeruse.ApprovalOutcomeCanceled,
+		},
 	}
-	if state.Persistent {
-		t.Fatal("Status().Persistent = true, want false")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewMemory()
+
+			state, err := store.Resolve("com.apple.Music", tt.decision)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Resolve(..., %q) error = %v, want %v", tt.decision, err, tt.wantErr)
+			}
+			checkState(t, state, tt.wantOutcome, true, false, false)
+
+			state = store.Status("com.apple.music")
+			checkState(t, state, computeruse.ApprovalOutcomeRequired, true, false, false)
+		})
 	}
 }
 
@@ -121,13 +138,25 @@ func TestApproveRejectsEmptyBundleID(t *testing.T) {
 	store := NewMemory()
 
 	state, err := store.Approve("   ", false)
-	if err == nil {
-		t.Fatal("Approve(empty, false) error = nil, want error")
+	if !errors.Is(err, ErrBundleIDRequired) {
+		t.Fatalf("Approve(empty, false) error = %v, want %v", err, ErrBundleIDRequired)
 	}
-	if state.Approved {
-		t.Fatal("Approve(empty, false).Approved = true, want false")
+	checkState(t, state, computeruse.ApprovalOutcomeRequired, true, false, false)
+}
+
+func checkState(t *testing.T, got computeruse.ApprovalState, wantOutcome computeruse.ApprovalOutcome, wantRequired, wantApproved, wantPersistent bool) {
+	t.Helper()
+
+	if got.Outcome != wantOutcome {
+		t.Fatalf("Outcome = %q, want %q", got.Outcome, wantOutcome)
 	}
-	if !state.Required {
-		t.Fatal("Approve(empty, false).Required = false, want true")
+	if got.Required != wantRequired {
+		t.Fatalf("Required = %v, want %v", got.Required, wantRequired)
+	}
+	if got.Approved != wantApproved {
+		t.Fatalf("Approved = %v, want %v", got.Approved, wantApproved)
+	}
+	if got.Persistent != wantPersistent {
+		t.Fatalf("Persistent = %v, want %v", got.Persistent, wantPersistent)
 	}
 }

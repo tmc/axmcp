@@ -15,8 +15,10 @@ import (
 	"time"
 
 	"github.com/ebitengine/purego"
+	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/x/axuiautomation"
 	"github.com/tmc/axmcp/internal/computeruse"
+	"github.com/tmc/axmcp/internal/ghostcursor"
 	"github.com/tmc/axmcp/internal/macosapp"
 )
 
@@ -193,7 +195,9 @@ func buildState(app computeruse.AppInfo, window *axuiautomation.Element, instruc
 		Approval:            computeruse.ApprovalState{Approved: true},
 		Permissions: computeruse.PermissionState{
 			AccessibilityGranted:   true,
+			AccessibilityStatus:    "granted",
 			ScreenRecordingGranted: true,
+			ScreenRecordingStatus:  "granted",
 		},
 	}
 	if instructions != nil {
@@ -245,10 +249,14 @@ func captureWindow(window *axuiautomation.Element) ([]byte, error) {
 	if window == nil {
 		return nil, fmt.Errorf("nil window")
 	}
+	frame := window.Frame()
 	if png, err := window.Screenshot(); err == nil && len(png) > 0 {
+		ghostcursor.FlashCaptureRect(corefoundation.CGRect{
+			Origin: corefoundation.CGPoint{X: frame.Origin.X, Y: frame.Origin.Y},
+			Size:   corefoundation.CGSize{Width: frame.Size.Width, Height: frame.Size.Height},
+		})
 		return png, nil
 	}
-	frame := window.Frame()
 	rectArg := fmt.Sprintf("%d,%d,%d,%d",
 		int(frame.Origin.X),
 		int(frame.Origin.Y),
@@ -279,6 +287,10 @@ func captureWindow(window *axuiautomation.Element) ([]byte, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("empty screenshot")
 	}
+	ghostcursor.FlashCaptureRect(corefoundation.CGRect{
+		Origin: corefoundation.CGPoint{X: frame.Origin.X, Y: frame.Origin.Y},
+		Size:   corefoundation.CGSize{Width: frame.Size.Width, Height: frame.Size.Height},
+	})
 	return data, nil
 }
 

@@ -7,9 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/foundation"
 	"github.com/tmc/apple/vision"
 	"github.com/tmc/apple/x/axuiautomation"
+	"github.com/tmc/axmcp/internal/ghostcursor"
 	"github.com/tmc/axmcp/internal/ui"
 )
 
@@ -129,55 +131,77 @@ func recognizeText(pngData []byte, imgWidth, imgHeight int) ([]ocrResult, error)
 	return results, nil
 }
 
-// ocrElement captures a screenshot of the element and runs OCR on it.
-func ocrElement(el *axuiautomation.Element) ([]ocrResult, error) {
+// ocrElementCapture captures a screenshot of the element and runs OCR on it.
+func ocrElementCapture(el *axuiautomation.Element) ([]ocrResult, []byte, error) {
 	frame := el.Frame()
 	w := int(frame.Size.Width)
 	h := int(frame.Size.Height)
 	if w == 0 || h == 0 {
-		return nil, fmt.Errorf("element has zero-size frame")
+		return nil, nil, fmt.Errorf("element has zero-size frame")
 	}
 
 	png, err := el.Screenshot()
 	if err != nil {
-		return nil, fmt.Errorf("screenshot: %w", err)
+		return nil, nil, fmt.Errorf("screenshot: %w", err)
 	}
-	return recognizeText(png, w, h)
+	ghostcursor.FlashCaptureRect(corefoundation.CGRect{
+		Origin: corefoundation.CGPoint{X: frame.Origin.X, Y: frame.Origin.Y},
+		Size:   corefoundation.CGSize{Width: frame.Size.Width, Height: frame.Size.Height},
+	})
+	noteCLIVisualFeedback()
+	results, err := recognizeText(png, w, h)
+	if err != nil {
+		return nil, nil, err
+	}
+	return results, png, nil
 }
 
-// ocrWindow captures a window screenshot and runs OCR using coordinates in the
-// window's local coordinate space rather than raw screenshot pixels.
-func ocrWindow(appName, windowTitle string) ([]ocrResult, int, int, error) {
+// ocrElement captures a screenshot of the element and runs OCR on it.
+func ocrElement(el *axuiautomation.Element) ([]ocrResult, error) {
+	results, _, err := ocrElementCapture(el)
+	return results, err
+}
+
+// ocrWindowCapture captures a window screenshot and runs OCR using coordinates
+// in the window's local coordinate space rather than raw screenshot pixels.
+func ocrWindowCapture(appName, windowTitle string) ([]ocrResult, []byte, int, int, error) {
 	if !ui.IsScreenRecordingTrusted() {
 		if !ui.WaitForScreenRecording(30 * time.Second) {
-			return nil, 0, 0, fmt.Errorf("screen recording permission required for window OCR")
+			return nil, nil, 0, 0, fmt.Errorf("screen recording permission required for window OCR")
 		}
 	}
 	windows, err := listAppWindows(appName)
 	if err != nil || len(windows) == 0 {
-		return nil, 0, 0, fmt.Errorf("no windows for %q — the app may have windows on another Space or display: %w", appName, err)
+		return nil, nil, 0, 0, fmt.Errorf("no windows for %q — the app may have windows on another Space or display: %w", appName, err)
 	}
 	win := windows[0]
 	if windowTitle != "" {
 		var ok bool
 		win, ok = matchWindowInfo(windows, windowTitle)
 		if !ok {
-			return nil, 0, 0, fmt.Errorf("no window matching %q found for %q", windowTitle, appName)
+			return nil, nil, 0, 0, fmt.Errorf("no window matching %q found for %q", windowTitle, appName)
 		}
 	}
 	png, err := captureWindow(win)
 	if err != nil {
-		return nil, 0, 0, fmt.Errorf("capture: %w", err)
+		return nil, nil, 0, 0, fmt.Errorf("capture: %w", err)
 	}
 	coordW := int(math.Round(win.Width))
 	coordH := int(math.Round(win.Height))
 	if coordW <= 0 || coordH <= 0 {
 		coordW, coordH, err = pngDimensions(png)
 		if err != nil {
-			return nil, 0, 0, fmt.Errorf("read image dimensions: %w", err)
+			return nil, nil, 0, 0, fmt.Errorf("read image dimensions: %w", err)
 		}
 	}
 	results, err := recognizeText(png, coordW, coordH)
+	return results, png, coordW, coordH, err
+}
+
+// ocrWindow captures a window screenshot and runs OCR using coordinates in the
+// window's local coordinate space rather than raw screenshot pixels.
+func ocrWindow(appName, windowTitle string) ([]ocrResult, int, int, error) {
+	results, _, coordW, coordH, err := ocrWindowCapture(appName, windowTitle)
 	return results, coordW, coordH, err
 }
 

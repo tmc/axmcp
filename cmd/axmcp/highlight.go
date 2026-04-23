@@ -8,14 +8,17 @@ import (
 	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/dispatch"
 	"github.com/tmc/apple/foundation"
+	"github.com/tmc/axmcp/internal/ghostcursor"
 )
 
 const (
 	highlightDuration     = 2 * time.Second
-	highlightFadeDuration = 180 * time.Millisecond
-	highlightFadeSteps    = 6
+	highlightFadeDuration = 220 * time.Millisecond
+	highlightFadeSteps    = 8
 	highlightBoxPadding   = 4
 	highlightMaxMatches   = 8
+	highlightGlowPadding  = 8
+	highlightInnerInset   = 3
 )
 
 func highlightCollectionBehavior() appkit.NSWindowCollectionBehavior {
@@ -84,6 +87,37 @@ func highlightRectForMatch(match ocrResult, imgW, imgH int) corefoundation.CGRec
 	}
 }
 
+func expandCGRect(rect corefoundation.CGRect, padding float64) corefoundation.CGRect {
+	if padding <= 0 {
+		return rect
+	}
+	return corefoundation.CGRect{
+		Origin: corefoundation.CGPoint{X: rect.Origin.X - padding, Y: rect.Origin.Y - padding},
+		Size: corefoundation.CGSize{
+			Width:  rect.Size.Width + 2*padding,
+			Height: rect.Size.Height + 2*padding,
+		},
+	}
+}
+
+func insetCGRect(rect corefoundation.CGRect, padding float64) corefoundation.CGRect {
+	if padding <= 0 {
+		return rect
+	}
+	width := rect.Size.Width - 2*padding
+	if width < 0 {
+		width = 0
+	}
+	height := rect.Size.Height - 2*padding
+	if height < 0 {
+		height = 0
+	}
+	return corefoundation.CGRect{
+		Origin: corefoundation.CGPoint{X: rect.Origin.X + padding, Y: rect.Origin.Y + padding},
+		Size:   corefoundation.CGSize{Width: width, Height: height},
+	}
+}
+
 func animateOverlayWindow(win appkit.NSWindow, duration time.Duration) {
 	if duration <= 0 {
 		duration = highlightDuration
@@ -135,7 +169,7 @@ func highlightOCRMatches(capture *ocrCapture, matches []ocrResult, duration time
 	}
 
 	targetFrame := capture.target.Frame()
-	frame := corefoundation.CGRect{
+	axRect := corefoundation.CGRect{
 		Origin: corefoundation.CGPoint{
 			X: targetFrame.Origin.X,
 			Y: targetFrame.Origin.Y,
@@ -145,6 +179,12 @@ func highlightOCRMatches(capture *ocrCapture, matches []ocrResult, duration time
 			Height: float64(capture.imgH),
 		},
 	}
+	// capture.target.Frame() is in AX / CoreGraphics global coords
+	// (top-left origin), but NSWindow content rects are in AppKit
+	// screen coords (bottom-left origin). Flip Y against the primary
+	// display height so the overlay lands on the element, not mirrored
+	// across the screen.
+	frame := axToAppKitRect(axRect)
 
 	var win appkit.NSWindow
 	runOnMain(func() {
@@ -161,19 +201,41 @@ func highlightOCRMatches(capture *ocrCapture, matches []ocrResult, duration time
 		win.SetReleasedWhenClosed(false)
 		win.SetLevel(appkit.StatusWindowLevel)
 		win.SetCollectionBehavior(highlightCollectionBehavior())
+		win.SetSharingType(ghostcursor.OverlaySharingType())
 
 		content := appkit.NSViewFromID(win.ContentView().GetID())
-		border := appkit.NewColorWithSRGBRedGreenBlueAlpha(1.0, 0.44, 0.08, 0.98)
-		fill := appkit.NewColorWithSRGBRedGreenBlueAlpha(1.0, 0.44, 0.08, 0.18)
+		glowFill := appkit.NewColorWithSRGBRedGreenBlueAlpha(1.0, 0.68, 0.18, 0.16)
+		border := appkit.NewColorWithSRGBRedGreenBlueAlpha(1.0, 0.56, 0.10, 0.99)
+		fill := appkit.NewColorWithSRGBRedGreenBlueAlpha(1.0, 0.50, 0.08, 0.18)
+		innerBorder := appkit.NewColorWithSRGBRedGreenBlueAlpha(1.0, 0.98, 0.92, 0.86)
 		for _, match := range matches {
-			box := appkit.NewBoxWithFrame(highlightRectForMatch(match, capture.imgW, capture.imgH))
+			mainRect := highlightRectForMatch(match, capture.imgW, capture.imgH)
+
+			glow := appkit.NewBoxWithFrame(expandCGRect(mainRect, highlightGlowPadding))
+			glow.SetBoxType(appkit.NSBoxCustom)
+			glow.SetTitlePosition(appkit.NSNoTitle)
+			glow.SetBorderWidth(0)
+			glow.SetCornerRadius(14)
+			glow.SetFillColor(glowFill)
+			content.AddSubview(glow)
+
+			box := appkit.NewBoxWithFrame(mainRect)
 			box.SetBoxType(appkit.NSBoxCustom)
 			box.SetTitlePosition(appkit.NSNoTitle)
 			box.SetBorderColor(border)
-			box.SetBorderWidth(3)
-			box.SetCornerRadius(8)
+			box.SetBorderWidth(4)
+			box.SetCornerRadius(10)
 			box.SetFillColor(fill)
 			content.AddSubview(box)
+
+			inner := appkit.NewBoxWithFrame(insetCGRect(mainRect, highlightInnerInset))
+			inner.SetBoxType(appkit.NSBoxCustom)
+			inner.SetTitlePosition(appkit.NSNoTitle)
+			inner.SetBorderColor(innerBorder)
+			inner.SetBorderWidth(1.5)
+			inner.SetCornerRadius(7)
+			inner.SetFillColor(appkit.NewColorWithSRGBRedGreenBlueAlpha(1, 1, 1, 0))
+			content.AddSubview(inner)
 		}
 
 		win.SetAlphaValue(0)

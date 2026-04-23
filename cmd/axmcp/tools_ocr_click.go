@@ -18,7 +18,9 @@ type ocrCapture struct {
 	desc   string
 	imgW   int
 	imgH   int
+	png    []byte
 	result []ocrResult
+	scope  *ocrRedactionScope
 }
 
 func (c *ocrCapture) Close() {
@@ -59,7 +61,7 @@ func captureOCRScope(appName, window, contains, role string) (*ocrCapture, error
 			capture.Close()
 			return nil, fmt.Errorf("ocr target disappeared: %s", formatMatch(result.matches[0]))
 		}
-		results, err := ocrElement(target)
+		results, png, err := ocrElementCapture(target)
 		if err != nil {
 			capture.Close()
 			return nil, err
@@ -69,7 +71,9 @@ func captureOCRScope(appName, window, contains, role string) (*ocrCapture, error
 		capture.desc = formatMatch(result.matches[0])
 		capture.imgW = w
 		capture.imgH = h
+		capture.png = png
 		capture.result = results
+		capture.scope = &ocrRedactionScope{root: target}
 		return capture, nil
 	}
 
@@ -77,7 +81,7 @@ func captureOCRScope(appName, window, contains, role string) (*ocrCapture, error
 	if err != nil {
 		// AX window resolution failed. Fall back to CGWindowList-based OCR,
 		// which works even when apps have unresponsive accessibility.
-		results, w, h, ocrErr := ocrWindow(appName, window)
+		results, png, w, h, ocrErr := ocrWindowCapture(appName, window)
 		if ocrErr != nil {
 			capture.Close()
 			return nil, fmt.Errorf("%v (AX fallback: %v)", ocrErr, err)
@@ -86,16 +90,17 @@ func captureOCRScope(appName, window, contains, role string) (*ocrCapture, error
 		capture.desc = fmt.Sprintf("window %q (via CGWindowList)", appName)
 		capture.imgW = w
 		capture.imgH = h
+		capture.png = png
 		capture.result = results
 		return capture, nil
 	}
-	results, w, h, err := ocrElementWithSize(win)
+	results, png, w, h, err := ocrElementWithSize(win)
 	if err != nil {
 		title := win.Title()
 		if title == "" {
 			title = window
 		}
-		results, w, h, err = ocrWindow(appName, title)
+		results, png, w, h, err = ocrWindowCapture(appName, title)
 		if err != nil {
 			capture.Close()
 			return nil, err
@@ -105,23 +110,25 @@ func captureOCRScope(appName, window, contains, role string) (*ocrCapture, error
 	capture.desc = desc
 	capture.imgW = w
 	capture.imgH = h
+	capture.png = png
 	capture.result = results
+	capture.scope = &ocrRedactionScope{root: win}
 	return capture, nil
 }
 
-func ocrElementWithSize(el *axuiautomation.Element) ([]ocrResult, int, int, error) {
+func ocrElementWithSize(el *axuiautomation.Element) ([]ocrResult, []byte, int, int, error) {
 	if el == nil {
-		return nil, 0, 0, fmt.Errorf("target disappeared")
+		return nil, nil, 0, 0, fmt.Errorf("target disappeared")
 	}
 	w, h := localSize(el)
 	if w <= 0 || h <= 0 {
-		return nil, 0, 0, fmt.Errorf("element has zero-size frame")
+		return nil, nil, 0, 0, fmt.Errorf("element has zero-size frame")
 	}
-	results, err := ocrElement(el)
+	results, png, err := ocrElementCapture(el)
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, nil, 0, 0, err
 	}
-	return results, w, h, nil
+	return results, png, w, h, nil
 }
 
 type ocrAXCandidate struct {
@@ -433,6 +440,9 @@ Use window to target a specific window title substring. Use contains/role to OCR
 		selection, err := selectOCRMatch(capture.result, args.Find, args.Match)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s in %s", err, capture.desc)
+		}
+		if humanHighlightEnabled() {
+			_, _ = highlightOCRMatches(capture, []ocrResult{selection.match}, highlightDuration)
 		}
 		summary, resolutionNote, err := performOCRClick(capture, selection.match)
 		if err != nil {

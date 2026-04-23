@@ -3,6 +3,7 @@ package tccprompt
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 	"sort"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/ebitengine/purego"
 	"github.com/tmc/apple/corefoundation"
+	"github.com/tmc/axmcp/internal/macsigning"
 	"github.com/tmc/axmcp/internal/ui"
 	"github.com/tmc/macgo"
 )
@@ -55,6 +57,7 @@ type Prompt struct {
 
 func EnsureReady() error {
 	setupOnce.Do(func() {
+		debugf("EnsureReady: begin")
 		runtime.LockOSThread()
 
 		cfg := macgo.NewConfig().
@@ -62,33 +65,47 @@ func EnsureReady() error {
 			WithPermissions(macgo.Accessibility).
 			WithUsageDescription("NSAccessibilityUsageDescription", "tcc-harness uses Accessibility to inspect and click TCC system prompts for debugging.").
 			WithUIMode(macgo.UIModeAccessory).
-			WithAdHocSign()
+			WithSingleProcess()
 		cfg.BundleID = "dev.tmc.tccharness"
-		cfg.CodeSigningIdentifier = cfg.BundleID
+		cfg = macsigning.Configure(cfg)
 		ui.ConfigureIdentity("tcc-harness", cfg.BundleID)
+		if os.Getenv("MACGO_DEBUG") == "1" {
+			cfg = cfg.WithDebug()
+		}
 
+		debugf("EnsureReady: calling macgo.Start")
 		if err := macgo.Start(cfg); err != nil {
+			debugf("EnsureReady: macgo.Start failed: %v", err)
 			setupErr = fmt.Errorf("macgo start: %w", err)
 			return
 		}
+		debugf("EnsureReady: macgo.Start returned")
 		if err := bindAX(); err != nil {
+			debugf("EnsureReady: bindAX failed: %v", err)
 			setupErr = err
+			return
 		}
+		debugf("EnsureReady: bindAX returned")
 	})
 	return setupErr
 }
 
 func Bootstrap(timeout time.Duration) error {
+	debugf("Bootstrap: start timeout=%s", timeout)
 	if err := EnsureReady(); err != nil {
+		debugf("Bootstrap: EnsureReady failed: %v", err)
 		return err
 	}
 	if ui.IsTrusted() {
+		debugf("Bootstrap: already trusted")
 		return nil
 	}
+	debugf("Bootstrap: requesting accessibility permission")
 	ui.RequestAccessibilityPermission()
 	deadline := time.Now().Add(timeout)
 	for {
 		if ui.IsTrusted() {
+			debugf("Bootstrap: trust granted")
 			return nil
 		}
 		if timeout <= 0 || time.Now().After(deadline) {
@@ -96,6 +113,7 @@ func Bootstrap(timeout time.Duration) error {
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
+	debugf("Bootstrap: timed out waiting for trust")
 	return fmt.Errorf("tcc-harness.app needs Accessibility permission; grant it in System Settings > Privacy & Security > Accessibility and retry")
 }
 
@@ -449,6 +467,13 @@ func mapKeys(m map[string]bool) []string {
 		out = append(out, key)
 	}
 	return out
+}
+
+func debugf(format string, args ...any) {
+	if os.Getenv("TCCPROMPT_DEBUG") == "" {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "tccprompt: "+format+"\n", args...)
 }
 
 func retain(ref uintptr) uintptr {

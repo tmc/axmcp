@@ -15,6 +15,21 @@ import (
 
 const defaultFileName = "approvals.json"
 
+var (
+	// ErrBundleIDRequired reports a missing bundle ID.
+	ErrBundleIDRequired = errors.New("bundle id required")
+
+	// ErrApprovalDenied reports an explicit denial.
+	ErrApprovalDenied = errors.New("approval denied")
+
+	// ErrApprovalCanceled reports a canceled approval request.
+	ErrApprovalCanceled = errors.New("approval canceled")
+
+	// ErrApprovalPersistenceFailed reports that approval succeeded for the
+	// current session but could not be persisted.
+	ErrApprovalPersistenceFailed = errors.New("approval persistence failed")
+)
+
 // Store keeps approval state in memory and can persist it to disk.
 type Store struct {
 	mu         sync.RWMutex
@@ -90,6 +105,41 @@ func (s *Store) Path() string {
 	return s.path
 }
 
+// Resolve reports or records approval for bundleID according to decision.
+func (s *Store) Resolve(bundleID string, decision computeruse.ApprovalDecision) (computeruse.ApprovalState, error) {
+	key := normalizeBundleID(bundleID)
+	if key == "" {
+		return approvalRequired("approval required"), ErrBundleIDRequired
+	}
+
+	if decision == "" {
+		decision = computeruse.ApprovalDecisionRequire
+	}
+
+	state := s.status(key)
+	if state.Approved {
+		if decision == computeruse.ApprovalDecisionApprovePersistent && !state.Persistent {
+			return s.persist(key)
+		}
+		return state, nil
+	}
+
+	switch decision {
+	case computeruse.ApprovalDecisionRequire:
+		return state, nil
+	case computeruse.ApprovalDecisionApprove:
+		return s.approveSession(key), nil
+	case computeruse.ApprovalDecisionApprovePersistent:
+		return s.persist(key)
+	case computeruse.ApprovalDecisionDeny:
+		return approvalDenied("approval denied"), ErrApprovalDenied
+	case computeruse.ApprovalDecisionCancel:
+		return approvalCanceled("approval canceled"), ErrApprovalCanceled
+	default:
+		return approvalRequired("approval required"), fmt.Errorf("unknown approval decision %q", decision)
+	}
+}
+
 // Status reports the current approval state for bundleID.
 func (s *Store) Status(bundleID string) computeruse.ApprovalState {
 	key := normalizeBundleID(bundleID)
@@ -99,58 +149,16 @@ func (s *Store) Status(bundleID string) computeruse.ApprovalState {
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-
-	if _, ok := s.persistent[key]; ok {
-		return computeruse.ApprovalState{
-			Approved:   true,
-			Persistent: true,
-			Message:    "approved persistently",
-		}
-	}
-	if _, ok := s.session[key]; ok {
-		return computeruse.ApprovalState{
-			Approved: true,
-			Message:  "approved for this session",
-		}
-	}
-	return approvalRequired("approval required")
+	return s.statusLocked(key)
 }
 
 // Approve records approval for bundleID. Persistent approval is saved when the
 // store has a configured backing file.
 func (s *Store) Approve(bundleID string, persistent bool) (computeruse.ApprovalState, error) {
-	key := normalizeBundleID(bundleID)
-	if key == "" {
-		return approvalRequired("approval required"), errors.New("bundle id required")
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if persistent {
-		now := time.Now().UTC()
-		s.persistent[key] = approvalRecord{ApprovedAt: now}
-		delete(s.session, key)
-		if err := s.saveLocked(); err != nil {
-			s.session[key] = struct{}{}
-			delete(s.persistent, key)
-			return computeruse.ApprovalState{
-				Approved: true,
-				Message:  "approved for this session; could not persist approval",
-			}, fmt.Errorf("persist approval: %w", err)
-		}
-		return computeruse.ApprovalState{
-			Approved:   true,
-			Persistent: true,
-			Message:    "approved persistently",
-		}, nil
+		return s.Resolve(bundleID, computeruse.ApprovalDecisionApprovePersistent)
 	}
-
-	s.session[key] = struct{}{}
-	return computeruse.ApprovalState{
-		Approved: true,
-		Message:  "approved for this session",
-	}, nil
+	return s.Resolve(bundleID, computeruse.ApprovalDecisionApprove)
 }
 
 func (s *Store) load() error {
@@ -174,6 +182,31 @@ func (s *Store) load() error {
 		s.persistent[key] = record
 	}
 	return nil
+}
+
+func (s *Store) approveSession(key string) computeruse.ApprovalState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.session[key] = struct{}{}
+	return approved("approved for this session", false)
+}
+
+func (s *Store) persist(key string) (computeruse.ApprovalState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.persistent[key]; ok {
+		return approved("approved persistently", true), nil
+	}
+
+	s.persistent[key] = approvalRecord{ApprovedAt: time.Now().UTC()}
+	delete(s.session, key)
+	if err := s.saveLocked(); err != nil {
+		s.session[key] = struct{}{}
+		delete(s.persistent, key)
+		return persistenceFailed("approved for this session; could not persist approval"), fmt.Errorf("%w: %v", ErrApprovalPersistenceFailed, err)
+	}
+	return approved("approved persistently", true), nil
 }
 
 func (s *Store) saveLocked() error {
@@ -203,9 +236,59 @@ func (s *Store) saveLocked() error {
 	return nil
 }
 
+func (s *Store) status(key string) computeruse.ApprovalState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.statusLocked(key)
+}
+
+func (s *Store) statusLocked(key string) computeruse.ApprovalState {
+	if _, ok := s.persistent[key]; ok {
+		return approved("approved persistently", true)
+	}
+	if _, ok := s.session[key]; ok {
+		return approved("approved for this session", false)
+	}
+	return approvalRequired("approval required")
+}
+
+func approved(message string, persistent bool) computeruse.ApprovalState {
+	return computeruse.ApprovalState{
+		Outcome:    computeruse.ApprovalOutcomeApproved,
+		Approved:   true,
+		Persistent: persistent,
+		Message:    message,
+	}
+}
+
+func approvalDenied(message string) computeruse.ApprovalState {
+	return computeruse.ApprovalState{
+		Outcome:  computeruse.ApprovalOutcomeDenied,
+		Required: true,
+		Message:  message,
+	}
+}
+
+func approvalCanceled(message string) computeruse.ApprovalState {
+	return computeruse.ApprovalState{
+		Outcome:  computeruse.ApprovalOutcomeCanceled,
+		Required: true,
+		Message:  message,
+	}
+}
+
 func approvalRequired(message string) computeruse.ApprovalState {
 	return computeruse.ApprovalState{
+		Outcome:  computeruse.ApprovalOutcomeRequired,
 		Required: true,
+		Message:  message,
+	}
+}
+
+func persistenceFailed(message string) computeruse.ApprovalState {
+	return computeruse.ApprovalState{
+		Outcome:  computeruse.ApprovalOutcomePersistenceFailed,
+		Approved: true,
 		Message:  message,
 	}
 }

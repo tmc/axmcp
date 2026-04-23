@@ -8,6 +8,11 @@ simulator_tree.txt
 /ax
 /axmcp
 /ascript
+/computer-use-mcp
+/ghost-cursor-capture
+/ghost-cursor-fx-test
+/ghost-cursor-test
+/temp-hover-test
 /xc
 /xcmcp
 /cmd/xcmcp/xcmcp

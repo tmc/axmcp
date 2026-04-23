@@ -4,63 +4,57 @@ import (
 	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/tmc/axmcp/internal/computeruse"
 )
 
 type listAppsInput struct{}
 
 type getAppStateInput struct {
-	App             string `json:"app"`
-	Window          string `json:"window,omitempty"`
-	Approve         bool   `json:"approve,omitempty"`
-	PersistApproval bool   `json:"persist_approval,omitempty"`
+	App string `json:"app"`
 }
 
 type clickInput struct {
-	StateID      string `json:"state_id"`
-	ElementIndex *int   `json:"element_index,omitempty"`
-	X            *int   `json:"x,omitempty"`
-	Y            *int   `json:"y,omitempty"`
-	Button       string `json:"button,omitempty"`
-	ClickCount   int    `json:"click_count,omitempty"`
+	App          string   `json:"app"`
+	ElementIndex *string  `json:"element_index,omitempty"`
+	X            *float64 `json:"x,omitempty"`
+	Y            *float64 `json:"y,omitempty"`
+	MouseButton  string   `json:"mouse_button,omitempty"`
+	ClickCount   int      `json:"click_count,omitempty"`
 }
 
 type performSecondaryActionInput struct {
-	StateID      string `json:"state_id"`
-	ElementIndex int    `json:"element_index"`
+	App          string `json:"app"`
+	ElementIndex string `json:"element_index"`
 	Action       string `json:"action"`
 }
 
 type scrollInput struct {
-	StateID      string  `json:"state_id"`
-	ElementIndex *int    `json:"element_index,omitempty"`
+	App          string  `json:"app"`
+	ElementIndex string  `json:"element_index"`
 	Direction    string  `json:"direction"`
 	Pages        float64 `json:"pages,omitempty"`
 }
 
 type dragInput struct {
-	StateID string `json:"state_id"`
-	StartX  int    `json:"start_x"`
-	StartY  int    `json:"start_y"`
-	EndX    int    `json:"end_x"`
-	EndY    int    `json:"end_y"`
-	Button  string `json:"button,omitempty"`
+	App   string  `json:"app"`
+	FromX float64 `json:"from_x"`
+	FromY float64 `json:"from_y"`
+	ToX   float64 `json:"to_x"`
+	ToY   float64 `json:"to_y"`
 }
 
 type typeTextInput struct {
-	StateID      string `json:"state_id"`
-	ElementIndex *int   `json:"element_index,omitempty"`
-	Text         string `json:"text"`
+	App  string `json:"app"`
+	Text string `json:"text"`
 }
 
 type pressKeyInput struct {
-	StateID string `json:"state_id"`
-	Keys    string `json:"keys"`
+	App string `json:"app"`
+	Key string `json:"key"`
 }
 
 type setValueInput struct {
-	StateID      string `json:"state_id"`
-	ElementIndex int    `json:"element_index"`
+	App          string `json:"app"`
+	ElementIndex string `json:"element_index"`
 	Value        string `json:"value"`
 }
 
@@ -81,10 +75,41 @@ func missingCoordinatesError() error {
 	return fmt.Errorf("provide either element_index or both x and y")
 }
 
-func approvalRequiredResult(state computeruse.AppState) *mcp.CallToolResult {
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{Text: state.Approval.Message},
-		},
+func exactObjectSchema(properties map[string]any, required ...string) map[string]any {
+	schema := map[string]any{
+		"type":                 "object",
+		"properties":           properties,
+		"additionalProperties": false,
 	}
+	if len(required) > 0 {
+		schema["required"] = required
+	}
+	return schema
+}
+
+func stringProperty(description string) map[string]any {
+	return map[string]any{
+		"type":        "string",
+		"description": description,
+	}
+}
+
+func numberProperty(description string) map[string]any {
+	return map[string]any{
+		"type":        "number",
+		"description": description,
+	}
+}
+
+func integerProperty(description string) map[string]any {
+	return map[string]any{
+		"type":        "integer",
+		"description": description,
+	}
+}
+
+func enumStringProperty(description string, values ...string) map[string]any {
+	property := stringProperty(description)
+	property["enum"] = values
+	return property
 }

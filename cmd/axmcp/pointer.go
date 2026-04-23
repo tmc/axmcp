@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"math"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -10,7 +13,68 @@ import (
 	"github.com/ebitengine/purego"
 	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/x/axuiautomation"
+	"github.com/tmc/axmcp/internal/ghostcursor"
 )
+
+const defaultCursorGlide = 200 * time.Millisecond
+
+// cursorGlideDuration returns the animation duration used when moving the
+// ghost cursor to a click target. Setting AXMCP_CURSOR_GLIDE_MS=0 disables
+// the animation and falls back to the legacy teleport behavior.
+func cursorGlideDuration() time.Duration {
+	raw, ok := os.LookupEnv("AXMCP_CURSOR_GLIDE_MS")
+	if !ok {
+		return defaultCursorGlide
+	}
+	ms, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || ms < 0 {
+		return defaultCursorGlide
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
+// glideCursorTo animates the ghost cursor to (x, y) before a click. It is a
+// best-effort visual hint — errors and disabled cursors are silently ignored
+// so callers can treat it as a no-op. Returns true if a glide was performed,
+// so callers can suppress the legacy PressAt teleport that would otherwise
+// visually snap the cursor mid-animation.
+func glideCursorTo(x, y int) bool {
+	if !ghostcursor.Enabled() {
+		return false
+	}
+	dur := cursorGlideDuration()
+	if dur <= 0 {
+		return false
+	}
+	err := ghostcursor.Default().MoveTo(context.Background(),
+		ghostcursor.ScreenPosition(x, y),
+		ghostcursor.MoveOptions{
+			Duration:   dur,
+			Activity:   ghostcursor.ActivityMoving,
+			CurveStyle: ghostcursor.CurveBezier,
+		})
+	return err == nil
+}
+
+// flashClickActivity transitions the ghost cursor through Pressed → Idle
+// without repositioning the overlay window, preserving any smooth glide that
+// just completed. If glided is false the caller wants the legacy snap
+// behavior — PressAt/ReleaseAt will be used instead.
+func flashClickActivity(x, y int, glided bool) {
+	if !glided {
+		ghostcursor.PressAt(x, y)
+		return
+	}
+	_ = ghostcursor.Default().SetActivity(ghostcursor.ActivityPressed)
+}
+
+func settleClickActivity(x, y int, glided bool) {
+	if !glided {
+		ghostcursor.ReleaseAt(x, y)
+		return
+	}
+	_ = ghostcursor.Default().SetActivity(ghostcursor.ActivityIdle)
+}
 
 var (
 	cgEventCreateMouseEvent     func(source uintptr, mouseType int32, x, y float64, button int32) uintptr
@@ -88,6 +152,8 @@ func hoverLocalPoint(el *axuiautomation.Element, x, y int) error {
 		return fmt.Errorf("CGWarpMouseCursorPosition not available")
 	}
 	absX, absY := localPointToScreen(el, x, y)
+	ghostcursor.HoverAt(absX, absY)
+	noteCLIVisualFeedback()
 	cgWarpMouseCursorPosition(float64(absX), float64(absY))
 	return nil
 }
@@ -169,9 +235,17 @@ func mouseClickScreenPoint(x, y int, downType, upType, button int32) error {
 		return fmt.Errorf("CGEventPost not available")
 	}
 
+	glided := glideCursorTo(x, y)
+	flashClickActivity(x, y, glided)
+	noteCLIVisualFeedback()
 	cgWarpMouseCursorPosition(float64(x), float64(y))
 	time.Sleep(10 * time.Millisecond)
-	return postMouseClickEvent(x, y, downType, upType, button, 0)
+	if err := postMouseClickEvent(x, y, downType, upType, button, 0); err != nil {
+		ghostcursor.Hide()
+		return err
+	}
+	settleClickActivity(x, y, glided)
+	return nil
 }
 
 func postMouseClickEvent(x, y int, downType, upType, button int32, clickState int64) error {
@@ -224,40 +298,63 @@ func dragScreenPoint(startX, startY, endX, endY int, button int32, steps int, du
 	if duration <= 0 {
 		duration = 250 * time.Millisecond
 	}
-	interval := duration / time.Duration(steps)
-	if interval < 5*time.Millisecond {
-		interval = 5 * time.Millisecond
+	path, err := ghostcursor.SamplePath(
+		ghostcursor.ScreenPosition(startX, startY),
+		ghostcursor.ScreenPosition(endX, endY),
+		ghostcursor.MoveOptions{
+			Duration:   duration,
+			Activity:   ghostcursor.ActivityDragging,
+			CurveStyle: ghostcursor.CurveBezier,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("sample drag path: %w", err)
+	}
+	interval := 10 * time.Millisecond
+	if len(path) > 1 {
+		interval = duration / time.Duration(len(path)-1)
+		if interval < 5*time.Millisecond {
+			interval = 5 * time.Millisecond
+		}
 	}
 
+	ghostcursor.PressAt(startX, startY)
+	noteCLIVisualFeedback()
 	cgWarpMouseCursorPosition(float64(startX), float64(startY))
 	time.Sleep(10 * time.Millisecond)
 
 	mouseDown := cgEventCreateMouseEvent(0, downType, float64(startX), float64(startY), button)
 	if mouseDown == 0 {
+		ghostcursor.Hide()
 		return fmt.Errorf("failed to create mouse down event")
 	}
 	cgEventPost(cgHIDEventTap, mouseDown)
 	corefoundation.CFRelease(corefoundation.CFTypeRef(mouseDown))
 
-	for i := 1; i <= steps; i++ {
-		progress := float64(i) / float64(steps)
-		x := int(math.Round(float64(startX) + float64(endX-startX)*progress))
-		y := int(math.Round(float64(startY) + float64(endY-startY)*progress))
+	for i := 1; i < len(path); i++ {
+		x := int(math.Round(path[i].X))
+		y := int(math.Round(path[i].Y))
+		ghostcursor.DragTo(x, y)
 		dragged := cgEventCreateMouseEvent(0, draggedType, float64(x), float64(y), button)
 		if dragged == 0 {
+			ghostcursor.Hide()
 			return fmt.Errorf("failed to create mouse drag event")
 		}
 		cgEventPost(cgHIDEventTap, dragged)
 		corefoundation.CFRelease(corefoundation.CFTypeRef(dragged))
-		time.Sleep(interval)
+		if i+1 < len(path) {
+			time.Sleep(interval)
+		}
 	}
 
 	mouseUp := cgEventCreateMouseEvent(0, upType, float64(endX), float64(endY), button)
 	if mouseUp == 0 {
+		ghostcursor.Hide()
 		return fmt.Errorf("failed to create mouse up event")
 	}
 	cgEventPost(cgHIDEventTap, mouseUp)
 	corefoundation.CFRelease(corefoundation.CFTypeRef(mouseUp))
+	ghostcursor.ReleaseAt(endX, endY)
 	return nil
 }
 
@@ -394,9 +491,15 @@ func performAXPress(snapshot elementSnapshot) (string, error) {
 	if snapshot.element == nil {
 		return "", fmt.Errorf("target disappeared")
 	}
+	x, y := elementCenter(snapshot.element)
+	glided := glideCursorTo(x, y)
+	flashClickActivity(x, y, glided)
+	noteCLIVisualFeedback()
 	if err := snapshot.element.PerformAction("AXPress"); err != nil {
+		ghostcursor.Hide()
 		return "", err
 	}
+	settleClickActivity(x, y, glided)
 	axuiautomation.SpinRunLoop(200 * time.Millisecond)
 	return fmt.Sprintf("clicked %s via AXPress", formatSnapshot(snapshot)), nil
 }
@@ -425,11 +528,23 @@ func performAXShowMenu(snapshot elementSnapshot) (string, error) {
 	if snapshot.element == nil {
 		return "", fmt.Errorf("target disappeared")
 	}
+	x, y := elementCenter(snapshot.element)
+	glided := glideCursorTo(x, y)
+	flashClickActivity(x, y, glided)
+	noteCLIVisualFeedback()
 	if err := snapshot.element.PerformAction("AXShowMenu"); err != nil {
+		ghostcursor.Hide()
 		return "", err
 	}
+	settleClickActivity(x, y, glided)
 	axuiautomation.SpinRunLoop(200 * time.Millisecond)
 	return fmt.Sprintf("right-clicked %s via AXShowMenu", formatSnapshot(snapshot)), nil
+}
+
+func elementCenter(el *axuiautomation.Element) (int, int) {
+	frame := el.Frame()
+	return int(math.Round(frame.Origin.X + frame.Size.Width/2)),
+		int(math.Round(frame.Origin.Y + frame.Size.Height/2))
 }
 
 func performDefaultRightClick(snapshot elementSnapshot) (string, error) {

@@ -18,6 +18,7 @@ import (
 	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/coregraphics"
 	"github.com/tmc/apple/x/axuiautomation"
+	"github.com/tmc/axmcp/internal/ghostcursor"
 	"github.com/tmc/axmcp/internal/ui"
 )
 
@@ -146,6 +147,9 @@ func findPIDByWindowTitleWithOption(query string, option coregraphics.CGWindowLi
 // spinAndOpen opens an app, sets an AX messaging timeout, and spins
 // the run loop to prime AX IPC.
 func spinAndOpen(arg string) (*axuiautomation.Application, error) {
+	if !ui.WaitForAccessibility(30 * time.Second) {
+		return nil, fmt.Errorf("Accessibility permission required — grant access in System Settings > Privacy & Security")
+	}
 	app, err := openApp(arg)
 	if err != nil {
 		return nil, err
@@ -369,6 +373,8 @@ Stages separated by // (double-slash):
   json                             JSON output
   click                            click element
   type <text>                      type text
+  screenshot [--out PATH] [--padding N]
+                                   capture current scope and save a PNG artifact
   attr <AXAttr>                    print attribute
   click-menu <A->B->C>             click menu path
 
@@ -511,6 +517,9 @@ func registerAXType(s *mcp.Server) {
 		Description: "Type text into an element found by normalized text lookup across title, description, value, and identifier. " +
 			"When contains is omitted, types into the currently focused element.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axTypeInput) (*mcp.CallToolResult, any, error) {
+		if strings.TrimSpace(args.App) == "" {
+			return nil, nil, fmt.Errorf("ax_type: app is required")
+		}
 		app, err := spinAndOpen(args.App)
 		if err != nil {
 			return nil, nil, err
@@ -530,6 +539,8 @@ func registerAXType(s *mcp.Server) {
 					return textResult(fmt.Sprintf("set value on focused %s", elementSummary(el))), nil, nil
 				}
 			}
+			endTypingCursor := beginTypingCursor(el)
+			defer endTypingCursor()
 			if err := el.TypeText(args.Text); err != nil {
 				return nil, nil, fmt.Errorf("type into focused element: %w", err)
 			}
@@ -563,6 +574,8 @@ func registerAXType(s *mcp.Server) {
 		if err := focusElement(el); err != nil {
 			return nil, nil, fmt.Errorf("focus %s: %w", formatMatch(result.matches[0]), err)
 		}
+		endTypingCursor := beginTypingCursor(el)
+		defer endTypingCursor()
 		if err := el.TypeText(args.Text); err != nil {
 			return nil, nil, fmt.Errorf("type %s: %w", formatMatch(result.matches[0]), err)
 		}
@@ -680,6 +693,7 @@ type axScreenshotInput struct {
 	Contains     string `json:"contains,omitempty"`
 	Role         string `json:"role,omitempty"`
 	Exact        bool   `json:"exact,omitempty"`
+	Annotated    bool   `json:"annotated,omitempty"`
 	Padding      int    `json:"padding,omitempty"`
 	ArtifactPath string `json:"artifact_path,omitempty"`
 	FullScreen   bool   `json:"full_screen,omitempty"`
@@ -692,9 +706,12 @@ func registerAXScreenshot(s *mcp.Server) {
 
 Prefer targeting a specific element with contains/role for smaller, faster, more token-efficient results. Set window to a title substring when an app has multiple windows and you want a specific one. Full app window captures are larger and should only be used when you need to see the complete window layout.
 
-Set padding to expand the capture rect around a targeted element by N pixels on each side (useful for seeing surrounding context). Set full_screen=true to capture the entire display (requires explicit opt-in due to large image size). Set artifact_path to save the PNG to a durable file.`,
+Set padding to expand the capture rect around a targeted element by N pixels on each side (useful for seeing surrounding context). Set annotated=true to burn OCR match boxes into the returned PNG. Set full_screen=true to capture the entire display (requires explicit opt-in due to large image size). Set artifact_path to save the PNG to a durable file.`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axScreenshotInput) (*mcp.CallToolResult, any, error) {
-		var png []byte
+		var (
+			png   []byte
+			scope *ocrRedactionScope
+		)
 		if args.FullScreen {
 			var err error
 			png, err = captureFullScreen()
@@ -735,6 +752,9 @@ Set padding to expand the capture rect around a targeted element by N pixels on 
 			if err != nil {
 				return nil, nil, err
 			}
+			if args.Padding <= 0 {
+				scope = &ocrRedactionScope{root: el}
+			}
 		} else {
 			// Full window screenshot: try SCK/CGWindowList first (no AX IPC needed,
 			// avoids hanging on apps with unresponsive accessibility implementations).
@@ -743,17 +763,46 @@ Set padding to expand the capture rect around a targeted element by N pixels on 
 			if err != nil {
 				return nil, nil, err
 			}
+			if args.Annotated {
+				if app, err := spinAndOpen(args.App); err == nil {
+					defer app.Close()
+					if win, _, err := resolveWindow(app, args.Window); err == nil {
+						scope = &ocrRedactionScope{root: win}
+					}
+				}
+			}
 		}
 
-		content := []mcp.Content{&mcp.ImageContent{Data: png, MIMEType: "image/png"}}
+		content := []mcp.Content{}
+		if args.Annotated {
+			w, h, err := pngDimensions(png)
+			if err != nil {
+				return nil, nil, err
+			}
+			results, err := recognizeText(png, w, h)
+			if err != nil {
+				return nil, nil, err
+			}
+			render, err := drawAnnotatedOCR(png, w, h, results, scope, "")
+			if err != nil {
+				return nil, nil, err
+			}
+			png = render.PNG
+			payload, err := formatOverlayResultsJSON(render.Results)
+			if err != nil {
+				return nil, nil, err
+			}
+			content = append(content, &mcp.TextContent{Text: overlaySummary(render) + "\n" + payload})
+		}
 		if args.ArtifactPath != "" {
 			if err := writePNGArtifact(args.ArtifactPath, png); err != nil {
 				return nil, nil, err
 			}
-			content = append([]mcp.Content{
+			content = append(content,
 				&mcp.TextContent{Text: fmt.Sprintf("saved screenshot to %s", filepath.Clean(args.ArtifactPath))},
-			}, content...)
+			)
 		}
+		content = append(content, &mcp.ImageContent{Data: png, MIMEType: "image/png"})
 		return &mcp.CallToolResult{
 			Content: content,
 		}, nil, nil
@@ -808,7 +857,7 @@ func captureElementOrWindow(appName string, isElement bool, el *axuiautomation.E
 	if !ui.IsScreenRecordingTrusted() {
 		diagf("captureElementOrWindow: waiting for screen recording\n")
 		if !ui.WaitForScreenRecording(30 * time.Second) {
-			return nil, fmt.Errorf("screenshot failed: Screen Recording permission required — grant access in System Settings > Privacy & Security")
+			return nil, fmt.Errorf("screenshot failed: Screen Recording is still not granted — enable axmcp.app in System Settings > Privacy & Security and retry")
 		}
 	}
 
@@ -833,6 +882,11 @@ func captureElementOrWindow(appName string, isElement bool, el *axuiautomation.E
 		diagf("captureElementOrWindow: AX screenshot failed: %v\n", err)
 		return nil, fmt.Errorf("screenshot: %w", err)
 	}
+	frame := el.Frame()
+	ghostcursor.FlashCaptureRect(corefoundation.CGRect{
+		Origin: corefoundation.CGPoint{X: frame.Origin.X, Y: frame.Origin.Y},
+		Size:   corefoundation.CGSize{Width: frame.Size.Width, Height: frame.Size.Height},
+	})
 	diagf("captureElementOrWindow: AX screenshot success %d bytes\n", len(png))
 	return png, nil
 }
@@ -877,15 +931,16 @@ func registerAXFocus(s *mcp.Server) {
 }
 
 type axOCRInput struct {
-	App      string `json:"app"`
-	Window   string `json:"window,omitempty"`
-	Contains string `json:"contains,omitempty"`
-	Role     string `json:"role,omitempty"`
-	Find     string `json:"find,omitempty"`
-	JSON     bool   `json:"json,omitempty"`
-	Layout   bool   `json:"layout,omitempty"`
-	Cols     int    `json:"cols,omitempty"`
-	Rows     int    `json:"rows,omitempty"`
+	App       string `json:"app"`
+	Window    string `json:"window,omitempty"`
+	Contains  string `json:"contains,omitempty"`
+	Role      string `json:"role,omitempty"`
+	Find      string `json:"find,omitempty"`
+	JSON      bool   `json:"json,omitempty"`
+	Layout    bool   `json:"layout,omitempty"`
+	Annotated bool   `json:"annotated,omitempty"`
+	Cols      int    `json:"cols,omitempty"`
+	Rows      int    `json:"rows,omitempty"`
 }
 
 func registerAXOCR(s *mcp.Server) {
@@ -894,6 +949,7 @@ func registerAXOCR(s *mcp.Server) {
 		Description: "Run Apple Vision OCR on an app window or scoped AX element. " +
 			"Returns recognized text with coordinates in the local space of the captured window or element, plus absolute screen coordinates derived from that target frame. " +
 			"Set window to target a specific window title substring. Use contains/role to OCR a specific AX element such as a sidebar outline. " +
+			"Set annotated=true to return a PNG with OCR boxes and index labels burned in. " +
 			"Use 'find' to search for specific text. " +
 			"Use 'layout' for a spatial ASCII rendering that preserves text positions. " +
 			"Useful for VMs, custom-drawn UIs, and elements without accessibility text.",
@@ -919,15 +975,51 @@ func registerAXOCR(s *mcp.Server) {
 			if args.Rows > 0 {
 				rows = args.Rows
 			}
-			return textResult(renderOCRLayout(results, capture.imgW, capture.imgH, cols, rows)), nil, nil
+			content := []mcp.Content{&mcp.TextContent{Text: renderOCRLayout(results, capture.imgW, capture.imgH, cols, rows)}}
+			if args.Annotated && len(capture.png) > 0 {
+				render, err := drawAnnotatedOCR(capture.png, capture.imgW, capture.imgH, results, capture.scope, args.Find)
+				if err != nil {
+					return nil, nil, err
+				}
+				content = append(content, &mcp.ImageContent{Data: render.PNG, MIMEType: "image/png"})
+			}
+			return &mcp.CallToolResult{Content: content}, nil, nil
 		}
-		if args.JSON {
-			out, err := formatOCRResultsJSON(results, capture.target)
+		var (
+			content []mcp.Content
+			render  overlayRender
+		)
+		if args.Annotated && len(capture.png) > 0 {
+			var err error
+			render, err = drawAnnotatedOCR(capture.png, capture.imgW, capture.imgH, results, capture.scope, args.Find)
 			if err != nil {
 				return nil, nil, err
 			}
-			return textResult(out), nil, nil
 		}
-		return textResult(formatOCRResults(results, capture.target)), nil, nil
+		if args.JSON {
+			if args.Annotated && len(capture.png) > 0 {
+				out, err := formatOverlayResultsJSON(render.Results)
+				if err != nil {
+					return nil, nil, err
+				}
+				content = append(content, &mcp.TextContent{Text: out})
+			} else {
+				out, err := formatOCRResultsJSON(results, capture.target)
+				if err != nil {
+					return nil, nil, err
+				}
+				content = append(content, &mcp.TextContent{Text: out})
+			}
+		} else {
+			text := formatOCRResults(results, capture.target)
+			if args.Annotated && len(capture.png) > 0 {
+				text = overlaySummary(render) + "\n" + text
+			}
+			content = append(content, &mcp.TextContent{Text: text})
+		}
+		if args.Annotated && len(capture.png) > 0 {
+			content = append(content, &mcp.ImageContent{Data: render.PNG, MIMEType: "image/png"})
+		}
+		return &mcp.CallToolResult{Content: content}, nil, nil
 	})
 }

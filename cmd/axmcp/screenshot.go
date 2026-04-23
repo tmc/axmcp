@@ -13,9 +13,10 @@ import (
 	"github.com/tmc/apple/appkit"
 	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/coregraphics"
-	"github.com/tmc/apple/objc"
+	"github.com/tmc/apple/objectivec"
 	"github.com/tmc/apple/screencapturekit"
 	"github.com/tmc/apple/x/axuiautomation"
+	"github.com/tmc/axmcp/internal/ghostcursor"
 	"github.com/tmc/axmcp/internal/ui"
 )
 
@@ -246,18 +247,14 @@ func captureWindow(win windowInfo) ([]byte, error) {
 
 	if !ui.IsScreenRecordingTrusted() {
 		if !ui.WaitForScreenRecording(30 * time.Second) {
-			return nil, fmt.Errorf("screenshot failed: Screen Recording permission required — grant access in System Settings > Privacy & Security")
+			return nil, fmt.Errorf("screenshot failed: Screen Recording is still not granted — enable axmcp.app in System Settings > Privacy & Security and retry")
 		}
-	}
-
-	// Fall back to screencapture on the window's bounds rather than
-	// ScreenCaptureKit. The latter can terminate the app from inside AppKit's
-	// run loop, which takes down the stdio transport.
-	if png, err := captureWindowRect(win); err == nil {
-		return png, nil
-	} else {
-		diagf("captureWindow: rect fallback failed: %v\n", err)
-		appendErr("screencapture -R", err)
+		if png, err := captureWindowCG(win); err == nil {
+			return png, nil
+		} else {
+			diagf("captureWindow: CG retry after permission gate failed: %v\n", err)
+			appendErr("CGWindowListCreateImage after permission", err)
+		}
 	}
 
 	if len(errs) == 0 {
@@ -315,7 +312,14 @@ func captureWindowCG(win windowInfo) ([]byte, error) {
 				defer coregraphics.CGImageRelease(img)
 				diagf("captureWindowCG: got image %dx%d via %s retry=%d\n",
 					coregraphics.CGImageGetWidth(img), coregraphics.CGImageGetHeight(img), attempt.name, retry)
-				return cgImageToPNG(img)
+				png, err := cgImageToPNG(img)
+				if err == nil {
+					if rect, ok := win.rect(); ok {
+						ghostcursor.FlashCaptureRect(rect)
+						noteCLIVisualFeedback()
+					}
+				}
+				return png, err
 			}
 			if retry < 2 {
 				time.Sleep(50 * time.Millisecond)
@@ -324,14 +328,6 @@ func captureWindowCG(win windowInfo) ([]byte, error) {
 		errs = append(errs, attempt.name)
 	}
 	return nil, fmt.Errorf("CGWindowListCreateImage returned nil for window %d (%s)", win.WindowID, strings.Join(errs, ", "))
-}
-
-func captureWindowRect(win windowInfo) ([]byte, error) {
-	rect, ok := win.rect()
-	if !ok {
-		return nil, fmt.Errorf("window %d has empty bounds", win.WindowID)
-	}
-	return captureRect(rect)
 }
 
 func captureRect(rect corefoundation.CGRect) ([]byte, error) {
@@ -373,6 +369,8 @@ func captureRect(rect corefoundation.CGRect) ([]byte, error) {
 		return nil, fmt.Errorf("screencapture %s produced empty output", rectArg)
 	}
 	diagf("captureRect: got %d bytes\n", len(data))
+	ghostcursor.FlashCaptureRect(rect)
+	noteCLIVisualFeedback()
 	return data, nil
 }
 
@@ -385,7 +383,7 @@ func captureElementWithPadding(el *axuiautomation.Element, padding int) ([]byte,
 	}
 	if !ui.IsScreenRecordingTrusted() {
 		if !ui.WaitForScreenRecording(30 * time.Second) {
-			return nil, fmt.Errorf("screenshot failed: Screen Recording permission required")
+			return nil, fmt.Errorf("screenshot failed: Screen Recording is still not granted — enable axmcp.app in System Settings > Privacy & Security and retry")
 		}
 	}
 	frame := el.Frame()
@@ -463,8 +461,9 @@ func captureWindowSCK(ctx context.Context, windowID uint32) ([]byte, error) {
 		return nil, fmt.Errorf("get shareable content: %w", err)
 	}
 
-	objc.Send[objc.ID](content.ID, objc.Sel("retain"))
-	defer objc.Send[objc.ID](content.ID, objc.Sel("release"))
+	contentObj := objectivec.ObjectFromID(content.ID)
+	contentObj.Retain()
+	defer contentObj.Release()
 
 	windows := content.Windows()
 	var target screencapturekit.SCWindow
@@ -489,8 +488,12 @@ func captureWindowSCK(ctx context.Context, windowID uint32) ([]byte, error) {
 		return nil, fmt.Errorf("capture image: %w", err)
 	}
 	defer coregraphics.CGImageRelease(img)
-
-	return cgImageToPNG(img)
+	png, err := cgImageToPNG(img)
+	if err == nil {
+		ghostcursor.FlashCaptureRect(frame)
+		noteCLIVisualFeedback()
+	}
+	return png, err
 }
 
 // captureFullScreen captures the entire main display using ScreenCaptureKit.
@@ -498,7 +501,7 @@ func captureWindowSCK(ctx context.Context, windowID uint32) ([]byte, error) {
 func captureFullScreen() ([]byte, error) {
 	if !ui.IsScreenRecordingTrusted() {
 		if !ui.WaitForScreenRecording(30 * time.Second) {
-			return nil, fmt.Errorf("screenshot failed: Screen Recording permission required — grant access in System Settings > Privacy & Security")
+			return nil, fmt.Errorf("screenshot failed: Screen Recording is still not granted — enable axmcp.app in System Settings > Privacy & Security and retry")
 		}
 	}
 
@@ -526,8 +529,12 @@ func captureFullScreen() ([]byte, error) {
 		return nil, fmt.Errorf("capture display: %w", err)
 	}
 	defer coregraphics.CGImageRelease(img)
-
-	return cgImageToPNG(img)
+	png, err := cgImageToPNG(img)
+	if err == nil {
+		ghostcursor.FlashCaptureRect(coregraphics.CGDisplayBounds(coregraphics.CGMainDisplayID()))
+		noteCLIVisualFeedback()
+	}
+	return png, err
 }
 
 // cgImageToPNG converts a CGImageRef to PNG-encoded bytes.

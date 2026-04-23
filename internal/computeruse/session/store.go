@@ -89,12 +89,34 @@ func (s *Store) Get(stateID string) (computeruse.AppState, bool) {
 	return entry.state, true
 }
 
+func (s *Store) GetForApp(selector string) (computeruse.AppState, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry := s.findLocked(selector)
+	if entry == nil {
+		return computeruse.AppState{}, false
+	}
+	return entry.state, true
+}
+
 func (s *Store) Resolve(stateID string, index int) (*axuiautomation.Element, computeruse.ElementNode, error) {
 	s.mu.Lock()
 	entry := s.byStateID[stateID]
 	if entry == nil {
 		s.mu.Unlock()
 		return nil, computeruse.ElementNode{}, fmt.Errorf("unknown or stale state_id %q; call get_app_state again", stateID)
+	}
+	snapshot := entry.snapshot
+	s.mu.Unlock()
+	return snapshot.Resolve(index)
+}
+
+func (s *Store) ResolveForApp(selector string, index int) (*axuiautomation.Element, computeruse.ElementNode, error) {
+	s.mu.Lock()
+	entry := s.findLocked(selector)
+	if entry == nil {
+		s.mu.Unlock()
+		return nil, computeruse.ElementNode{}, fmt.Errorf("no current app state for %q; call get_app_state again", selector)
 	}
 	snapshot := entry.snapshot
 	s.mu.Unlock()
@@ -125,6 +147,39 @@ func (s *Store) Close() error {
 		}
 	}
 	return firstErr
+}
+
+func (s *Store) findLocked(selector string) *entry {
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return nil
+	}
+	if entry := s.bySession["bundle:"+strings.ToLower(selector)]; entry != nil {
+		return entry
+	}
+	if entry := s.bySession["name:"+strings.ToLower(selector)]; entry != nil {
+		return entry
+	}
+	if entry := s.bySession["pid:"+selector]; entry != nil {
+		return entry
+	}
+	want := strings.ToLower(selector)
+	for _, entry := range s.bySession {
+		app := entry.state.App
+		switch {
+		case strings.EqualFold(app.BundleID, selector):
+			return entry
+		case strings.EqualFold(app.Name, selector):
+			return entry
+		case fmt.Sprintf("%d", app.PID) == selector:
+			return entry
+		case strings.Contains(strings.ToLower(app.Name), want):
+			return entry
+		case strings.Contains(strings.ToLower(app.BundleID), want):
+			return entry
+		}
+	}
+	return nil
 }
 
 func sessionKey(app computeruse.AppInfo) string {

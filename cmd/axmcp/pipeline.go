@@ -8,7 +8,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +31,10 @@ func (pc *pipeContext) close() {
 	if pc.app != nil {
 		pc.app.Close()
 	}
+}
+
+func notePipelineVisualFeedback() {
+	noteCLIVisualFeedback()
 }
 
 // execPipeline runs the pipeline string and returns the output as a string.
@@ -66,7 +72,7 @@ func execPipeline(expr string) (string, error) {
 var terminalStage = map[string]bool{
 	".": true, "tree": true, "list": true, "json": true,
 	"click": true, "rightclick": true, "hover": true, "type": true, "attr": true, "click-menu": true,
-	"ocr": true, "ocr-hover": true, "highlight": true, "action": true,
+	"ocr": true, "ocr-hover": true, "highlight": true, "action": true, "screenshot": true,
 }
 
 // splitPipelineExec splits the pipeline string on // separators and trims stages.
@@ -158,18 +164,149 @@ func writeTree(buf *strings.Builder, e *axuiautomation.Element, indent, maxDepth
 	}
 }
 
+func currentPipelineElement(pc *pipeContext) *axuiautomation.Element {
+	if pc == nil {
+		return nil
+	}
+	if pc.element != nil {
+		return pc.element
+	}
+	if len(pc.elements) > 0 {
+		return pc.elements[0]
+	}
+	return nil
+}
+
+func pipelineAppIdentifier(pc *pipeContext) string {
+	if pc == nil || pc.app == nil {
+		return ""
+	}
+	if bundleID := strings.TrimSpace(pc.app.BundleID()); bundleID != "" {
+		return bundleID
+	}
+	if pid := pc.app.PID(); pid > 0 {
+		return strconv.Itoa(int(pid))
+	}
+	return ""
+}
+
+type pipelineScreenshotOptions struct {
+	outPath string
+	padding int
+}
+
+func parsePipelineScreenshotArgs(args []string) (pipelineScreenshotOptions, error) {
+	var opts pipelineScreenshotOptions
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--out", "-o":
+			if i+1 >= len(args) {
+				return pipelineScreenshotOptions{}, fmt.Errorf("screenshot: --out requires a path")
+			}
+			opts.outPath = args[i+1]
+			i++
+		case "--padding":
+			if i+1 >= len(args) {
+				return pipelineScreenshotOptions{}, fmt.Errorf("screenshot: --padding requires a value")
+			}
+			padding, err := strconv.Atoi(args[i+1])
+			if err != nil {
+				return pipelineScreenshotOptions{}, fmt.Errorf("screenshot: invalid padding %q", args[i+1])
+			}
+			if padding < 0 {
+				return pipelineScreenshotOptions{}, fmt.Errorf("screenshot: padding must be non-negative")
+			}
+			opts.padding = padding
+			i++
+		default:
+			return pipelineScreenshotOptions{}, fmt.Errorf("screenshot: unknown argument %q", args[i])
+		}
+	}
+	return opts, nil
+}
+
+func pipelineScreenshotPath(path string) (string, error) {
+	if strings.TrimSpace(path) != "" {
+		return path, nil
+	}
+	f, err := os.CreateTemp("", "axmcp-pipeline-*.png")
+	if err != nil {
+		return "", fmt.Errorf("create temp screenshot path: %w", err)
+	}
+	name := f.Name()
+	if err := f.Close(); err != nil {
+		os.Remove(name)
+		return "", fmt.Errorf("close temp screenshot path: %w", err)
+	}
+	return name, nil
+}
+
+func capturePipelineScreenshot(pc *pipeContext, opts pipelineScreenshotOptions) ([]byte, string, error) {
+	if pc == nil {
+		return nil, "", fmt.Errorf("screenshot: no pipeline context")
+	}
+	if el := currentPipelineElement(pc); el != nil {
+		desc := formatSnapshot(snapshotElement(el, 0, 0))
+		if opts.padding > 0 {
+			png, err := captureElementWithPadding(el, opts.padding)
+			if err != nil {
+				return nil, "", err
+			}
+			return png, desc, nil
+		}
+		png, err := captureElementOrWindow(pipelineAppIdentifier(pc), true, el)
+		if err != nil {
+			return nil, "", err
+		}
+		return png, desc, nil
+	}
+	if pc.app == nil {
+		return nil, "", fmt.Errorf("screenshot: no app or element in context")
+	}
+	target := pc.app.MainWindow()
+	if target == nil {
+		windows := pc.app.WindowList()
+		if len(windows) > 0 {
+			target = windows[0]
+		}
+	}
+	if target == nil {
+		return nil, "", fmt.Errorf("screenshot: no window in context")
+	}
+	desc := formatSnapshot(snapshotElement(target, 0, 0))
+	appID := pipelineAppIdentifier(pc)
+	if appID == "" {
+		png, err := captureElementOrWindow("", true, target)
+		if err != nil {
+			return nil, "", err
+		}
+		return png, desc, nil
+	}
+	png, err := captureWindowByTitle(appID, target.Title())
+	if err == nil {
+		return png, desc, nil
+	}
+	png, fallbackErr := captureElementOrWindow(appID, true, target)
+	if fallbackErr != nil {
+		return nil, "", err
+	}
+	return png, desc, nil
+}
+
 func capturePipelineOCRScope(pc *pipeContext) (*ocrCapture, error) {
 	if pc == nil {
 		return nil, fmt.Errorf("ocr: no pipeline context")
 	}
 	capture := &ocrCapture{}
 	if pc.element != nil {
-		if results, w, h, err := ocrElementWithSize(pc.element); err == nil {
+		if results, png, w, h, err := ocrElementWithSize(pc.element); err == nil {
 			capture.target = pc.element
 			capture.desc = formatSnapshot(snapshotElement(pc.element, 0, 0))
 			capture.imgW = w
 			capture.imgH = h
+			capture.png = png
 			capture.result = results
+			capture.scope = &ocrRedactionScope{root: pc.element}
 			return capture, nil
 		}
 	}
@@ -186,12 +323,14 @@ func capturePipelineOCRScope(pc *pipeContext) (*ocrCapture, error) {
 	if target == nil {
 		return nil, fmt.Errorf("ocr: no window in context")
 	}
-	if results, w, h, err := ocrElementWithSize(target); err == nil {
+	if results, png, w, h, err := ocrElementWithSize(target); err == nil {
 		capture.target = target
 		capture.desc = formatSnapshot(snapshotElement(target, 0, 0))
 		capture.imgW = w
 		capture.imgH = h
+		capture.png = png
 		capture.result = results
+		capture.scope = &ocrRedactionScope{root: target}
 		return capture, nil
 	}
 
@@ -238,7 +377,7 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 		if len(args) == 0 {
 			return fmt.Errorf("app: requires bundle-id or pid")
 		}
-		app, err := openApp(args[0])
+		app, err := spinAndOpen(args[0])
 		if err != nil {
 			return err
 		}
@@ -250,8 +389,6 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 		pc.elements = nil
 		pc.findNote = ""
 		pc.findPick = nil
-		// Spin again after opening the app so AX IPC is primed for this specific app.
-		axuiautomation.SpinRunLoop(200 * time.Millisecond)
 
 	case "window":
 		if pc.app == nil {
@@ -428,6 +565,7 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 		if clickNote != "" {
 			fmt.Fprintln(buf, clickNote)
 		}
+		notePipelineVisualFeedback()
 
 	case "rightclick":
 		el := pc.element
@@ -457,6 +595,7 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 		if clickNote != "" {
 			fmt.Fprintln(buf, clickNote)
 		}
+		notePipelineVisualFeedback()
 
 	case "click-at":
 		if len(args) != 2 {
@@ -493,6 +632,7 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 		if clickNote != "" {
 			fmt.Fprintln(buf, clickNote)
 		}
+		notePipelineVisualFeedback()
 
 	case "hover":
 		el := pc.element
@@ -522,6 +662,7 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 		if hoverNote != "" {
 			fmt.Fprintln(buf, hoverNote)
 		}
+		notePipelineVisualFeedback()
 
 	case "type":
 		if len(args) == 0 {
@@ -544,10 +685,41 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 			}
 			// Fall through to TypeText if SetValue fails.
 		}
+		endTypingCursor := beginTypingCursor(el)
+		defer endTypingCursor()
 		if err := el.TypeText(text); err != nil {
 			return err
 		}
 		fmt.Fprintf(buf, "typed %q into %s\n", text, formatSnapshot(snapshotElement(el, 0, 0)))
+		notePipelineVisualFeedback()
+
+	case "screenshot":
+		opts, err := parsePipelineScreenshotArgs(args)
+		if err != nil {
+			return err
+		}
+		outPath, err := pipelineScreenshotPath(opts.outPath)
+		if err != nil {
+			return err
+		}
+		png, desc, err := capturePipelineScreenshot(pc, opts)
+		if err != nil {
+			if opts.outPath == "" {
+				_ = os.Remove(outPath)
+			}
+			return err
+		}
+		if err := writePNGArtifact(outPath, png); err != nil {
+			if opts.outPath == "" {
+				_ = os.Remove(outPath)
+			}
+			return err
+		}
+		fmt.Fprintf(buf, "saved screenshot of %s to %s\n", desc, filepath.Clean(outPath))
+		if pc.findNote != "" {
+			fmt.Fprintln(buf, pc.findNote)
+		}
+		notePipelineVisualFeedback()
 
 	case "attr":
 		if len(args) == 0 {
@@ -735,6 +907,7 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 		if resolutionNote != "" {
 			fmt.Fprintln(buf, resolutionNote)
 		}
+		notePipelineVisualFeedback()
 
 	case "highlight":
 		if len(args) == 0 {
@@ -771,20 +944,35 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 		if len(args) == 0 {
 			return fmt.Errorf("action: requires action name (e.g. AXPress, AXShowMenu)")
 		}
-		el := pc.element
-		if el == nil && len(pc.elements) > 0 {
-			el = pc.elements[0]
-		}
+		el := currentPipelineElement(pc)
 		if el == nil {
 			return fmt.Errorf("action: no element in context")
 		}
 		actionName := args[0]
-		if err := el.PerformAction(actionName); err != nil {
-			return fmt.Errorf("action %s: %w", actionName, err)
+		snapshot := snapshotElement(el, 0, 0)
+		switch actionName {
+		case "AXPress":
+			summary, err := performAXPress(snapshot)
+			if err != nil {
+				return fmt.Errorf("action %s: %w", actionName, err)
+			}
+			fmt.Fprintln(buf, summary)
+			notePipelineVisualFeedback()
+		case "AXShowMenu":
+			summary, err := performAXShowMenu(snapshot)
+			if err != nil {
+				return fmt.Errorf("action %s: %w", actionName, err)
+			}
+			fmt.Fprintln(buf, summary)
+			notePipelineVisualFeedback()
+		default:
+			if err := el.PerformAction(actionName); err != nil {
+				return fmt.Errorf("action %s: %w", actionName, err)
+			}
+			// Spin the run loop so the target app processes the action.
+			axuiautomation.SpinRunLoop(200 * time.Millisecond)
+			fmt.Fprintf(buf, "performed %s on %s\n", actionName, formatSnapshot(snapshot))
 		}
-		// Spin the run loop so the target app processes the action.
-		axuiautomation.SpinRunLoop(200 * time.Millisecond)
-		fmt.Fprintf(buf, "performed %s on %s\n", actionName, formatSnapshot(snapshotElement(el, 0, 0)))
 
 	default:
 		return fmt.Errorf("unknown stage %q. Available stages:\n"+
@@ -809,6 +997,7 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 			"  click-at <x> <y>\n"+
 			"  hover\n"+
 			"  type <text>\n"+
+			"  screenshot [--out PATH] [--padding N]\n"+
 			"  action <AXAction>\n"+
 			"  attr <AXAttr>\n"+
 			"  click-menu <A> <B> <C>", cmd)
