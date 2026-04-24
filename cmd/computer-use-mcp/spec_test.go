@@ -9,8 +9,11 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/tmc/apple/x/axuiautomation"
 	"github.com/tmc/axmcp/internal/computeruse"
 	"github.com/tmc/axmcp/internal/computeruse/intervention"
+	"github.com/tmc/axmcp/internal/computeruse/policy"
+	"github.com/tmc/axmcp/internal/computeruse/session"
 )
 
 func TestComputerUseSpecParity(t *testing.T) {
@@ -104,6 +107,67 @@ func TestActionBlockedForIntervention(t *testing.T) {
 	if !payload.RequiresRefresh {
 		t.Fatalf("RequiresRefresh = false, want true")
 	}
+}
+
+func TestStateForActionRequiresFreshStateID(t *testing.T) {
+	rt := &runtimeState{sessions: session.NewStore()}
+	if _, err := stateForAction(rt, "click", "Finder", ""); err == nil {
+		t.Fatalf("stateForAction without state_id = nil, want error")
+	}
+
+	state, err := rt.sessions.Bind(fakeActionSnapshot{state: computeruse.AppState{
+		App: computeruse.AppInfo{Name: "Finder", BundleID: "com.apple.finder", PID: 123},
+	}})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	got, err := stateForAction(rt, "click", "Finder", state.StateID)
+	if err != nil {
+		t.Fatalf("stateForAction fresh state: %v", err)
+	}
+	if got.StateID != state.StateID {
+		t.Fatalf("StateID = %q, want %q", got.StateID, state.StateID)
+	}
+	if _, err := stateForAction(rt, "click", "Safari", state.StateID); err == nil {
+		t.Fatalf("stateForAction mismatched app = nil, want error")
+	}
+}
+
+func TestStateForActionAppliesURLPolicy(t *testing.T) {
+	rt := &runtimeState{
+		sessions:  session.NewStore(),
+		urlPolicy: policy.NewURLPolicy([]string{"example.com"}),
+	}
+	state, err := rt.sessions.Bind(fakeActionSnapshot{state: computeruse.AppState{
+		App: computeruse.AppInfo{Name: "Brave Browser", BundleID: "com.brave.Browser", PID: 123},
+		Tree: []computeruse.ElementNode{{
+			Role:        "AXTextField",
+			Description: "Address and search bar",
+			Value:       "https://example.com",
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if _, err := stateForAction(rt, "click", "Brave", state.StateID); err == nil {
+		t.Fatalf("stateForAction with blocked URL = nil, want error")
+	}
+}
+
+type fakeActionSnapshot struct {
+	state computeruse.AppState
+}
+
+func (f fakeActionSnapshot) State() computeruse.AppState {
+	return f.state
+}
+
+func (f fakeActionSnapshot) Resolve(index int) (*axuiautomation.Element, computeruse.ElementNode, error) {
+	return nil, computeruse.ElementNode{Index: index}, nil
+}
+
+func (f fakeActionSnapshot) Close() error {
+	return nil
 }
 
 func newTestClientSession(t *testing.T, ctx context.Context) *mcp.ClientSession {

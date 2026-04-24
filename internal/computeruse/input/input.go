@@ -12,6 +12,7 @@ import (
 	"github.com/tmc/apple/coregraphics"
 	"github.com/tmc/apple/x/axuiautomation"
 	"github.com/tmc/axmcp/internal/computeruse"
+	"github.com/tmc/axmcp/internal/computeruse/coords"
 	"github.com/tmc/axmcp/internal/ghostcursor"
 )
 
@@ -80,24 +81,8 @@ func initCGMouseEvents() {
 }
 
 func ScreenshotPointToWindowLocal(window computeruse.WindowInfo, x, y int) (LocalPoint, error) {
-	if x < 0 || y < 0 {
-		return LocalPoint{}, fmt.Errorf("coordinates must be non-negative")
-	}
-	if window.Width <= 0 || window.Height <= 0 {
-		return LocalPoint{}, fmt.Errorf("window has empty bounds")
-	}
-	if window.ScreenshotWidth <= 0 || window.ScreenshotHeight <= 0 {
-		return LocalPoint{}, fmt.Errorf("window is missing screenshot dimensions")
-	}
-	localX := int(math.Round(float64(x) * float64(window.Width) / float64(window.ScreenshotWidth)))
-	localY := int(math.Round(float64(y) * float64(window.Height) / float64(window.ScreenshotHeight)))
-	if localX >= window.Width {
-		localX = window.Width - 1
-	}
-	if localY >= window.Height {
-		localY = window.Height - 1
-	}
-	return LocalPoint{X: localX, Y: localY}, nil
+	point, err := coords.ScreenshotPointToWindowLocal(window, x, y)
+	return LocalPoint{X: point.X, Y: point.Y}, err
 }
 
 func ClickElement(el *axuiautomation.Element, button string, clickCount int) error {

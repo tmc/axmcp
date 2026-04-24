@@ -116,9 +116,10 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 			"click_count":   integerProperty("Number of clicks. Defaults to 1"),
 			"element_index": stringProperty("Element index to click"),
 			"mouse_button":  enumStringProperty("Mouse button to click. Defaults to left.", "left", "right", "middle"),
+			"state_id":      stringProperty("State token returned by get_app_state"),
 			"x":             numberProperty("X coordinate in screenshot pixel coordinates"),
 			"y":             numberProperty("Y coordinate in screenshot pixel coordinates"),
-		}, "app"),
+		}, "app", "state_id"),
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args clickInput) (*mcp.CallToolResult, any, error) {
 		if res, payload, ok := actionBlockedForPermissions("click"); ok {
 			return res, payload, nil
@@ -126,9 +127,9 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 		if res, payload, ok := actionBlockedForIntervention(rt, "click"); ok {
 			return res, payload, nil
 		}
-		state, ok := rt.sessions.GetForApp(args.App)
-		if !ok {
-			return requiresRefreshResult("click", args.App)
+		state, err := stateForAction(rt, "click", args.App, args.StateID)
+		if err != nil {
+			return staleStateResult("click", err)
 		}
 		clickCount := args.ClickCount
 		if clickCount <= 0 {
@@ -139,9 +140,9 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 			if err != nil {
 				return toolError(err), nil, nil
 			}
-			el, node, err := rt.sessions.ResolveForApp(args.App, index)
+			el, node, err := rt.sessions.Resolve(args.StateID, index)
 			if err != nil {
-				return toolError(err), nil, nil
+				return staleStateResult("click", err)
 			}
 			if err := input.ClickElement(el, args.MouseButton, clickCount); err != nil {
 				return toolError(err), nil, nil
@@ -157,9 +158,9 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 		if args.X == nil || args.Y == nil {
 			return toolError(missingCoordinatesError()), nil, nil
 		}
-		root, _, err := rt.sessions.ResolveForApp(args.App, 0)
+		root, _, err := rt.sessions.Resolve(args.StateID, 0)
 		if err != nil {
-			return toolError(err), nil, nil
+			return staleStateResult("click", err)
 		}
 		x := roundCoordinate(*args.X)
 		y := roundCoordinate(*args.Y)
@@ -189,7 +190,8 @@ func registerPerformSecondaryAction(s *mcp.Server, rt *runtimeState) {
 			"action":        stringProperty("Secondary accessibility action name"),
 			"app":           stringProperty("App name or bundle identifier"),
 			"element_index": stringProperty("Element identifier"),
-		}, "app", "element_index", "action"),
+			"state_id":      stringProperty("State token returned by get_app_state"),
+		}, "app", "state_id", "element_index", "action"),
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args performSecondaryActionInput) (*mcp.CallToolResult, any, error) {
 		if res, payload, ok := actionBlockedForPermissions(args.Action); ok {
 			return res, payload, nil
@@ -197,17 +199,17 @@ func registerPerformSecondaryAction(s *mcp.Server, rt *runtimeState) {
 		if res, payload, ok := actionBlockedForIntervention(rt, args.Action); ok {
 			return res, payload, nil
 		}
-		state, ok := rt.sessions.GetForApp(args.App)
-		if !ok {
-			return requiresRefreshResult(args.Action, args.App)
+		state, err := stateForAction(rt, args.Action, args.App, args.StateID)
+		if err != nil {
+			return staleStateResult(args.Action, err)
 		}
 		index, err := parseElementIndex(args.ElementIndex)
 		if err != nil {
 			return toolError(err), nil, nil
 		}
-		el, node, err := rt.sessions.ResolveForApp(args.App, index)
+		el, node, err := rt.sessions.Resolve(args.StateID, index)
 		if err != nil {
-			return toolError(err), nil, nil
+			return staleStateResult(args.Action, err)
 		}
 		if err := el.PerformAction(args.Action); err != nil {
 			return toolError(err), nil, nil
@@ -230,8 +232,9 @@ func registerSetValue(s *mcp.Server, rt *runtimeState) {
 		InputSchema: exactObjectSchema(map[string]any{
 			"app":           stringProperty("App name or bundle identifier"),
 			"element_index": stringProperty("Element identifier"),
+			"state_id":      stringProperty("State token returned by get_app_state"),
 			"value":         stringProperty("Value to assign"),
-		}, "app", "element_index", "value"),
+		}, "app", "state_id", "element_index", "value"),
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args setValueInput) (*mcp.CallToolResult, any, error) {
 		if res, payload, ok := actionBlockedForPermissions("set_value"); ok {
 			return res, payload, nil
@@ -239,17 +242,17 @@ func registerSetValue(s *mcp.Server, rt *runtimeState) {
 		if res, payload, ok := actionBlockedForIntervention(rt, "set_value"); ok {
 			return res, payload, nil
 		}
-		state, ok := rt.sessions.GetForApp(args.App)
-		if !ok {
-			return requiresRefreshResult("set_value", args.App)
+		state, err := stateForAction(rt, "set_value", args.App, args.StateID)
+		if err != nil {
+			return staleStateResult("set_value", err)
 		}
 		index, err := parseElementIndex(args.ElementIndex)
 		if err != nil {
 			return toolError(err), nil, nil
 		}
-		el, node, err := rt.sessions.ResolveForApp(args.App, index)
+		el, node, err := rt.sessions.Resolve(args.StateID, index)
 		if err != nil {
-			return toolError(err), nil, nil
+			return staleStateResult("set_value", err)
 		}
 		if err := el.SetValue(args.Value); err != nil {
 			return toolError(err), nil, nil
@@ -274,7 +277,8 @@ func registerScroll(s *mcp.Server, rt *runtimeState) {
 			"direction":     stringProperty("Scroll direction: up, down, left, or right"),
 			"element_index": stringProperty("Element identifier"),
 			"pages":         numberProperty("Number of pages to scroll. Fractional values are supported. Defaults to 1"),
-		}, "app", "element_index", "direction"),
+			"state_id":      stringProperty("State token returned by get_app_state"),
+		}, "app", "state_id", "element_index", "direction"),
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args scrollInput) (*mcp.CallToolResult, any, error) {
 		if res, payload, ok := actionBlockedForPermissions("scroll"); ok {
 			return res, payload, nil
@@ -282,17 +286,17 @@ func registerScroll(s *mcp.Server, rt *runtimeState) {
 		if res, payload, ok := actionBlockedForIntervention(rt, "scroll"); ok {
 			return res, payload, nil
 		}
-		state, ok := rt.sessions.GetForApp(args.App)
-		if !ok {
-			return requiresRefreshResult("scroll", args.App)
+		state, err := stateForAction(rt, "scroll", args.App, args.StateID)
+		if err != nil {
+			return staleStateResult("scroll", err)
 		}
 		index, err := parseElementIndex(args.ElementIndex)
 		if err != nil {
 			return toolError(err), nil, nil
 		}
-		el, node, err := rt.sessions.ResolveForApp(args.App, index)
+		el, node, err := rt.sessions.Resolve(args.StateID, index)
 		if err != nil {
-			return toolError(err), nil, nil
+			return staleStateResult("scroll", err)
 		}
 		if err := input.ScrollElement(el, args.Direction, args.Pages); err != nil {
 			return toolError(err), nil, nil
@@ -313,12 +317,13 @@ func registerDrag(s *mcp.Server, rt *runtimeState) {
 		Description: "Drag from one point to another using pixel coordinates",
 		Annotations: actionToolAnnotations(),
 		InputSchema: exactObjectSchema(map[string]any{
-			"app":    stringProperty("App name or bundle identifier"),
-			"from_x": numberProperty("Start X coordinate"),
-			"from_y": numberProperty("Start Y coordinate"),
-			"to_x":   numberProperty("End X coordinate"),
-			"to_y":   numberProperty("End Y coordinate"),
-		}, "app", "from_x", "from_y", "to_x", "to_y"),
+			"app":      stringProperty("App name or bundle identifier"),
+			"from_x":   numberProperty("Start X coordinate"),
+			"from_y":   numberProperty("Start Y coordinate"),
+			"state_id": stringProperty("State token returned by get_app_state"),
+			"to_x":     numberProperty("End X coordinate"),
+			"to_y":     numberProperty("End Y coordinate"),
+		}, "app", "state_id", "from_x", "from_y", "to_x", "to_y"),
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args dragInput) (*mcp.CallToolResult, any, error) {
 		if res, payload, ok := actionBlockedForPermissions("drag"); ok {
 			return res, payload, nil
@@ -326,13 +331,13 @@ func registerDrag(s *mcp.Server, rt *runtimeState) {
 		if res, payload, ok := actionBlockedForIntervention(rt, "drag"); ok {
 			return res, payload, nil
 		}
-		state, ok := rt.sessions.GetForApp(args.App)
-		if !ok {
-			return requiresRefreshResult("drag", args.App)
-		}
-		root, _, err := rt.sessions.ResolveForApp(args.App, 0)
+		state, err := stateForAction(rt, "drag", args.App, args.StateID)
 		if err != nil {
-			return toolError(err), nil, nil
+			return staleStateResult("drag", err)
+		}
+		root, _, err := rt.sessions.Resolve(args.StateID, 0)
+		if err != nil {
+			return staleStateResult("drag", err)
 		}
 		startX := roundCoordinate(args.FromX)
 		startY := roundCoordinate(args.FromY)
@@ -365,9 +370,10 @@ func registerPressKey(s *mcp.Server, rt *runtimeState) {
 		Description: "Press a key or key-combination on the keyboard, including modifier and navigation keys.\n  - This supports xdotool's `key` syntax.\n  - Examples: \"a\", \"Return\", \"Tab\", \"super+c\", \"Up\", \"KP_0\" (for the numpad 0 key).",
 		Annotations: actionToolAnnotations(),
 		InputSchema: exactObjectSchema(map[string]any{
-			"app": stringProperty("App name or bundle identifier"),
-			"key": stringProperty("Key or key combination to press"),
-		}, "app", "key"),
+			"app":      stringProperty("App name or bundle identifier"),
+			"key":      stringProperty("Key or key combination to press"),
+			"state_id": stringProperty("State token returned by get_app_state"),
+		}, "app", "state_id", "key"),
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args pressKeyInput) (*mcp.CallToolResult, any, error) {
 		if res, payload, ok := actionBlockedForPermissions("press_key"); ok {
 			return res, payload, nil
@@ -375,9 +381,9 @@ func registerPressKey(s *mcp.Server, rt *runtimeState) {
 		if res, payload, ok := actionBlockedForIntervention(rt, "press_key"); ok {
 			return res, payload, nil
 		}
-		state, ok := rt.sessions.GetForApp(args.App)
-		if !ok {
-			return requiresRefreshResult("press_key", args.App)
+		state, err := stateForAction(rt, "press_key", args.App, args.StateID)
+		if err != nil {
+			return staleStateResult("press_key", err)
 		}
 		if err := input.SendKeyComboToPID(int32(state.App.PID), args.Key); err != nil {
 			return toolError(err), nil, nil
@@ -400,8 +406,9 @@ func registerTypeText(s *mcp.Server, rt *runtimeState) {
 		InputSchema: exactObjectSchema(map[string]any{
 			"app":           stringProperty("App name or bundle identifier"),
 			"element_index": stringProperty("Element index to type into. When omitted, the app's focused element is used."),
+			"state_id":      stringProperty("State token returned by get_app_state"),
 			"text":          stringProperty("Literal text to type"),
-		}, "app", "text"),
+		}, "app", "state_id", "text"),
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args typeTextInput) (*mcp.CallToolResult, any, error) {
 		if res, payload, ok := actionBlockedForPermissions("type_text"); ok {
 			return res, payload, nil
@@ -409,18 +416,18 @@ func registerTypeText(s *mcp.Server, rt *runtimeState) {
 		if res, payload, ok := actionBlockedForIntervention(rt, "type_text"); ok {
 			return res, payload, nil
 		}
-		state, ok := rt.sessions.GetForApp(args.App)
-		if !ok {
-			return requiresRefreshResult("type_text", args.App)
+		state, err := stateForAction(rt, "type_text", args.App, args.StateID)
+		if err != nil {
+			return staleStateResult("type_text", err)
 		}
 		if args.ElementIndex != nil {
 			index, err := parseElementIndex(*args.ElementIndex)
 			if err != nil {
 				return toolError(err), nil, nil
 			}
-			el, node, err := rt.sessions.ResolveForApp(args.App, index)
+			el, node, err := rt.sessions.Resolve(args.StateID, index)
 			if err != nil {
-				return toolError(err), nil, nil
+				return staleStateResult("type_text", err)
 			}
 			endTypingCursor := beginTypingCursor(el)
 			defer endTypingCursor()
@@ -435,9 +442,9 @@ func registerTypeText(s *mcp.Server, rt *runtimeState) {
 				Message:   fmt.Sprintf("typed into %s", formatNode(node)),
 			}, nil
 		}
-		root, _, err := rt.sessions.ResolveForApp(args.App, 0)
+		root, _, err := rt.sessions.Resolve(args.StateID, 0)
 		if err != nil {
-			return toolError(err), nil, nil
+			return staleStateResult("type_text", err)
 		}
 		app := root.Application()
 		if app == nil {
@@ -591,6 +598,53 @@ func parseElementIndex(raw string) (int, error) {
 
 func missingAppStateError(app string) error {
 	return fmt.Errorf("no current app state for %q; call get_app_state again", app)
+}
+
+func stateForAction(rt *runtimeState, action, app, stateID string) (computeruse.AppState, error) {
+	stateID = strings.TrimSpace(stateID)
+	if stateID == "" {
+		return computeruse.AppState{}, fmt.Errorf("%s requires state_id from get_app_state; call get_app_state again", action)
+	}
+	if rt == nil || rt.sessions == nil {
+		return computeruse.AppState{}, fmt.Errorf("%s has no session store; call get_app_state again", action)
+	}
+	state, ok := rt.sessions.Get(stateID)
+	if !ok {
+		return computeruse.AppState{}, fmt.Errorf("unknown or stale state_id %q; call get_app_state again", stateID)
+	}
+	if !stateMatchesSelector(state, app) {
+		return computeruse.AppState{}, fmt.Errorf("state_id %q belongs to %s, not %q; call get_app_state again", stateID, state.App.BundleID, app)
+	}
+	if rt.urlPolicy != nil {
+		if err := rt.urlPolicy.CheckState(state); err != nil {
+			return computeruse.AppState{}, err
+		}
+	}
+	return state, nil
+}
+
+func stateMatchesSelector(state computeruse.AppState, selector string) bool {
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return false
+	}
+	app := state.App
+	if fmt.Sprintf("%d", app.PID) == selector {
+		return true
+	}
+	want := strings.ToLower(selector)
+	return strings.EqualFold(app.BundleID, selector) ||
+		strings.EqualFold(app.Name, selector) ||
+		strings.Contains(strings.ToLower(app.BundleID), want) ||
+		strings.Contains(strings.ToLower(app.Name), want)
+}
+
+func staleStateResult(action string, err error) (*mcp.CallToolResult, any, error) {
+	return toolError(err), computeruse.ActionResult{
+		Action:          action,
+		Message:         err.Error(),
+		RequiresRefresh: true,
+	}, nil
 }
 
 func requiresRefreshResult(action, app string) (*mcp.CallToolResult, any, error) {

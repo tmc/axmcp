@@ -275,11 +275,12 @@ type axWindowSnapshot struct {
 }
 
 type axTreePayload struct {
-	App                 string           `json:"app,omitempty"`
-	Scope               string           `json:"scope,omitempty"`
-	Window              axWindowSnapshot `json:"window"`
-	Tree                []axTreeNode     `json:"tree"`
-	ScreenshotPNGBase64 string           `json:"screenshot_png_base64,omitempty"`
+	App                 string            `json:"app,omitempty"`
+	Scope               string            `json:"scope,omitempty"`
+	Window              axWindowSnapshot  `json:"window"`
+	Tree                []axTreeNode      `json:"tree"`
+	OCR                 []ocrOutputResult `json:"ocr,omitempty"`
+	ScreenshotPNGBase64 string            `json:"screenshot_png_base64,omitempty"`
 }
 
 func collectAXTreeNodes(root *axuiautomation.Element, maxDepth int) []axTreeNode {
@@ -394,9 +395,9 @@ func windowSnapshot(root *axuiautomation.Element, png []byte) axWindowSnapshot {
 	return info
 }
 
-func buildAXTreePayload(appName string, root *axuiautomation.Element, scope string, depth int, includeScreenshot bool) (axTreePayload, error) {
+func buildAXTreePayload(appName string, root *axuiautomation.Element, scope string, depth int, includeScreenshot, includeOCR bool) (axTreePayload, error) {
 	var png []byte
-	if includeScreenshot {
+	if includeScreenshot || includeOCR {
 		var err error
 		png, err = root.Screenshot()
 		if err != nil {
@@ -409,7 +410,18 @@ func buildAXTreePayload(appName string, root *axuiautomation.Element, scope stri
 		Window: windowSnapshot(root, png),
 		Tree:   collectAXTreeNodes(root, depth),
 	}
-	if len(png) > 0 {
+	if includeOCR {
+		w, h, err := pngDimensions(png)
+		if err != nil {
+			return axTreePayload{}, err
+		}
+		results, err := recognizeText(png, w, h)
+		if err != nil {
+			return axTreePayload{}, err
+		}
+		payload.OCR = expandOCRResults(results, root)
+	}
+	if includeScreenshot && len(png) > 0 {
 		payload.ScreenshotPNGBase64 = base64.StdEncoding.EncodeToString(png)
 	}
 	return payload, nil
@@ -481,6 +493,7 @@ type axTreeInput struct {
 	Window     string `json:"window,omitempty"`
 	Depth      int    `json:"depth,omitempty"`
 	JSON       bool   `json:"json,omitempty"`
+	OCR        bool   `json:"ocr,omitempty"`
 	Screenshot bool   `json:"screenshot,omitempty"`
 	AppRoot    bool   `json:"app_root,omitempty"`
 }
@@ -488,7 +501,7 @@ type axTreeInput struct {
 func registerAXTree(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "ax_tree",
-		Description: "Print an indexed AX element tree. Defaults to the first app window; set window to a title substring, app_root=true for the full app tree, json=true for structured output, and screenshot=true to include a base64 PNG.",
+		Description: "Print an indexed AX element tree. Defaults to the first app window; set window to a title substring, app_root=true for the full app tree, json=true for structured output, ocr=true for OCR blocks, and screenshot=true to include a base64 PNG.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axTreeInput) (*mcp.CallToolResult, any, error) {
 		app, err := spinAndOpen(args.App)
 		if err != nil {
@@ -503,7 +516,7 @@ func registerAXTree(s *mcp.Server) {
 		if err != nil {
 			return nil, nil, err
 		}
-		payload, err := buildAXTreePayload(args.App, root, scope, depth, args.Screenshot)
+		payload, err := buildAXTreePayload(args.App, root, scope, depth, args.Screenshot, args.OCR)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -525,13 +538,14 @@ type axSnapshotInput struct {
 	Window            string `json:"window,omitempty"`
 	Depth             int    `json:"depth,omitempty"`
 	IncludeScreenshot bool   `json:"include_screenshot,omitempty"`
+	IncludeOCR        bool   `json:"include_ocr,omitempty"`
 	AppRoot           bool   `json:"app_root,omitempty"`
 }
 
 func registerAXSnapshot(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "ax_snapshot",
-		Description: "Return a structured AX snapshot with app/window metadata, indexed tree, secondary actions, and optional base64 screenshot. Defaults to the first app window.",
+		Description: "Return a structured AX snapshot with app/window metadata, indexed tree, secondary actions, and optional OCR blocks or base64 screenshot. Defaults to the first app window.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axSnapshotInput) (*mcp.CallToolResult, any, error) {
 		app, err := spinAndOpen(args.App)
 		if err != nil {
@@ -546,7 +560,7 @@ func registerAXSnapshot(s *mcp.Server) {
 		if err != nil {
 			return nil, nil, err
 		}
-		payload, err := buildAXTreePayload(args.App, root, scope, depth, args.IncludeScreenshot)
+		payload, err := buildAXTreePayload(args.App, root, scope, depth, args.IncludeScreenshot, args.IncludeOCR)
 		if err != nil {
 			return nil, nil, err
 		}

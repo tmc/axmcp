@@ -14,6 +14,7 @@ type getAppStateInput struct {
 
 type clickInput struct {
 	App          string   `json:"app"`
+	StateID      string   `json:"state_id"`
 	ElementIndex *string  `json:"element_index,omitempty"`
 	X            *float64 `json:"x,omitempty"`
 	Y            *float64 `json:"y,omitempty"`
@@ -23,38 +24,44 @@ type clickInput struct {
 
 type performSecondaryActionInput struct {
 	App          string `json:"app"`
+	StateID      string `json:"state_id"`
 	ElementIndex string `json:"element_index"`
 	Action       string `json:"action"`
 }
 
 type scrollInput struct {
 	App          string  `json:"app"`
+	StateID      string  `json:"state_id"`
 	ElementIndex string  `json:"element_index"`
 	Direction    string  `json:"direction"`
 	Pages        float64 `json:"pages,omitempty"`
 }
 
 type dragInput struct {
-	App   string  `json:"app"`
-	FromX float64 `json:"from_x"`
-	FromY float64 `json:"from_y"`
-	ToX   float64 `json:"to_x"`
-	ToY   float64 `json:"to_y"`
+	App     string  `json:"app"`
+	StateID string  `json:"state_id"`
+	FromX   float64 `json:"from_x"`
+	FromY   float64 `json:"from_y"`
+	ToX     float64 `json:"to_x"`
+	ToY     float64 `json:"to_y"`
 }
 
 type typeTextInput struct {
 	App          string  `json:"app"`
+	StateID      string  `json:"state_id"`
 	ElementIndex *string `json:"element_index,omitempty"`
 	Text         string  `json:"text"`
 }
 
 type pressKeyInput struct {
-	App string `json:"app"`
-	Key string `json:"key"`
+	App     string `json:"app"`
+	StateID string `json:"state_id"`
+	Key     string `json:"key"`
 }
 
 type setValueInput struct {
 	App          string `json:"app"`
+	StateID      string `json:"state_id"`
 	ElementIndex string `json:"element_index"`
 	Value        string `json:"value"`
 }

@@ -67,6 +67,7 @@ func main() {
 
 	rt, err := newRuntimeState(runtimeOptions{
 		intervention: interventionConfig(interventionMonitorEnabled),
+		blockedURLs:  envList("COMPUTER_USE_MCP_BLOCKED_DOMAINS"),
 	})
 	if err != nil {
 		log.Fatalf("runtime: %v", err)
@@ -157,6 +158,20 @@ func envBool(name string, def bool) bool {
 	}
 }
 
+func envList(name string) []string {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
 func interventionConfig(enabled bool) intervention.Config {
 	return intervention.Config{
 		Enabled:     enabled,
@@ -199,12 +214,14 @@ func computerUseInstructions() string {
 		"Some apps might have a separate dedicated plugin or skill. You may want to use that plugin or skill instead of Computer Use when it seems like a good fit for the task. While the separate plugin or skill may not expose every feature in the app, if the plugin can perform the task with its available features, prefer it. If the needed capability is not exposed there, use Computer Use may be appropriate for the missing interaction.",
 		"",
 		"Begin by calling `get_app_state` every turn you want to use Computer Use to get the latest state before acting. Codex will automatically stop the session after each assistant turn, so this step is required before interacting with apps in a new assistant turn.",
+		"Pass the returned `state_id` to every action tool. If an action reports `requires_refresh`, call `get_app_state` again and retry against the fresh state.",
 		"",
 		"The available tools are list_apps, get_app_state, click, perform_secondary_action, scroll, drag, type_text, press_key, and set_value. If any of these are not available in your environment, use tool_search to surface one before calling any Computer Use action tools.",
 		"",
 		"Computer Use tools allow you to use the user's apps in the background, so while you're using an app, the user can continue to use other apps on their computer. Avoid doing anything that would disrupt the user's active session, such as overwriting the contents of their clipboard, unless they asked you to!",
 		"",
 		"The physical-user intervention monitor is disabled by default. If the server is started with --human-intervention-monitor or COMPUTER_USE_MCP_HUMAN_INTERVENTION_MONITOR=1, recent physical mouse or keyboard input pauses action tools and requires a fresh get_app_state before continuing.",
+		"Set COMPUTER_USE_MCP_BLOCKED_DOMAINS to a comma-separated list of domains to block action tools on matching browser URLs.",
 		"",
 		"After each action, use the action result or fetch the latest state to verify the UI changed as expected.",
 		"Prefer element-targeted interactions over coordinate clicks when an index for the targeted element is available. Note that element indices are the sequential integers from the app state's accessibility tree.",

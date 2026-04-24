@@ -104,9 +104,10 @@ func orderedComputerUseTools() []*mcp.Tool {
 				"click_count":   integerProperty("Number of clicks. Defaults to 1"),
 				"element_index": stringProperty("Element index to click"),
 				"mouse_button":  enumStringProperty("Mouse button to click. Defaults to left.", "left", "right", "middle"),
+				"state_id":      stringProperty("State token returned by get_app_state"),
 				"x":             numberProperty("X coordinate in screenshot pixel coordinates"),
 				"y":             numberProperty("Y coordinate in screenshot pixel coordinates"),
-			}, "app"),
+			}, "app", "state_id"),
 		},
 		{
 			Name:        "perform_secondary_action",
@@ -116,7 +117,8 @@ func orderedComputerUseTools() []*mcp.Tool {
 				"action":        stringProperty("Secondary accessibility action name"),
 				"app":           stringProperty("App name or bundle identifier"),
 				"element_index": stringProperty("Element identifier"),
-			}, "app", "element_index", "action"),
+				"state_id":      stringProperty("State token returned by get_app_state"),
+			}, "app", "state_id", "element_index", "action"),
 		},
 		{
 			Name:        "set_value",
@@ -125,8 +127,9 @@ func orderedComputerUseTools() []*mcp.Tool {
 			InputSchema: exactObjectSchema(map[string]any{
 				"app":           stringProperty("App name or bundle identifier"),
 				"element_index": stringProperty("Element identifier"),
+				"state_id":      stringProperty("State token returned by get_app_state"),
 				"value":         stringProperty("Value to assign"),
-			}, "app", "element_index", "value"),
+			}, "app", "state_id", "element_index", "value"),
 		},
 		{
 			Name:        "scroll",
@@ -137,28 +140,31 @@ func orderedComputerUseTools() []*mcp.Tool {
 				"direction":     stringProperty("Scroll direction: up, down, left, or right"),
 				"element_index": stringProperty("Element identifier"),
 				"pages":         numberProperty("Number of pages to scroll. Fractional values are supported. Defaults to 1"),
-			}, "app", "element_index", "direction"),
+				"state_id":      stringProperty("State token returned by get_app_state"),
+			}, "app", "state_id", "element_index", "direction"),
 		},
 		{
 			Name:        "drag",
 			Description: "Drag from one point to another using pixel coordinates",
 			Annotations: actionToolAnnotations(),
 			InputSchema: exactObjectSchema(map[string]any{
-				"app":    stringProperty("App name or bundle identifier"),
-				"from_x": numberProperty("Start X coordinate"),
-				"from_y": numberProperty("Start Y coordinate"),
-				"to_x":   numberProperty("End X coordinate"),
-				"to_y":   numberProperty("End Y coordinate"),
-			}, "app", "from_x", "from_y", "to_x", "to_y"),
+				"app":      stringProperty("App name or bundle identifier"),
+				"from_x":   numberProperty("Start X coordinate"),
+				"from_y":   numberProperty("Start Y coordinate"),
+				"state_id": stringProperty("State token returned by get_app_state"),
+				"to_x":     numberProperty("End X coordinate"),
+				"to_y":     numberProperty("End Y coordinate"),
+			}, "app", "state_id", "from_x", "from_y", "to_x", "to_y"),
 		},
 		{
 			Name:        "press_key",
 			Description: "Press a key or key-combination on the keyboard, including modifier and navigation keys.\n  - This supports xdotool's `key` syntax.\n  - Examples: \"a\", \"Return\", \"Tab\", \"super+c\", \"Up\", \"KP_0\" (for the numpad 0 key).",
 			Annotations: actionToolAnnotations(),
 			InputSchema: exactObjectSchema(map[string]any{
-				"app": stringProperty("App name or bundle identifier"),
-				"key": stringProperty("Key or key combination to press"),
-			}, "app", "key"),
+				"app":      stringProperty("App name or bundle identifier"),
+				"key":      stringProperty("Key or key combination to press"),
+				"state_id": stringProperty("State token returned by get_app_state"),
+			}, "app", "state_id", "key"),
 		},
 		{
 			Name:        "type_text",
@@ -167,8 +173,9 @@ func orderedComputerUseTools() []*mcp.Tool {
 			InputSchema: exactObjectSchema(map[string]any{
 				"app":           stringProperty("App name or bundle identifier"),
 				"element_index": stringProperty("Element index to type into. When omitted, the app's focused element is used."),
+				"state_id":      stringProperty("State token returned by get_app_state"),
 				"text":          stringProperty("Literal text to type"),
-			}, "app", "text"),
+			}, "app", "state_id", "text"),
 		},
 	}
 }

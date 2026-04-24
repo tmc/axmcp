@@ -8,6 +8,7 @@ import (
 	"github.com/tmc/axmcp/internal/computeruse/appstate"
 	"github.com/tmc/axmcp/internal/computeruse/instruction"
 	"github.com/tmc/axmcp/internal/computeruse/intervention"
+	"github.com/tmc/axmcp/internal/computeruse/policy"
 	"github.com/tmc/axmcp/internal/computeruse/session"
 )
 
@@ -16,11 +17,13 @@ type runtimeState struct {
 	builder      *appstate.Builder
 	instructions *instruction.Provider
 	intervention *intervention.Monitor
+	urlPolicy    *policy.URLPolicy
 	sessions     *session.Store
 }
 
 type runtimeOptions struct {
 	intervention intervention.Config
+	blockedURLs  []string
 }
 
 func newRuntimeState(opts ...runtimeOptions) (*runtimeState, error) {
@@ -44,6 +47,7 @@ func newRuntimeState(opts ...runtimeOptions) (*runtimeState, error) {
 		builder:      appstate.NewBuilder(),
 		instructions: instruction.New(),
 		intervention: monitor,
+		urlPolicy:    policy.NewURLPolicy(opt.blockedURLs),
 		sessions:     session.NewStore(),
 	}, nil
 }
