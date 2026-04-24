@@ -61,7 +61,7 @@ Follow these steps in order. Every command is safe to run unattended.
 From a clone of this repo:
 
 ```sh
-go install ./cmd/axmcp ./cmd/xcmcp ./cmd/computer-use-mcp ./cmd/ax ./cmd/xc ./cmd/ascript ./cmd/ascriptmcp ./cmd/tcc-harness
+go install ./cmd/axmcp ./cmd/xcmcp ./cmd/computer-use-mcp ./cmd/ax ./cmd/xc ./cmd/ascript ./cmd/ascriptmcp
 ```
 
 Or directly from the module path without cloning:
@@ -72,7 +72,6 @@ go install github.com/tmc/axmcp/cmd/xcmcp@latest
 go install github.com/tmc/axmcp/cmd/computer-use-mcp@latest
 go install github.com/tmc/axmcp/cmd/ax@latest
 go install github.com/tmc/axmcp/cmd/xc@latest
-go install github.com/tmc/axmcp/cmd/tcc-harness@latest
 ```
 
 `go install` writes to `$(go env GOPATH)/bin` (default `$HOME/go/bin`), or `$(go env GOBIN)` if set.
@@ -105,11 +104,7 @@ You will paste these exact paths into your MCP client config in step 5.
 
 macOS refuses every pointer, keystroke, and AX tree call until the calling binary is explicitly approved in **System Settings → Privacy & Security → Accessibility**.
 
-The first time any of `axmcp`, `xcmcp`, `ax`, `xc`, or `computer-use-mcp` issues an AX call, macOS refuses and adds the binary as an unchecked row in that pane. Open it and toggle each entry on. `tcc-harness` is a read-only probe you can run first to check state without mutating anything:
-
-```sh
-tcc-harness --help
-```
+The first time any of `axmcp`, `xcmcp`, `ax`, `xc`, or `computer-use-mcp` issues an AX call, macOS refuses and adds the binary as an unchecked row in that pane. Open it and toggle each entry on.
 
 If an action later no-ops silently or returns "not permitted," the entry was probably turned off again by a software update — re-check the toggle.
 
@@ -332,7 +327,7 @@ This module is command-first. Reusable helpers live under `internal/` and are no
 - `internal/resources`: MCP resource registration
 - `internal/sdef`: parser for AppleScript scripting definitions
 - `internal/altool` and `internal/asc`: App Store Connect helpers
-- `internal/tccprompt`: TCC permission prompt inspection (used by `cmd/tcc-harness`)
+- `internal/tccprompt`: TCC permission prompt inspection
 
 ## Notes
 

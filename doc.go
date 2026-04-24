@@ -24,8 +24,6 @@
 //   - cmd/xc, a direct CLI built on the same packages
 //   - cmd/ax, a direct CLI for the macOS Accessibility API
 //   - cmd/ascript and cmd/ascriptmcp, tools for scriptable macOS applications
-//   - cmd/tcc-harness, a local probe for macOS Transparency, Consent, and
-//     Control (TCC) state
 //
 // # Internal Packages
 //
