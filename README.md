@@ -16,8 +16,33 @@ If you want an LLM to click through a real app: `axmcp`. If you want it to build
 
 - **Accessibility-first, not screenshot-first.** Pointer actions target AX elements by role and title, so an LLM can say "click the Build button" and get the actual button — not the pixel that looked right a moment ago.
 - **OCR and screenshots are the fallback, not the plan.** `ax_ocr`, `ax_ocr_diff`, and `ax_ocr_click` exist for Electron apps, custom canvases, and partially inaccessible UI. They ride on top of the AX flow, not around it.
-- **The hard Xcode moves are scripted.** `xcode_add_target` drives the File > New > Target wizard end-to-end, including the platform tab, template picker, and "Embed in Application" popup, then verifies the new scheme landed on disk.
+- **Xcode, fully drivable.** See the Xcode automation section below — from `xcodebuild` wrappers and simulator control all the way up to driving the File > New > Target wizard through the live UI when `xcodebuild` can't do the job.
 - **One repo, three audiences.** The primitive surface (`axmcp`) is for open exploration; the Codex contract (`computer-use-mcp`) is for drop-in replacement; the Xcode surface (`xcmcp`) is the IDE-adjacent tool belt. They share one set of internal packages so behavior stays consistent.
+
+## Xcode automation, top to bottom
+
+`xcmcp` and its CLI twin `xc` cover the whole Apple-developer loop, not just `xcodebuild` calls. Across its toolsets it speaks to:
+
+- **Projects and schemes** — `discover_projects`, `list_schemes`, `show_build_settings` read `.xcodeproj` / `.xcworkspace` directly.
+- **Build and test** — `build` and `test` wrap `xcodebuild` with structured output and `GetTestList` / `RunSomeTests` for targeted runs; `GetBuildLog` returns the last run's log for triage.
+- **Simulators** — `list_simulators`, `boot_simulator`, `shutdown_simulator`, plus the `simulator_extras` toolset for `open_url`, `add_media`, app containers, orientation, appearance, location, privacy toggles, and screen recording.
+- **Physical devices** — `physical_device` toolset for inspection and app lifecycle over `devicectl`.
+- **App lifecycle** — `install`, `uninstall`, `launch`, `terminate`, `logs`, `list_apps`, `running_apps` across sim and device.
+- **Previews** — `RenderPreview` and `render_all_previews` to drive SwiftUI previews from the MCP layer.
+- **IDE bridge** — the always-on Xcode bridge toolset surfaces `xcrun mcpbridge` tools: `XcodeRead`, `XcodeWrite`, `XcodeUpdate`, `XcodeGlob`, `XcodeGrep`, `XcodeLS`, `XcodeMV`, `XcodeRM`, `XcodeMakeDir`, `XcodeListNavigatorIssues`, `XcodeRefreshCodeIssuesInFile`, `XcodeListWindows`, `ExecuteSnippet`, `DocumentationSearch`. This is Xcode's own IDE-side helpers, not our approximation.
+- **File > New > Target, automated.** The headline: `xcode_add_target` drives the target-creation sheet end-to-end over AX — platform tab, template picker, product name, team, bundle ID, and the "Embed in Application" popup for extensions — then re-reads the project on disk to verify the new target/scheme actually landed. The wizard logic lives in `internal/xcodewizard` and is shared by both the MCP tool and `xc xcode add-target`.
+- **Code signing and shipping** — the `asc` toolset wraps App Store Connect and `altool` for authentication key management, app record queries, build uploads, and TestFlight handoff.
+- **Crash reports and SPM** — `crash` toolset lists and reads `.ips` reports; `dependency` toolset covers Swift Package Manager operations.
+
+Everything is toolset-gated, so you only load what you need:
+
+```sh
+xcmcp --enable-all           # every toolset on
+xcmcp --enable-ui-tools      # just UI automation of the sim
+xcmcp --enable-asc           # App Store Connect + altool
+```
+
+Or turn toolsets on and off dynamically inside a session via `list_toolsets` and `enable_toolset`.
 
 ## Requirements
 
@@ -124,7 +149,7 @@ It is tools-only — no MCP resources, no resource templates. The tool surface i
 
 ### `xcmcp`
 
-`xcmcp` serves tools and resources over stdio.
+`xcmcp` serves tools and resources over stdio. See the Xcode automation section above for the full surface; this section just lists the optional toolsets.
 
 Optional toolsets:
 
@@ -142,16 +167,27 @@ Optional toolsets:
 
 ### `xc`
 
-`xc` exposes the same building blocks as a direct CLI:
+`xc` exposes the same Xcode automation as a direct CLI, so you can script loops that would otherwise need the IDE.
 
 ```sh
-xc sims list
-xc build --scheme MyApp
-xc test --scheme MyApp
+xc project                                   # resolve the Xcode project from cwd
+xc sims list                                 # see all available simulators
+xc sims boot 8A2F1C4D-...                    # boot one
+xc build --scheme MyApp                      # xcodebuild wrapper
+xc test --scheme MyApp                       # run the full test plan
+xc app install ./build/MyApp.app             # install to booted sim
 xc app launch com.example.MyApp --udid booted
-xc ui tree --bundle-id com.apple.finder
-xc ios tree --udid booted
-xc xcode add-target --template "Widget Extension" --product MyWidget --platform iOS
+xc app logs com.example.MyApp                # stream device/sim logs
+xc ui tree --bundle-id com.apple.finder      # AX tree of a running app
+xc ios tree --udid booted                    # direct CoreSimulator AX tree
+xc screen shot ~/Desktop/sim.png             # simulator screenshot
+
+# drive the File > New > Target wizard, end-to-end
+xc xcode add-target \
+    --template "Widget Extension" \
+    --product MyWidget \
+    --platform iOS \
+    --embed-in MyApp
 ```
 
 ### `ax`
