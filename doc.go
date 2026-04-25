@@ -42,7 +42,6 @@
 //     (app state, input, coords, policy, session, approval, intervention)
 //   - internal/crash, for crash report inspection
 //   - internal/resources, for MCP resource registration
-//   - internal/tccprompt, for TCC prompt inspection
 //
 // # Environment
 //

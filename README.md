@@ -327,7 +327,6 @@ This module is command-first. Reusable helpers live under `internal/` and are no
 - `internal/resources`: MCP resource registration
 - `internal/sdef`: parser for AppleScript scripting definitions
 - `internal/altool` and `internal/asc`: App Store Connect helpers
-- `internal/tccprompt`: TCC permission prompt inspection
 
 ## Environment variables
 
