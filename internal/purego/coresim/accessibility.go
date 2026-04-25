@@ -9,6 +9,14 @@ import (
 	"github.com/tmc/axmcp/internal/purego/objc"
 )
 
+// fallbackBridgeDelegateToken is sent to CoreSimulator's accessibility
+// bridge when an element arrives without a token of its own — typically
+// during deep recursion where token propagation broke. The string isn't
+// interpreted by macOS; it's just used to satisfy the delegate API. Kept
+// binary-neutral so internal/purego can be vendored across multiple tools
+// without one of them claiming a sibling's name.
+const fallbackBridgeDelegateToken = "coresim-fallback-token"
+
 var (
 	dispatchOnce sync.Once
 	dispatchLib  uintptr
@@ -186,7 +194,7 @@ func (d SimDevice) FetchChildren(element *AccessibilityElement) ([]*Accessibilit
 		// Fallback? Or error?
 		// If we are deep in recursion, token should be present.
 		// If not, we might fail delegate usage.
-		token = "xcmcp-fallback-token"
+		token = fallbackBridgeDelegateToken
 	}
 	objc.Send[objc.ID](trans, objc.Sel("setBridgeDelegateToken:"), objc.NSString(token))
 
@@ -260,7 +268,7 @@ func (d SimDevice) UpgradeElement(element *AccessibilityElement) (*Accessibility
 
 	token := element.Token
 	if token == "" {
-		token = "xcmcp-fallback-token"
+		token = fallbackBridgeDelegateToken
 	}
 	objc.Send[objc.ID](trans, objc.Sel("setBridgeDelegateToken:"), objc.NSString(token))
 
@@ -343,7 +351,7 @@ func (d SimDevice) PerformAction(element *AccessibilityElement, actionType uint6
 	objc.Send[objc.ID](trans, objc.Sel("setPid:"), element.PID)
 	token := element.Token
 	if token == "" {
-		token = "xcmcp-fallback-token"
+		token = fallbackBridgeDelegateToken
 	}
 	objc.Send[objc.ID](trans, objc.Sel("setBridgeDelegateToken:"), objc.NSString(token))
 

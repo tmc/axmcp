@@ -194,6 +194,13 @@ func configuredBundleID() string {
 	return uiIdentity.bundleID
 }
 
+// uiExecName resolves the binary's display name for TCC prompts and
+// permission lookups. It prefers an explicitly configured name (set via
+// ConfigureIdentity at startup), then MACGO_APP_NAME, then the actual
+// executable basename. The final fallback is a generic placeholder rather
+// than a hardcoded sibling-binary name, so a stripped-down build that fails
+// os.Executable() doesn't accidentally impersonate another tool's TCC
+// identity.
 func uiExecName() string {
 	if name := strings.TrimSpace(configuredAppName()); name != "" {
 		return name
@@ -203,7 +210,7 @@ func uiExecName() string {
 	}
 	exe, err := os.Executable()
 	if err != nil {
-		return "xcmcp"
+		return "mcp-tool"
 	}
 	name := filepath.Base(exe)
 	name = strings.TrimSuffix(name, ".app")

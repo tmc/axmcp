@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"os"
+	"strings"
 	"sync"
 	"time"
 	"unsafe"
@@ -186,9 +188,21 @@ var (
 	axQueueOnce sync.Once
 )
 
+// axQueueLabel is the GCD label used for the CoreSimulator accessibility
+// dispatch queue. It is intentionally generic so the same internal/purego
+// package can be vendored into multiple binaries (axmcp, xcmcp, ...) without
+// any one of them claiming a sibling's name in macOS' dispatch label
+// registry. Override at startup via the COREMSIM_QUEUE_LABEL env var when a
+// caller wants its own per-binary label for log filtering.
+const axQueueLabel = "coresim.accessibility"
+
 func getAXQueue() objc.ID {
 	axQueueOnce.Do(func() {
-		axQueue = objc.ID(CreateQueue("xcmcp.accessibility"))
+		label := axQueueLabel
+		if v := strings.TrimSpace(os.Getenv("COREMSIM_QUEUE_LABEL")); v != "" {
+			label = v
+		}
+		axQueue = objc.ID(CreateQueue(label))
 	})
 	return axQueue
 }
