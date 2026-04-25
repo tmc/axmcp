@@ -39,7 +39,8 @@
 //   - internal/screen, for screen capture helpers
 //   - internal/ghostcursor, for an animated cursor overlay
 //   - internal/computeruse, for the primitives behind cmd/computer-use-mcp
-//     (app state, input, coords, policy, session, approval, intervention)
+//     (appstate, input, coords, policy, session, approval, intervention,
+//     instruction, magnify, overlay)
 //   - internal/crash, for crash report inspection
 //   - internal/resources, for MCP resource registration
 //
