@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
@@ -963,7 +964,9 @@ func registerAXListWindows(s *mcp.Server) {
 					OffScreen: cw.OffScreen,
 				}
 				if off, err := spacedetect.IsOffSpace(cw.WindowID); err != nil {
-					slog.Debug("spacedetect: lookup failed", "windowID", cw.WindowID, "err", err)
+					if !errors.Is(err, spacedetect.ErrSkyLightUnavailable) {
+						slog.Debug("spacedetect: lookup failed", "windowID", cw.WindowID, "err", err)
+					}
 				} else if off {
 					wi.OffSpace = true
 				}

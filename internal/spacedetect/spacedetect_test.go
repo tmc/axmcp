@@ -24,6 +24,15 @@ func TestIsOffSpaceUnknownWindow(t *testing.T) {
 	if off {
 		t.Fatalf("IsOffSpace(0): off must be false on error path, got true")
 	}
+
+	// When SkyLight failed to load, the returned error must wrap
+	// ErrSkyLightUnavailable so callers can branch via errors.Is.
+	// On systems where SkyLight loaded fine, windowID=0 instead returns
+	// a non-wrapped lookup error; that case is fine — we just don't get
+	// to exercise the wrap path here.
+	if errors.Is(err, ErrSkyLightUnavailable) {
+		t.Logf("SkyLight unavailable: %v", err)
+	}
 }
 
 func TestErrSkyLightUnavailableUnwraps(t *testing.T) {

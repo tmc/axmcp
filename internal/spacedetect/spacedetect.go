@@ -86,8 +86,10 @@ func IsOffSpace(windowID uint32) (bool, error) {
 		return false, fmt.Errorf("spacedetect: SLSGetActiveSpace returned 0")
 	}
 
-	wid := int32(windowID)
-	wnum := corefoundation.CFNumberCreate(corefoundation.KCFAllocatorDefault, corefoundation.KCFNumberSInt32Type, unsafe.Pointer(&wid))
+	// Decode through int64 / KCFNumberSInt64Type so the full uint32
+	// CGWindowID range survives without int32 truncation.
+	wid := int64(windowID)
+	wnum := corefoundation.CFNumberCreate(corefoundation.KCFAllocatorDefault, corefoundation.KCFNumberSInt64Type, unsafe.Pointer(&wid))
 	if wnum == 0 {
 		return false, fmt.Errorf("spacedetect: CFNumberCreate(windowID) returned nil")
 	}
@@ -110,16 +112,21 @@ func IsOffSpace(windowID uint32) (bool, error) {
 	if count == 0 {
 		return false, fmt.Errorf("spacedetect: window %d has no Space membership", windowID)
 	}
+	parsedAny := false
 	for i := range count {
 		nptr := corefoundation.CFArrayGetValueAtIndex(spaces, i)
 		num := corefoundation.CFNumberRef(uintptr(nptr))
-		var sid uint64
+		var sid int64
 		if !corefoundation.CFNumberGetValue(num, corefoundation.KCFNumberSInt64Type, unsafe.Pointer(&sid)) {
 			continue
 		}
-		if sid == active {
+		parsedAny = true
+		if uint64(sid) == active {
 			return false, nil
 		}
+	}
+	if !parsedAny {
+		return false, fmt.Errorf("spacedetect: failed to decode any Space IDs for window %d", windowID)
 	}
 	return true, nil
 }
