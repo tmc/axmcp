@@ -131,3 +131,45 @@ by raising the ceiling — both visible in PR diff, neither silent.
 Replacing the ceiling with `-vet=off` would lose the regression
 signal entirely; chasing it down to zero is deferred work that
 shouldn't block unrelated PRs.
+
+## Open review feedback
+
+PR #1 merged with two Copilot observations not yet addressed in
+the workflow. Recording them here so the next iteration of the gate
+has a clear punch list rather than rediscovering them from PR
+history.
+
+- **Process-substitution `git rev-list` failure can pass silently.**
+  The gates that scan a commit range use the pattern
+  `done < <(git rev-list "$base..$head")`. If `git rev-list` exits
+  nonzero (invalid SHA range, force-push edge cases where the prior
+  tip is gone), the loop receives no input and the gate passes
+  without examining any commit. The intended behavior is a hard
+  fail. Fix is to resolve the SHA list once into a variable, fail
+  the step if `rev-list` errors, then iterate. Same fix unblocks
+  three gates at once (trailer, length, case).
+- **Subject-case scope-stripping sed is too permissive.** The current
+  `sed -E 's/^[^:]+: //'` strips any `non-colon characters + colon
+  + space` prefix, including `Fix:`, `WIP:`, or any other ad-hoc
+  prefix. The lowercase-imperative check then applies to the word
+  *after* the prefix, so `Fix: Add foo` would pass even though the
+  scope itself violates the convention. Tightening the regex to
+  `^[a-z0-9][a-z0-9/_-]*: ` (Conventional-Commits-shaped lowercase
+  scope) would catch these.
+
+Neither bug bites today against the v0.2.x commit shape — every
+commit in `v0.1.5..main` uses a lowercase Conventional-Commits-
+shaped scope, and no force-push has invalidated a range scan. They
+become real on the day someone tries to push a branch with an
+uppercase prefix or force-pushes over the gate's `before` SHA.
+
+The "gate matches its own description" pattern has another concrete
+instance in this design doc: the scratch-leak gate flags any tracked
+markdown file containing the inter-agent collab path prefix (the
+`/tmp/collab` plus hyphen convention from the iTerm collab-msg
+protocol) or the iTerm session-id env var literal (`ITERM` plus
+`_SESSION_ID`). Documenting the gate forces the doc to refer to
+those literals indirectly. Same structural lesson as the trailer
+gate: when a gate's input may *describe* the gate, prefer
+structured parsing over body grep, or — if a body grep is
+unavoidable — require the doc to refer to the literal indirectly.

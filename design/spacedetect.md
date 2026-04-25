@@ -127,3 +127,32 @@ Tests are honest about platform: the SkyLight call may succeed on a
 developer's Mac and fail on a CI runner without a logged-in
 WindowServer session. The test design treats both as valid outcomes
 of the same contract.
+
+## Review-driven invariants
+
+Two specific lines of code exist because of PR #2 review pushback,
+not because the first draft worked correctly. Documenting them as
+invariants so future refactors don't quietly regress.
+
+- **`int64` + `KCFNumberSInt64Type` for the windowID encode.** The
+  first draft used `int32` + `KCFNumberSInt32Type`, which silently
+  truncates `CGWindowID` values greater than `math.MaxInt32` to
+  negative numbers. SkyLight then queries the wrong window. The fix
+  is to encode through `int64` so the full `uint32` range survives.
+  Same correction applies to the decode path: `CFNumberGetValue`
+  reads into an `int64` and the comparison casts back via
+  `uint64(sid)`.
+- **`parsedAny` tracking on the decode loop.** If every
+  `CFNumberGetValue` call in the Space-ID iteration fails (a class
+  of failure that could happen on a future macOS that returns a
+  different CFNumber subtype), the first draft fell through the loop
+  and unconditionally returned `(true, nil)` — falsely reporting the
+  window as off-Space. The fix tracks whether at least one Space ID
+  decoded; if none did, return an error. Without this guard, a
+  decoder regression would manifest as an opaque "everything is
+  off-Space" UX bug rather than a visible failure.
+
+Both are the kind of bug a regex-grade test cannot catch — they only
+fire on real-world inputs that the unit tests can't reach. Reading
+the PR #2 review thread is the only durable record of *why* the code
+takes the extra step; this design doc is the second.

@@ -19,6 +19,12 @@ If you want an LLM to click through a real app: `axmcp`. If you want it to build
 - **Xcode, fully drivable.** See the Xcode automation section below — from `xcodebuild` wrappers and simulator control all the way up to driving the File > New > Target wizard through the live UI when `xcodebuild` can't do the job.
 - **One repo, three audiences.** The primitive surface (`axmcp`) is for open exploration; the Codex contract (`computer-use-mcp`) is for drop-in replacement; the Xcode surface (`xcmcp`) is the IDE-adjacent tool belt. They share one set of internal packages so behavior stays consistent.
 
+## What's new in v0.2.x
+
+- **Off-Space window detection.** `ax_list_windows` reports `"off_space": true` for windows that live on a Space other than the user's active Space. The field is omitted when false, so existing callers see no wire-shape change. Resolution goes through `internal/spacedetect`, which dlsyms three private SkyLight symbols (`SLSMainConnectionID`, `SLSGetActiveSpace`, `SLSCopySpacesForWindows`) and returns `ErrSkyLightUnavailable` when the framework isn't loadable. Cross-Space migration is out of scope: it requires a private WindowServer entitlement Apple does not grant outside its own processes.
+- **Hygiene-verify CI gate.** `.github/workflows/hygiene-verify.yml` runs on every push to `main` and every PR. Six gates: structured AI-trailer scan via `git interpret-trailers --parse`, subject length ≤72, lowercase-imperative subject, `go mod tidy` clean, build/vet (ceiling 8) /test, and tracked-scratch / leaked-path scan. Documented in `design/hygiene-verify.md`.
+- **Roadmap.** Near-term and out-of-scope items live in `ROADMAP.md`. Anything not listed there is not committed work.
+
 ## Xcode automation, top to bottom
 
 `xcmcp` and its CLI twin `xc` cover the whole Apple-developer loop, not just `xcodebuild` calls. Across its toolsets it speaks to:
@@ -322,6 +328,7 @@ This module is command-first. Reusable helpers live under `internal/` and are no
 - `internal/ui`: macOS Accessibility access and UI screenshots
 - `internal/screen`: screen capture helpers
 - `internal/ghostcursor`: animated cursor overlay for demonstration and recording
+- `internal/spacedetect`: off-Space window detection via private SkyLight symbols (see `design/spacedetect.md`)
 - `internal/computeruse`: shared primitives behind `computer-use-mcp` (app state, input, coords, policy, session, approval, intervention)
 - `internal/crash`: crash report listing and reading
 - `internal/resources`: MCP resource registration
