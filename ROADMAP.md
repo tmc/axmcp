@@ -24,10 +24,19 @@ leakage). Ghost cursor rendering for click and drag actions lives in
 
 ## Near-term (v0.3.x)
 
-- `_AXObserverAddNotificationAndCheckRemote` adoption to keep occluded
-  Electron AX trees populated. One-line callsite swap in
-  `apple/x/axuiautomation/observer.go` once the dlsym wrapper exists.
-  Same SkyLight-derisking pattern that `spacedetect` proved out.
+- `internal/axpump` to keep backgrounded Electron AX trees populated
+  by registering a no-op `AXObserver` per inspected pid. Medium scope,
+  not the originally-projected one-line dlsym swap: a
+  `runtime.LockOSThread` run-loop pump, per-pid `Ensure` that creates
+  the observer and subscribes to a broad notification set, and an
+  `Active(pid)` query stamped as `ax_pump_active` metadata on
+  `ax_tree` / `ax_snapshot` payloads. The originally-projected
+  `_AXObserverAddNotificationAndCheckRemote` private SPI is absent on
+  macOS 26.4.x (verified by `purego.Dlsym` and `dyld_info -exports`)
+  and was always best-effort upstream — the load-bearing piece is
+  observer presence itself, not the private call. See
+  `design/axpump.md` for the full design and graceful-degrade contract
+  parallel to `spacedetect`'s `ErrSkyLightUnavailable`.
 - `SLEventPostToPid` + auth-message envelope + primer click for
   Chromium-family pointer delivery. Concentrates in
   `internal/computeruse/input/input.go`. Highest user-visible payoff
