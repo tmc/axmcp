@@ -329,6 +329,18 @@ This module is command-first. Reusable helpers live under `internal/` and are no
 - `internal/altool` and `internal/asc`: App Store Connect helpers
 - `internal/tccprompt`: TCC permission prompt inspection
 
+## Environment variables
+
+`axmcp` reads a small set of optional environment variables. Defaults are picked for unattended use; the tunables exist mostly for debugging and demos.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `AXMCP_CURSOR_GLIDE_MS` | `280` | Duration in milliseconds the ghost cursor takes to glide to a click target. Set to `0` to teleport. |
+| `AXMCP_CURSOR_SETTLE_MS` | `90` | Milliseconds the cursor pauses on target in its Pressed state before the click is dispatched. `0` disables the dwell. |
+| `AXMCP_CURSOR_HOLD_MS` | `200` | Milliseconds the cursor stays visible after the click before fading. `0` disables the hold. |
+| `AXMCP_HIGHLIGHT_HUMAN` | unset | When set to a truthy value, draws a visible highlight around OCR matches and click targets — useful when recording demos. |
+| `AXMCP_C_SIGNAL_BACKTRACE` | unset | When set to `1`, installs a C-level signal handler that prints a native backtrace on crash. Off by default to avoid interfering with Go's own crash reporter. |
+
 ## Notes
 
 - This repository targets macOS. Many packages use AppKit, Accessibility, or Apple developer tools directly.

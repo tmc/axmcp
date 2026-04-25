@@ -52,6 +52,10 @@
 // device features also depend on the corresponding runtime state, such as
 // a booted simulator or a connected device.
 //
+// cmd/axmcp honors a small set of optional AXMCP_* environment variables
+// for ghost-cursor pacing, demo highlighting, and crash diagnostics. See
+// the repository README for the full list with defaults and units.
+//
 // This package exists to document the module as a whole. The supported entry
 // points are the commands under cmd/. Library code lives in internal/
 // packages and is not intended as a public import surface.
