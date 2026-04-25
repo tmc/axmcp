@@ -240,11 +240,12 @@ func main() {
 		log.Fatalf("macgo start failed: %v", err)
 	}
 
-	eyecandy := ghostcursor.DefaultEyecandyConfig()
-	eyecandy.SharingVisible = envFlag("ux.ghostcursor.sharing_visible", false)
-	eyecandy.RippleOnClick = eyecandyEnabled && envFlag("ux.ghostcursor.ripple_on_click", eyecandy.RippleOnClick)
-	eyecandy.CometTrail = eyecandyEnabled && envFlag("ux.ghostcursor.comet_trail", eyecandy.CometTrail)
-	eyecandy.VelocityTilt = eyecandyEnabled && envFlag("ux.ghostcursor.velocity_tilt", eyecandy.VelocityTilt)
+	eyecandy := ghostcursor.EyecandyConfig{
+		SharingVisible: envFlag("ux.ghostcursor.sharing_visible", true),
+	}
+	eyecandy.RippleOnClick = eyecandyEnabled && envFlag("ux.ghostcursor.ripple_on_click", false)
+	eyecandy.CometTrail = eyecandyEnabled && envFlag("ux.ghostcursor.comet_trail", false)
+	eyecandy.VelocityTilt = eyecandyEnabled && envFlag("ux.ghostcursor.velocity_tilt", false)
 	eyecandy.HolographicOCR = eyecandyEnabled && envFlag("ux.ghostcursor.holographic_ocr", false)
 	eyecandy.LiquidLens = eyecandyEnabled && envFlag("ux.ghostcursor.liquid_lens", false)
 	ghostcursor.Configure(ghostcursor.Config{
