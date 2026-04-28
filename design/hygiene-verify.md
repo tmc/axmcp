@@ -132,36 +132,40 @@ Replacing the ceiling with `-vet=off` would lose the regression
 signal entirely; chasing it down to zero is deferred work that
 shouldn't block unrelated PRs.
 
-## Open review feedback
+## Resolved review feedback
 
-PR #1 merged with two Copilot observations not yet addressed in
-the workflow. Recording them here so the next iteration of the gate
-has a clear punch list rather than rediscovering them from PR
-history.
+PR #1 merged with two Copilot observations on the workflow. Both
+are now resolved on the v0.3.x line.
 
 - **Process-substitution `git rev-list` failure can pass silently.**
-  The gates that scan a commit range use the pattern
-  `done < <(git rev-list "$base..$head")`. If `git rev-list` exits
+  The gates that scanned a commit range originally used
+  `done < <(git rev-list "$base..$head")`. If `git rev-list` exited
   nonzero (invalid SHA range, force-push edge cases where the prior
-  tip is gone), the loop receives no input and the gate passes
-  without examining any commit. The intended behavior is a hard
-  fail. Fix is to resolve the SHA list once into a variable, fail
-  the step if `rev-list` errors, then iterate. Same fix unblocks
-  three gates at once (trailer, length, case).
-- **Subject-case scope-stripping sed is too permissive.** The current
-  `sed -E 's/^[^:]+: //'` strips any `non-colon characters + colon
-  + space` prefix, including `Fix:`, `WIP:`, or any other ad-hoc
-  prefix. The lowercase-imperative check then applies to the word
-  *after* the prefix, so `Fix: Add foo` would pass even though the
-  scope itself violates the convention. Tightening the regex to
-  `^[a-z0-9][a-z0-9/_-]*: ` (Conventional-Commits-shaped lowercase
-  scope) would catch these.
+  tip was gone), the loop received no input and the gate passed
+  without examining any commit. Resolved: a single
+  `Resolve commit SHA list` step now runs `git rev-list` under
+  `set -euo pipefail`, persists the output through `GITHUB_OUTPUT`,
+  and the trailer / length / case gates iterate the resolved list
+  via a here-string. A failure in `rev-list` now fails that step
+  rather than silently emptying the downstream stream.
+- **Subject-case scope-stripping sed is too permissive.** The
+  original `sed -E 's/^[^:]+: //'` stripped any
+  `non-colon characters + colon + space` prefix, including `Fix:`,
+  `WIP:`, or any other ad-hoc prefix. The lowercase-imperative
+  check then applied to the word *after* the prefix, so
+  `Fix: Add foo` would pass even though the scope itself violated
+  the convention. Resolved: the case gate now matches the prefix
+  against `^[a-z][a-z0-9/_.-]*: ` (Conventional-Commits-shaped
+  lowercase scope) and only strips when the prefix matches; an
+  uppercase or non-conventional prefix falls through to the
+  imperative check on the literal first word, which then fails as
+  expected.
 
-Neither bug bites today against the v0.2.x commit shape — every
-commit in `v0.1.5..main` uses a lowercase Conventional-Commits-
-shaped scope, and no force-push has invalidated a range scan. They
-become real on the day someone tries to push a branch with an
-uppercase prefix or force-pushes over the gate's `before` SHA.
+Neither bug bit against the v0.2.x commit shape — every commit in
+`v0.1.5..main` used a lowercase Conventional-Commits-shaped scope,
+and no force-push had invalidated a range scan. The fixes land
+ahead of the day someone tries to push a branch with an uppercase
+prefix or force-pushes over the gate's `before` SHA.
 
 The "gate matches its own description" pattern has another concrete
 instance in this design doc: the scratch-leak gate flags any tracked

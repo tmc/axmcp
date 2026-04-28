@@ -39,14 +39,34 @@ jobs:
           echo "scanning $base..$head"
           git log --oneline "$base..$head" || true
 
+      - name: Resolve commit SHA list
+        id: shas
+        # Resolves the base..head range once. Failing here surfaces the error
+        # to the gate runner instead of letting downstream gates iterate over
+        # a silently-empty stream (process-substitution swallows rev-list's
+        # nonzero exit). All commit-walking gates below consume this list.
+        run: |
+          set -euo pipefail
+          base='${{ steps.range.outputs.base }}'
+          head='${{ steps.range.outputs.head }}'
+          shas=$(git rev-list "$base..$head")
+          # base==head is a legitimate empty range (rev-list exits 0). Any
+          # other failure must already have been reported by rev-list above
+          # via the pipefail; persist the list (possibly empty) for downstream.
+          {
+            echo "shas<<EOF"
+            printf '%s\n' "$shas"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          count=$(printf '%s\n' "$shas" | grep -c . || true)
+          echo "resolved $count commit(s) in $base..$head"
+
       - name: No Co-Authored-By Claude trailers
         # Uses git-interpret-trailers --parse so that prose containing the
         # literal token "Co-Authored-By" or "noreply@anthropic" does not trip
         # the gate — only an actual structured trailer counts.
         run: |
           set -euo pipefail
-          base='${{ steps.range.outputs.base }}'
-          head='${{ steps.range.outputs.head }}'
           leaks=""
           while read -r sha; do
             [ -z "$sha" ] && continue
@@ -54,7 +74,7 @@ jobs:
             if printf '%s\n' "$trailers" | grep -qiE '^Co-Authored-By:.*claude|^[A-Za-z-]+:.*noreply@anthropic'; then
               leaks="$leaks $sha"
             fi
-          done < <(git rev-list "$base..$head")
+          done <<< '${{ steps.shas.outputs.shas }}'
           if [ -n "$leaks" ]; then
             echo "FAIL: Co-Authored-By Claude / anthropic trailer found in:" >&2
             for sha in $leaks; do
@@ -67,8 +87,6 @@ jobs:
       - name: Subject length <=72 chars
         run: |
           set -euo pipefail
-          base='${{ steps.range.outputs.base }}'
-          head='${{ steps.range.outputs.head }}'
           fail=0
           while read -r sha; do
             [ -z "$sha" ] && continue
@@ -81,27 +99,35 @@ jobs:
               echo "FAIL: $sha subject is $len chars (>72): $subj" >&2
               fail=1
             fi
-          done < <(git rev-list "$base..$head")
+          done <<< '${{ steps.shas.outputs.shas }}'
           [ "$fail" -eq 0 ] && echo "OK: all subjects <=72 chars"
           exit $fail
 
       - name: Subject lowercase imperative
         run: |
           set -euo pipefail
-          base='${{ steps.range.outputs.base }}'
-          head='${{ steps.range.outputs.head }}'
           fail=0
+          # Conventional scope prefix: lowercase letter followed by lowercase
+          # alnum / dot / slash / underscore / dash, then ": ". Stricter than
+          # the prior s/^[^:]+: // which admitted Fix:, WIP:, and other
+          # ad-hoc prefixes through the imperative check.
+          scope_re='^[a-z][a-z0-9/_.-]*: '
           while read -r sha; do
             [ -z "$sha" ] && continue
             parents=$(git log -1 --format=%P "$sha" | wc -w | tr -d ' ')
             [ "$parents" -gt 1 ] && continue
             subj=$(git log -1 --format=%s "$sha")
-            # Take the first word after the scope prefix "<scope>: " (or the
-            # first word if no scope). Acronyms allowed (all-caps tokens).
-            first=$(printf '%s' "$subj" | sed -E 's/^[^:]+: //' | awk '{print $1}')
+            # Strip a recognized scope prefix; otherwise check the very first word.
+            if printf '%s' "$subj" | grep -qE "$scope_re"; then
+              rest=$(printf '%s' "$subj" | sed -E "s/$scope_re//")
+            else
+              rest="$subj"
+            fi
+            first=$(printf '%s' "$rest" | awk '{print $1}')
             if [ -z "$first" ]; then
               continue
             fi
+            # Acronyms (all-caps tokens) allowed.
             if printf '%s' "$first" | grep -qE '^[A-Z]+$'; then
               continue
             fi
@@ -110,7 +136,7 @@ jobs:
               echo "FAIL: $sha first word after scope is not lowercase: $subj" >&2
               fail=1
             fi
-          done < <(git rev-list "$base..$head")
+          done <<< '${{ steps.shas.outputs.shas }}'
           [ "$fail" -eq 0 ] && echo "OK: all subjects lowercase imperative"
           exit $fail
 
