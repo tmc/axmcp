@@ -37,6 +37,8 @@
 //   - internal/devicectl, for physical device management
 //   - internal/ui, for macOS Accessibility access and UI screenshots
 //   - internal/screen, for screen capture helpers
+//   - internal/spacedetect, for off-Space window detection via private
+//     SkyLight symbols (powers the "off_space" field on ax_list_windows)
 //   - internal/ghostcursor, for an animated cursor overlay
 //   - internal/computeruse, for the primitives behind cmd/computer-use-mcp
 //     (appstate, input, coords, policy, session, approval, intervention,
@@ -59,4 +61,12 @@
 // This package exists to document the module as a whole. The supported entry
 // points are the commands under cmd/. Library code lives in internal/
 // packages and is not intended as a public import surface.
+//
+// # Repository Hygiene
+//
+// The .github/workflows/hygiene-verify.yml workflow gates main and PR
+// commits against six rules: structured AI-trailer scan, subject length,
+// lowercase-imperative subject, go mod tidy, build/vet/test, and a
+// tracked-scratch / leaked-path scan. See design/hygiene-verify.md for
+// the rationale and the open review punch list.
 package axmcp
