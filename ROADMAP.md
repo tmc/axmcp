@@ -37,6 +37,14 @@ leakage). Ghost cursor rendering for click and drag actions lives in
   observer presence itself, not the private call. See
   `design/axpump.md` for the full design and graceful-degrade contract
   parallel to `spacedetect`'s `ErrSkyLightUnavailable`.
+- Upstream `AXObserver*` wrappers in `tmc/apple/x/axuiautomation`
+  (`AXObserverCreateWithInfoCallback`, `AXObserverGetRunLoopSource`,
+  `AXObserverAddNotification`, `AXObserverRemoveNotification`). Today
+  the package exports only `AXObserverCreate`. `internal/axpump` needs
+  the other three; binding them upstream first is the path that keeps
+  axpump free of the ad-hoc `purego.Dlopen` pattern that
+  `cmd/axmcp/tools.go` just retired. See `design/axpump.md` §"Upstream
+  prerequisite".
 - `SLEventPostToPid` + auth-message envelope + primer click for
   Chromium-family pointer delivery. Concentrates in
   `internal/computeruse/input/input.go`. Highest user-visible payoff

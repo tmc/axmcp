@@ -197,6 +197,35 @@ already exist; it is not a structural change to those tools.
   no NSApplication and is not gaining one for axpump; the dedicated
   `runtime.LockOSThread` + `CFRunLoopRun` goroutine substitutes.
 
+## Upstream prerequisite
+
+`axpump` consumes four `AXObserver*` symbols from the host SDK
+(`AXObserverCreateWithInfoCallback`, `AXObserverGetRunLoopSource`,
+`AXObserverAddNotification`, `AXObserverRemoveNotification`). The
+`tmc/apple/x/axuiautomation` package — already the source of axmcp's
+other AX bindings — currently exports only `AXObserverCreate`
+(see `x/axuiautomation/ax.go` AX function pointers and the public
+`AXObserver*` wrappers). The other three are not yet bound there.
+
+Two implementation paths:
+
+1. **Bind upstream first (preferred).** Land the missing wrappers in
+   `axuiautomation` (mirror the `AXUIElementCopyActionNames` pattern
+   from v0.5.4: `purego.RegisterLibFunc` once on package init, public
+   `AXObserver*` wrappers that no-op when `axLoaded` is false). Then
+   `internal/axpump` stays free of `purego.Dlopen` and matches the
+   binding-consumption shape the rest of the package follows.
+2. **Local dlsym in `internal/axpump`.** Faster, but reproduces the
+   exact ad-hoc binding pattern the `cmd/axmcp/tools.go` cleanup just
+   retired. Choose this only if the upstream bump is blocked, and
+   plan to retire the local bindings the next time `axuiautomation`
+   refreshes.
+
+Path (1) is the load-bearing shape. The `_AXObserverAddNotification` /
+`AXObserverGetRunLoopSource` / `AXObserverCreateWithInfoCallback` set
+is small enough to land as one upstream commit before axpump's first
+`runtime.LockOSThread` goroutine ships.
+
 ## Corroboration from cua-driver
 
 cua-driver is the upstream reference for the observer-presence pattern.
