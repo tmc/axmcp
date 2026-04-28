@@ -45,9 +45,11 @@ leakage). Ghost cursor rendering for click and drag actions lives in
 - `internal/ghostcursor` split: separate the input-event side from the
   overlay rendering side so the cursor animation can be reused outside
   the click/drag paths without dragging the input dependencies.
-- README and `doc.go` refresh: neither currently mentions
-  `internal/spacedetect`, the `off_space` field, or the hygiene-verify
-  workflow. Fold these into the public surface description.
+- `doc.go` refresh: the package doc still does not mention
+  `internal/spacedetect`, the `off_space` field on `ax_list_windows`,
+  or the hygiene-verify workflow. README already covers all three in
+  its "What's new in v0.2.x" section; doc.go needs to catch up so the
+  godoc surface matches.
 - Out-of-tree contradiction sweep: anything claimed in README but not
   reachable in code (or vice versa) gets either the doc removed or the
   feature added; nothing left half-described.
