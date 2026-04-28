@@ -14,14 +14,6 @@ import (
 	"github.com/tmc/axmcp/internal/purego/objc"
 )
 
-// Exported types for use in accessibility.go
-type CGPoint struct{ X, Y float64 }
-type CGSize struct{ Width, Height float64 }
-type CGRect struct {
-	Origin CGPoint
-	Size   CGSize
-}
-
 var (
 	tokenMap         sync.Map // map[string]*SimDevice
 	delegate         objc.ID
