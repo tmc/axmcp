@@ -12,10 +12,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/ebitengine/purego"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/coregraphics"
@@ -30,74 +28,19 @@ import (
 // duration, AX calls return kAXErrorCannotComplete instead of hanging.
 const axTimeout = 5 // seconds
 
-var (
-	axSetMessagingTimeout     func(element uintptr, timeoutInSeconds float32) int32
-	axCopyActionNames         func(element uintptr, names *uintptr) int32
-	axSetMessagingTimeoutOnce sync.Once
-	axCopyActionNamesOnce     sync.Once
-)
-
-func initAXSetMessagingTimeout() {
-	axSetMessagingTimeoutOnce.Do(func() {
-		lib, err := purego.Dlopen("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices", purego.RTLD_LAZY|purego.RTLD_GLOBAL)
-		if err != nil {
-			slog.Warn("failed to load ApplicationServices for AXUIElementSetMessagingTimeout", "err", err)
-			return
-		}
-		purego.RegisterLibFunc(&axSetMessagingTimeout, lib, "AXUIElementSetMessagingTimeout")
-	})
-}
-
-func initAXCopyActionNames() {
-	axCopyActionNamesOnce.Do(func() {
-		lib, err := purego.Dlopen("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices", purego.RTLD_LAZY|purego.RTLD_GLOBAL)
-		if err != nil {
-			slog.Warn("failed to load ApplicationServices for AXUIElementCopyActionNames", "err", err)
-			return
-		}
-		purego.RegisterLibFunc(&axCopyActionNames, lib, "AXUIElementCopyActionNames")
-	})
-}
-
 func actionNamesForElement(element *axuiautomation.Element) []string {
-	if element == nil {
-		return nil
-	}
-	initAXCopyActionNames()
-	if axCopyActionNames == nil {
-		return nil
-	}
-	var names uintptr
-	if axCopyActionNames(element.Ref(), &names) != 0 || names == 0 {
-		return nil
-	}
-	defer corefoundation.CFRelease(corefoundation.CFTypeRef(names))
-
-	count := corefoundation.CFArrayGetCount(corefoundation.CFArrayRef(names))
-	out := make([]string, 0, count)
-	for i := range count {
-		ptr := corefoundation.CFArrayGetValueAtIndex(corefoundation.CFArrayRef(names), i)
-		name := cfStringToGo(corefoundation.CFStringRef(uintptr(ptr)))
-		if name != "" {
-			out = append(out, name)
-		}
-	}
-	return out
+	return element.Actions()
 }
 
 // setAXTimeout sets the messaging timeout on an AX element so that
 // AXUIElementCopyAttributeValue returns kAXErrorCannotComplete instead
 // of blocking indefinitely on unresponsive apps.
 func setAXTimeout(app *axuiautomation.Application) {
-	initAXSetMessagingTimeout()
-	if axSetMessagingTimeout == nil {
-		return
-	}
 	root := app.Root()
 	if root == nil {
 		return
 	}
-	axSetMessagingTimeout(root.Ref(), axTimeout)
+	axuiautomation.AXUIElementSetMessagingTimeout(root.Ref(), axTimeout)
 }
 
 func registerAXTools(s *mcp.Server) {
