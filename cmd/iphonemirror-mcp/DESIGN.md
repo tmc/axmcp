@@ -78,59 +78,22 @@ Continuity / RemoteUI IPC interception is too large a project. Don't.
 | iphone_action | action (mapped) | ships |
 | iphone_zoom_in | (none) | v0.1.7 |
 | iphone_zoom_out | (none) | v0.1.7 |
+| iphone_drag_and_drop | nx1, ny1, nx2, ny2, hold_ms | current stack |
+| iphone_focus | raise | current stack |
+| iphone_wait_until | text, viewport_stable_for_ms, timeout_ms | current stack |
 
-## Follow-up work (queued, in priority order)
+## Completed follow-ups
 
-These are all next-after-v0.1.7. Each item includes scope, blast radius,
-and verification plan.
+- F1 `iphone_drag_and_drop` is implemented as long-press, hold, drag, and
+  release through `input.LongPressDragScreenPoint`.
+- F2 `iphone_focus` is implemented with frontmost-before/after reporting and
+  optional raise behavior.
+- F5 `iphone_wait_until` is implemented for OCR text waits and perceptual
+  viewport-stability waits.
 
-### F1. iphone_drag_and_drop
+## Remaining follow-up work (queued, original IDs preserved)
 
-**Why:** iOS's primary multi-element move gesture is long-press +
-sustained drag + release. Distinct from `iphone_swipe`, which begins the
-drag immediately on mouseDown and is interpreted as a flick / scroll on
-iOS, not a pickup.
-
-**Scope:**
-- New tool with args `{nx1, ny1, nx2, ny2, hold_ms (default 600)}`.
-- Recipe: mouseDown at start -> sleep `hold_ms` (long-press recognizer
-  trip) -> walk path to end with mouseDragged events -> mouseUp at end.
-- Add `LongPressDragScreenPoint(sx, sy, ex, ey int, holdDuration time.Duration) error`
-  to `internal/computeruse/input`. It should:
-  1. Press at start (mouseDown, ClickState=1, no moves).
-  2. Sleep `holdDuration`.
-  3. Walk path to end with `cgEventLeftMouseDragged` events.
-  4. Release at end (mouseUp, ClickState=1).
-- iphone_drag_and_drop wires through requireAccessibility +
-  focusIPhoneMirroring like every other input tool.
-
-**Verification:**
-- In Freeform, long-press an existing sticky note -> drag to a new spot ->
-  release. Sticky note moves. Confirm via iphone_describe before/after.
-- In Photos / iOS Home Screen: long-press an app icon -> enter wiggle
-  mode -> drag -> release. Icon moves position.
-
-**Risk:** the 600ms hold may not match Freeform's threshold for "pickup
-vs. context menu." If the gesture trips the contextual menu instead of a
-pickup, we may need a separate `iphone_pickup_then_drag` with longer hold
-or with a deliberate small jitter during the hold.
-
-### F2. iphone_focus tool
-
-**Why:** Right now `focusIPhoneMirroring` runs implicitly on every input
-tool. Users may want to call it explicitly when scripting a multi-step
-flow that mixes axmcp tools (which can shift focus away) with iphone
-tools. Also useful as a debugging tool - "did focus actually change?"
-
-**Scope:**
-- New tool `iphone_focus` with no args.
-- Returns `{pid, window_id, frontmost_before, frontmost_after}` so the
-  caller can verify the focus took effect.
-- Reuses `focusIPhoneMirroring()` helper.
-
-**Verification:**
-- Call `iphone_focus` with a non-mirroring app frontmost; verify
-  `frontmost_after` is iPhone Mirroring's bundle id.
+Each item includes scope, blast radius, and verification plan.
 
 ### F3. iphone_describe edge-coord support / iphone_tap pointerization
 
@@ -169,25 +132,6 @@ trips on this - observed during the 2026-04-28 demo.
 **Verification:**
 - Spotlight 'freeform' search: iphone_tap{text:"Freeform", match:1}
   hits the Top Hit app row, not the web-search row.
-
-### F5. iphone_wait_until tool (task #10)
-
-**Why:** Many flows need "wait for screen to stabilize" or "wait for
-text X to appear" before issuing the next input. Currently the driver
-polls iphone_describe in a loop, which is wasteful and racy.
-
-**Scope:**
-- New tool `iphone_wait_until{text?, viewport_stable_for_ms?, timeout_ms}`.
-  Either `text` or `viewport_stable_for_ms` must be set.
-- For `text`: poll iphone_describe at 200ms cadence; success when an OCR
-  hit matches the text (case-insensitive contains).
-- For `viewport_stable_for_ms`: poll iphone_describe; success when the
-  perceptual hash of the captured PNG hasn't changed for that duration.
-- Timeout returns an error with the last describe state.
-
-**Verification:**
-- After iphone_action{action:"home"}, iphone_wait_until{text:"Camera",
-  timeout_ms:5000} resolves when the home screen finishes animating in.
 
 ### F6. iphone_action keymap audit (task #22)
 
