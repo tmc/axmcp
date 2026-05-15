@@ -31,13 +31,23 @@ type KeyCombo struct {
 }
 
 var (
-	cgEventCreateMouseEvent   func(source uintptr, mouseType int32, x, y float64, button int32) uintptr
-	cgEventPost               func(tap int32, event uintptr)
-	cgWarpMouseCursorPosition func(x, y float64) int32
-	cgMouseEventsOnce         sync.Once
+	cgEventCreateMouseEvent     func(source uintptr, mouseType int32, x, y float64, button int32) uintptr
+	cgEventPost                 func(tap int32, event uintptr)
+	cgEventSetIntegerValueField func(event uintptr, field uint32, value int64)
+	cgEventSourceCreate         func(stateID int32) uintptr
+	cgWarpMouseCursorPosition   func(x, y float64) int32
+	cgMouseEventsOnce           sync.Once
+	// hidEventSource is a CGEventSource bound to kCGEventSourceStateHIDSystemState
+	// (=1). Synthesizing input events with this source - rather than the default
+	// (source=0) - makes them indistinguishable from real HID input from the
+	// receiver's perspective. iPhone Mirroring's input filter on macOS 26
+	// silently drops second-and-subsequent synthetic clicks that arrive with
+	// source=0; routing through an HIDSystemState source gets them through.
+	hidEventSource uintptr
 )
 
 const (
+	cgEventMouseMoved        = 5
 	cgEventLeftMouseDown     = 1
 	cgEventLeftMouseUp       = 2
 	cgEventRightMouseDown    = 3
@@ -51,6 +61,7 @@ const (
 	cgMouseButtonRight       = 1
 	cgMouseButtonMiddle      = 2
 	cgHIDEventTap            = 0
+	cgMouseEventClickState   = 1
 )
 
 var knownKeys = map[string]uint16{
@@ -76,7 +87,13 @@ func initCGMouseEvents() {
 		}
 		purego.RegisterLibFunc(&cgEventCreateMouseEvent, lib, "CGEventCreateMouseEvent")
 		purego.RegisterLibFunc(&cgEventPost, lib, "CGEventPost")
+		purego.RegisterLibFunc(&cgEventSetIntegerValueField, lib, "CGEventSetIntegerValueField")
+		purego.RegisterLibFunc(&cgEventSourceCreate, lib, "CGEventSourceCreate")
 		purego.RegisterLibFunc(&cgWarpMouseCursorPosition, lib, "CGWarpMouseCursorPosition")
+		// kCGEventSourceStateHIDSystemState = 1.
+		if cgEventSourceCreate != nil {
+			hidEventSource = cgEventSourceCreate(1)
+		}
 	})
 }
 
@@ -233,6 +250,106 @@ func SendKeyCombo(spec string) error {
 	return axuiautomation.SendKeyCombo(combo.KeyCode, combo.Shift, combo.Control, combo.Option, combo.Command)
 }
 
+// ClickScreenPoint synthesizes a single left click at an absolute screen
+// coordinate. It is a thin exported wrapper around clickScreenPoint, intended
+// for callers like cmd/iphonemirror-mcp that don't have an AX Element handle
+// and just need to drive raw screen pixels.
+func ClickScreenPoint(x, y int) error {
+	return clickScreenPoint(LocalPoint{X: x, Y: y}, cgEventLeftMouseDown, cgEventLeftMouseUp, cgMouseButtonLeft, 1)
+}
+
+// MultiClickScreenPoint synthesizes a left click N times at an absolute
+// screen coordinate. count=2 is a double-click (the receiver sees
+// ClickState=1 then 2 across consecutive down/up pairs), count=3 a triple,
+// etc. count<1 is treated as 1.
+func MultiClickScreenPoint(x, y, count int) error {
+	if count < 1 {
+		count = 1
+	}
+	return clickScreenPoint(LocalPoint{X: x, Y: y}, cgEventLeftMouseDown, cgEventLeftMouseUp, cgMouseButtonLeft, count)
+}
+
+// LongPressScreenPoint synthesizes a press-and-hold at an absolute screen coordinate.
+func LongPressScreenPoint(x, y int, duration time.Duration, jitter ...bool) error {
+	withJitter := len(jitter) > 0 && jitter[0]
+	return longPressScreenPoint(x, y, duration, withJitter)
+}
+
+func longPressScreenPoint(x, y int, duration time.Duration, withJitter bool) error {
+	initCGMouseEvents()
+	switch {
+	case cgEventCreateMouseEvent == nil:
+		return fmt.Errorf("CGEventCreateMouseEvent not available")
+	case cgEventPost == nil:
+		return fmt.Errorf("CGEventPost not available")
+	}
+	if duration <= 0 {
+		duration = 600 * time.Millisecond
+	}
+	point := LocalPoint{X: x, Y: y}
+	ghostcursor.PressAt(point.X, point.Y)
+	if cgWarpMouseCursorPosition != nil {
+		cgWarpMouseCursorPosition(float64(point.X), float64(point.Y))
+	}
+	mouseDown := cgEventCreateMouseEvent(hidEventSource, cgEventLeftMouseDown, float64(point.X), float64(point.Y), cgMouseButtonLeft)
+	if mouseDown == 0 {
+		ghostcursor.Hide()
+		return fmt.Errorf("failed to create mouse down event")
+	}
+	if cgEventSetIntegerValueField != nil {
+		cgEventSetIntegerValueField(mouseDown, cgMouseEventClickState, 1)
+	}
+	cgEventPost(cgHIDEventTap, mouseDown)
+	corefoundation.CFRelease(corefoundation.CFTypeRef(mouseDown))
+	upX, upY := point.X, point.Y
+	if withJitter {
+		first := duration / 2
+		time.Sleep(first)
+		upX++
+		mouseMove := cgEventCreateMouseEvent(hidEventSource, cgEventMouseMoved, float64(upX), float64(upY), cgMouseButtonLeft)
+		if mouseMove == 0 {
+			ghostcursor.Hide()
+			return fmt.Errorf("failed to create mouse move event")
+		}
+		cgEventPost(cgHIDEventTap, mouseMove)
+		corefoundation.CFRelease(corefoundation.CFTypeRef(mouseMove))
+		time.Sleep(duration - first)
+	} else {
+		time.Sleep(duration)
+	}
+	mouseDragged := cgEventCreateMouseEvent(hidEventSource, cgEventLeftMouseDragged, float64(upX), float64(upY), cgMouseButtonLeft)
+	if mouseDragged == 0 {
+		ghostcursor.Hide()
+		return fmt.Errorf("failed to create mouse drag event")
+	}
+	cgEventPost(cgHIDEventTap, mouseDragged)
+	corefoundation.CFRelease(corefoundation.CFTypeRef(mouseDragged))
+	mouseUp := cgEventCreateMouseEvent(hidEventSource, cgEventLeftMouseUp, float64(upX), float64(upY), cgMouseButtonLeft)
+	if mouseUp == 0 {
+		ghostcursor.Hide()
+		return fmt.Errorf("failed to create mouse up event")
+	}
+	if cgEventSetIntegerValueField != nil {
+		cgEventSetIntegerValueField(mouseUp, cgMouseEventClickState, 1)
+	}
+	cgEventPost(cgHIDEventTap, mouseUp)
+	corefoundation.CFRelease(corefoundation.CFTypeRef(mouseUp))
+	ghostcursor.ReleaseAt(upX, upY)
+	return nil
+}
+
+// DragScreenPoint synthesizes a left-button drag between two absolute screen
+// coordinates. Path shaping (steps, timing) is handled by the underlying
+// dragScreenPoint helper.
+func DragScreenPoint(sx, sy, ex, ey int) error {
+	return dragScreenPoint(LocalPoint{X: sx, Y: sy}, LocalPoint{X: ex, Y: ey}, cgMouseButtonLeft)
+}
+
+// LongPressDragScreenPoint holds at start, drags to end, and releases.
+func LongPressDragScreenPoint(sx, sy, ex, ey int, holdDuration time.Duration) error {
+	return longPressDragScreenPoint(LocalPoint{X: sx, Y: sy}, LocalPoint{X: ex, Y: ey}, holdDuration)
+}
+
 func SendKeyComboToPID(pid int32, spec string) error {
 	if pid <= 0 {
 		return fmt.Errorf("invalid pid %d", pid)
@@ -298,29 +415,41 @@ func elementCenter(el *axuiautomation.Element) LocalPoint {
 func clickScreenPoint(point LocalPoint, downType, upType, button int32, clickCount int) error {
 	initCGMouseEvents()
 	switch {
-	case cgWarpMouseCursorPosition == nil:
-		return fmt.Errorf("CGWarpMouseCursorPosition not available")
 	case cgEventCreateMouseEvent == nil:
 		return fmt.Errorf("CGEventCreateMouseEvent not available")
 	case cgEventPost == nil:
 		return fmt.Errorf("CGEventPost not available")
 	}
 	ghostcursor.PressAt(point.X, point.Y)
-	cgWarpMouseCursorPosition(float64(point.X), float64(point.Y))
+	// Walk the cursor to the target with a short sequence of mouseMoved
+	// events before the down/up. iPhone Mirroring's input filter on macOS 26
+	// drops second-and-subsequent synthetic clicks that arrive without a
+	// real-looking motion path; one warp-then-single-move at the target
+	// reads as deduplicated. Three steps over ~30ms is enough to pass.
+	postMouseMovePath(point, button)
+	if cgWarpMouseCursorPosition != nil {
+		cgWarpMouseCursorPosition(float64(point.X), float64(point.Y))
+	}
 	time.Sleep(10 * time.Millisecond)
-	for i := 0; i < clickCount; i++ {
-		mouseDown := cgEventCreateMouseEvent(0, downType, float64(point.X), float64(point.Y), button)
+	for i := range clickCount {
+		mouseDown := cgEventCreateMouseEvent(hidEventSource, downType, float64(point.X), float64(point.Y), button)
 		if mouseDown == 0 {
 			ghostcursor.Hide()
 			return fmt.Errorf("failed to create mouse down event")
 		}
+		if cgEventSetIntegerValueField != nil {
+			cgEventSetIntegerValueField(mouseDown, cgMouseEventClickState, int64(i+1))
+		}
 		cgEventPost(cgHIDEventTap, mouseDown)
 		corefoundation.CFRelease(corefoundation.CFTypeRef(mouseDown))
 		time.Sleep(40 * time.Millisecond)
-		mouseUp := cgEventCreateMouseEvent(0, upType, float64(point.X), float64(point.Y), button)
+		mouseUp := cgEventCreateMouseEvent(hidEventSource, upType, float64(point.X), float64(point.Y), button)
 		if mouseUp == 0 {
 			ghostcursor.Hide()
 			return fmt.Errorf("failed to create mouse up event")
+		}
+		if cgEventSetIntegerValueField != nil {
+			cgEventSetIntegerValueField(mouseUp, cgMouseEventClickState, int64(i+1))
 		}
 		cgEventPost(cgHIDEventTap, mouseUp)
 		corefoundation.CFRelease(corefoundation.CFTypeRef(mouseUp))
@@ -332,11 +461,35 @@ func clickScreenPoint(point LocalPoint, downType, upType, button int32, clickCou
 	return nil
 }
 
+// postMouseMovePath posts three kCGEventMouseMoved events approaching point
+// from a small offset. A single move at the destination can be filtered as
+// "no real motion" by Continuity-style input pipelines; a short path is
+// reliably accepted.
+func postMouseMovePath(point LocalPoint, button int32) {
+	if cgEventCreateMouseEvent == nil || cgEventPost == nil {
+		return
+	}
+	steps := [...]LocalPoint{
+		{X: point.X - 4, Y: point.Y - 2},
+		{X: point.X - 1, Y: point.Y},
+		{X: point.X, Y: point.Y},
+	}
+	for i, p := range steps {
+		ev := cgEventCreateMouseEvent(hidEventSource, cgEventMouseMoved, float64(p.X), float64(p.Y), button)
+		if ev == 0 {
+			continue
+		}
+		cgEventPost(cgHIDEventTap, ev)
+		corefoundation.CFRelease(corefoundation.CFTypeRef(ev))
+		if i < len(steps)-1 {
+			time.Sleep(8 * time.Millisecond)
+		}
+	}
+}
+
 func dragScreenPoint(start, end LocalPoint, button int32) error {
 	initCGMouseEvents()
 	switch {
-	case cgWarpMouseCursorPosition == nil:
-		return fmt.Errorf("CGWarpMouseCursorPosition not available")
 	case cgEventCreateMouseEvent == nil:
 		return fmt.Errorf("CGEventCreateMouseEvent not available")
 	case cgEventPost == nil:
@@ -372,12 +525,21 @@ func dragScreenPoint(start, end LocalPoint, button int32) error {
 		}
 	}
 	ghostcursor.PressAt(start.X, start.Y)
-	cgWarpMouseCursorPosition(float64(start.X), float64(start.Y))
+	if mouseMove := cgEventCreateMouseEvent(hidEventSource, cgEventMouseMoved, float64(start.X), float64(start.Y), button); mouseMove != 0 {
+		cgEventPost(cgHIDEventTap, mouseMove)
+		corefoundation.CFRelease(corefoundation.CFTypeRef(mouseMove))
+	}
+	if cgWarpMouseCursorPosition != nil {
+		cgWarpMouseCursorPosition(float64(start.X), float64(start.Y))
+	}
 	time.Sleep(10 * time.Millisecond)
-	mouseDown := cgEventCreateMouseEvent(0, downType, float64(start.X), float64(start.Y), button)
+	mouseDown := cgEventCreateMouseEvent(hidEventSource, downType, float64(start.X), float64(start.Y), button)
 	if mouseDown == 0 {
 		ghostcursor.Hide()
 		return fmt.Errorf("failed to create mouse down event")
+	}
+	if cgEventSetIntegerValueField != nil {
+		cgEventSetIntegerValueField(mouseDown, cgMouseEventClickState, 1)
 	}
 	cgEventPost(cgHIDEventTap, mouseDown)
 	corefoundation.CFRelease(corefoundation.CFTypeRef(mouseDown))
@@ -385,7 +547,7 @@ func dragScreenPoint(start, end LocalPoint, button int32) error {
 		x := int(math.Round(path[i].X))
 		y := int(math.Round(path[i].Y))
 		ghostcursor.DragTo(x, y)
-		dragged := cgEventCreateMouseEvent(0, dragType, float64(x), float64(y), button)
+		dragged := cgEventCreateMouseEvent(hidEventSource, dragType, float64(x), float64(y), button)
 		if dragged == 0 {
 			ghostcursor.Hide()
 			return fmt.Errorf("failed to create mouse drag event")
@@ -396,10 +558,94 @@ func dragScreenPoint(start, end LocalPoint, button int32) error {
 			time.Sleep(stepSleep)
 		}
 	}
-	mouseUp := cgEventCreateMouseEvent(0, upType, float64(end.X), float64(end.Y), button)
+	mouseUp := cgEventCreateMouseEvent(hidEventSource, upType, float64(end.X), float64(end.Y), button)
 	if mouseUp == 0 {
 		ghostcursor.Hide()
 		return fmt.Errorf("failed to create mouse up event")
+	}
+	if cgEventSetIntegerValueField != nil {
+		cgEventSetIntegerValueField(mouseUp, cgMouseEventClickState, 1)
+	}
+	cgEventPost(cgHIDEventTap, mouseUp)
+	corefoundation.CFRelease(corefoundation.CFTypeRef(mouseUp))
+	ghostcursor.ReleaseAt(end.X, end.Y)
+	return nil
+}
+
+func longPressDragScreenPoint(start, end LocalPoint, holdDuration time.Duration) error {
+	initCGMouseEvents()
+	switch {
+	case cgEventCreateMouseEvent == nil:
+		return fmt.Errorf("CGEventCreateMouseEvent not available")
+	case cgEventPost == nil:
+		return fmt.Errorf("CGEventPost not available")
+	}
+	if holdDuration <= 0 {
+		holdDuration = 600 * time.Millisecond
+	}
+	distance := math.Hypot(float64(end.X-start.X), float64(end.Y-start.Y))
+	steps := int(math.Ceil(distance / 24))
+	if steps < 4 {
+		steps = 4
+	}
+	duration := time.Duration(steps*10) * time.Millisecond
+	path, err := ghostcursor.SamplePath(
+		ghostcursor.ScreenPosition(start.X, start.Y),
+		ghostcursor.ScreenPosition(end.X, end.Y),
+		ghostcursor.MoveOptions{
+			Duration:   duration,
+			Activity:   ghostcursor.ActivityDragging,
+			CurveStyle: ghostcursor.CurveBezier,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("sample drag path: %w", err)
+	}
+	stepSleep := 10 * time.Millisecond
+	if len(path) > 1 {
+		stepSleep = duration / time.Duration(len(path)-1)
+		if stepSleep <= 0 {
+			stepSleep = 10 * time.Millisecond
+		}
+	}
+	ghostcursor.PressAt(start.X, start.Y)
+	if cgWarpMouseCursorPosition != nil {
+		cgWarpMouseCursorPosition(float64(start.X), float64(start.Y))
+	}
+	time.Sleep(10 * time.Millisecond)
+	mouseDown := cgEventCreateMouseEvent(hidEventSource, cgEventLeftMouseDown, float64(start.X), float64(start.Y), cgMouseButtonLeft)
+	if mouseDown == 0 {
+		ghostcursor.Hide()
+		return fmt.Errorf("failed to create mouse down event")
+	}
+	if cgEventSetIntegerValueField != nil {
+		cgEventSetIntegerValueField(mouseDown, cgMouseEventClickState, 1)
+	}
+	cgEventPost(cgHIDEventTap, mouseDown)
+	corefoundation.CFRelease(corefoundation.CFTypeRef(mouseDown))
+	time.Sleep(holdDuration)
+	for i := 1; i < len(path); i++ {
+		x := int(math.Round(path[i].X))
+		y := int(math.Round(path[i].Y))
+		ghostcursor.DragTo(x, y)
+		dragged := cgEventCreateMouseEvent(hidEventSource, cgEventLeftMouseDragged, float64(x), float64(y), cgMouseButtonLeft)
+		if dragged == 0 {
+			ghostcursor.Hide()
+			return fmt.Errorf("failed to create mouse drag event")
+		}
+		cgEventPost(cgHIDEventTap, dragged)
+		corefoundation.CFRelease(corefoundation.CFTypeRef(dragged))
+		if i+1 < len(path) {
+			time.Sleep(stepSleep)
+		}
+	}
+	mouseUp := cgEventCreateMouseEvent(hidEventSource, cgEventLeftMouseUp, float64(end.X), float64(end.Y), cgMouseButtonLeft)
+	if mouseUp == 0 {
+		ghostcursor.Hide()
+		return fmt.Errorf("failed to create mouse up event")
+	}
+	if cgEventSetIntegerValueField != nil {
+		cgEventSetIntegerValueField(mouseUp, cgMouseEventClickState, 1)
 	}
 	cgEventPost(cgHIDEventTap, mouseUp)
 	corefoundation.CFRelease(corefoundation.CFTypeRef(mouseUp))
