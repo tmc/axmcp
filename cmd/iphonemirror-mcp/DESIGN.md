@@ -3,8 +3,7 @@
 Status: living document. Started 2026-04-28.
 
 This doc captures the gesture surface plan, the implementation tiers, and
-the queue of follow-up work after v0.1.7. It supersedes the planning notes
-at /tmp/iphone-gesture-plan.md.
+the queue of follow-up work after v0.1.7.
 
 ## Goals
 

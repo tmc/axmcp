@@ -171,7 +171,7 @@ Exposes exactly `list_apps`, `get_app_state`, `click`, `perform_secondary_action
 
 ## MCP client configuration
 
-All three servers speak MCP over stdio. In every config below, replace `/Users/you/go/bin/...` with the absolute paths you printed in setup step 3.
+All four servers speak MCP over stdio. In every config below, replace `/Users/you/go/bin/...` with the absolute paths you printed in setup step 3.
 
 ### Claude Code
 
@@ -179,6 +179,7 @@ All three servers speak MCP over stdio. In every config below, replace `/Users/y
 claude mcp add axmcp /Users/you/go/bin/axmcp
 claude mcp add xcmcp /Users/you/go/bin/xcmcp -- --enable-all
 claude mcp add computer-use-mcp /Users/you/go/bin/computer-use-mcp
+claude mcp add iphonemirror-mcp /Users/you/go/bin/iphonemirror-mcp
 ```
 
 Or edit `~/.claude.json` directly:
@@ -188,7 +189,8 @@ Or edit `~/.claude.json` directly:
   "mcpServers": {
     "axmcp": { "command": "/Users/you/go/bin/axmcp" },
     "xcmcp": { "command": "/Users/you/go/bin/xcmcp", "args": ["--enable-all"] },
-    "computer-use-mcp": { "command": "/Users/you/go/bin/computer-use-mcp" }
+    "computer-use-mcp": { "command": "/Users/you/go/bin/computer-use-mcp" },
+    "iphonemirror-mcp": { "command": "/Users/you/go/bin/iphonemirror-mcp" }
   }
 }
 ```
@@ -202,7 +204,8 @@ Edit `~/.cursor/mcp.json` (same schema as above):
   "mcpServers": {
     "axmcp": { "command": "/Users/you/go/bin/axmcp" },
     "xcmcp": { "command": "/Users/you/go/bin/xcmcp", "args": ["--enable-all"] },
-    "computer-use-mcp": { "command": "/Users/you/go/bin/computer-use-mcp" }
+    "computer-use-mcp": { "command": "/Users/you/go/bin/computer-use-mcp" },
+    "iphonemirror-mcp": { "command": "/Users/you/go/bin/iphonemirror-mcp" }
   }
 }
 ```
@@ -216,7 +219,8 @@ Edit `~/.config/zed/settings.json`:
   "context_servers": {
     "axmcp": { "command": { "path": "/Users/you/go/bin/axmcp", "args": [] } },
     "xcmcp": { "command": { "path": "/Users/you/go/bin/xcmcp", "args": ["--enable-all"] } },
-    "computer-use-mcp": { "command": { "path": "/Users/you/go/bin/computer-use-mcp", "args": [] } }
+    "computer-use-mcp": { "command": { "path": "/Users/you/go/bin/computer-use-mcp", "args": [] } },
+    "iphonemirror-mcp": { "command": { "path": "/Users/you/go/bin/iphonemirror-mcp", "args": [] } }
   }
 }
 ```
@@ -245,6 +249,12 @@ Primitive tools cover element discovery, pointer and keyboard input, window mani
 `computer-use-mcp` is the stateful, session-oriented compatibility server. It holds the narrow Codex Computer Use tool contract on top of the same accessibility and screenshot primitives.
 
 It is tools-only — no MCP resources, no resource templates. The tool surface is app-scoped: call `get_app_state` first, then pass returned `element_index` strings to the action tools.
+
+### `iphonemirror-mcp`
+
+`iphonemirror-mcp` drives Apple's iPhone Mirroring app. The mirrored iPhone screen is opaque to the macOS Accessibility tree, so the server captures the window, runs Vision OCR, and routes taps, swipes, typing, focus, waits, and drag gestures through the host app.
+
+Use it when an MCP client needs an iOS remote-control surface from the Mac side. It requires Screen Recording and Accessibility permission for the built binary.
 
 ### `xcmcp`
 
@@ -309,6 +319,10 @@ ascript classes /Applications/Finder.app
 ascript script /Applications/Finder.app activate
 ```
 
+### `rapport-probe`
+
+`rapport-probe` is a local research command, not an MCP server. It loads Apple's private Rapport framework, enumerates selected Objective-C classes and methods, and probes discovery/session selectors without driving a production control path.
+
 ## Resources
 
 `xcmcp` registers these MCP resources by default:
@@ -355,7 +369,7 @@ This module is command-first. Reusable helpers live under `internal/` and are no
 ## Notes
 
 - This repository targets macOS. Many packages use AppKit, Accessibility, or Apple developer tools directly.
-- The repository name is `axmcp`, but it intentionally contains `axmcp`, `xcmcp`, and `computer-use-mcp`. They cover different layers of the same workflow surface.
+- The repository name is `axmcp`, but it intentionally contains `axmcp`, `xcmcp`, `computer-use-mcp`, and `iphonemirror-mcp`. They cover different layers of the same workflow surface.
 - UI automation depends on macOS Accessibility permission and on the target app being reachable through the Accessibility tree.
 - Some simulator and Xcode automation features rely on private or implementation-defined behavior and are best treated as developer tooling rather than a stable public protocol.
 - The supported entry points are the commands in `cmd/`. Internal packages may change without notice.
