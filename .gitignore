@@ -9,6 +9,8 @@ simulator_tree.txt
 /axmcp
 /ascript
 /computer-use-mcp
+/iphonemirror-mcp
+/rapport-probe
 /xc
 /xcmcp
 /cmd/xcmcp/xcmcp
