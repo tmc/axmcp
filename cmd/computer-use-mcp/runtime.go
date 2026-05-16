@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/tmc/axmcp/internal/computeruse/approval"
@@ -28,6 +29,9 @@ type runtimeOptions struct {
 
 func newRuntimeState(opts ...runtimeOptions) (*runtimeState, error) {
 	approvals, err := approval.New()
+	if path := os.Getenv("COMPUTER_USE_MCP_APPROVALS_PATH"); path != "" {
+		approvals, err = approval.Open(path)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("approval store: %w", err)
 	}
