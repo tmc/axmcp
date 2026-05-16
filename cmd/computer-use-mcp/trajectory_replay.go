@@ -8,6 +8,7 @@ import (
 
 	"github.com/tmc/axmcp/internal/cdp"
 	"github.com/tmc/axmcp/internal/computeruse"
+	"github.com/tmc/axmcp/internal/computeruse/coords"
 	"github.com/tmc/axmcp/internal/computeruse/input"
 	"github.com/tmc/axmcp/internal/skylightinput"
 )
@@ -138,7 +139,11 @@ func (rt *runtimeState) replayClick(ctx context.Context, args clickInput) (compu
 			return computeruse.ActionResult{}, err
 		}
 	} else if canUseSkyLightPixelClick(args.MouseButton, clickCount, state) {
-		screen := skylightinput.Point{X: float64(state.Window.X + point.X), Y: float64(state.Window.Y + point.Y)}
+		screenPoint, err := coords.WindowLocalToScreen(state.Window, coords.Point{X: point.X, Y: point.Y})
+		if err != nil {
+			return computeruse.ActionResult{}, err
+		}
+		screen := skylightinput.Point{X: float64(screenPoint.X), Y: float64(screenPoint.Y)}
 		local := skylightinput.Point{X: float64(point.X), Y: float64(point.Y)}
 		if err := skylightinput.MouseClick(int32(state.App.PID), screen, local, state.Window.WindowID, clickCount); err == nil {
 			return computeruse.ActionResult{SessionID: state.SessionID, StateID: state.StateID, Action: "click", Target: fmt.Sprintf("pixel %d,%d", x, y), Message: fmt.Sprintf("clicked pixel %d,%d", x, y)}, nil

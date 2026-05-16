@@ -13,6 +13,7 @@ import (
 	"github.com/tmc/axmcp/internal/cdp"
 	"github.com/tmc/axmcp/internal/computeruse"
 	"github.com/tmc/axmcp/internal/computeruse/appstate"
+	"github.com/tmc/axmcp/internal/computeruse/coords"
 	"github.com/tmc/axmcp/internal/computeruse/input"
 	"github.com/tmc/axmcp/internal/sdef"
 	"github.com/tmc/axmcp/internal/skylightinput"
@@ -238,9 +239,13 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 				return toolError(err), nil, nil
 			}
 		} else if canUseSkyLightPixelClick(args.MouseButton, clickCount, state) {
+			screenPoint, err := coords.WindowLocalToScreen(state.Window, coords.Point{X: point.X, Y: point.Y})
+			if err != nil {
+				return toolError(err), nil, nil
+			}
 			screen := skylightinput.Point{
-				X: float64(state.Window.X + point.X),
-				Y: float64(state.Window.Y + point.Y),
+				X: float64(screenPoint.X),
+				Y: float64(screenPoint.Y),
 			}
 			local := skylightinput.Point{X: float64(point.X), Y: float64(point.Y)}
 			if err := skylightinput.MouseClick(int32(state.App.PID), screen, local, state.Window.WindowID, clickCount); err == nil {
