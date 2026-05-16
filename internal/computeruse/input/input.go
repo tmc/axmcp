@@ -112,7 +112,7 @@ func ClickElement(el *axuiautomation.Element, button string, clickCount int) err
 	case "", "left":
 		if clickCount <= 1 {
 			ghostcursor.PressAt(center.X, center.Y)
-			if err := el.Click(); err != nil {
+			if err := withSyntheticFocus(el, el.Click); err != nil {
 				ghostcursor.Hide()
 				return err
 			}
@@ -131,7 +131,7 @@ func ClickElement(el *axuiautomation.Element, button string, clickCount int) err
 		return fmt.Errorf("unsupported click_count %d", clickCount)
 	case "right":
 		ghostcursor.PressAt(center.X, center.Y)
-		if err := el.PerformAction("AXShowMenu"); err != nil {
+		if err := withSyntheticFocus(el, func() error { return el.PerformAction("AXShowMenu") }); err != nil {
 			ghostcursor.Hide()
 			return err
 		}
