@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/tmc/apple/appkit"
 	"github.com/tmc/axmcp/internal/cdp"
 	"github.com/tmc/axmcp/internal/computeruse"
 	"github.com/tmc/axmcp/internal/computeruse/appstate"
@@ -177,13 +178,14 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 		Description: "Click an element by index or pixel coordinates from screenshot",
 		Annotations: actionToolAnnotations(),
 		InputSchema: exactObjectSchema(map[string]any{
-			"app":           stringProperty("App name or bundle identifier"),
-			"click_count":   integerProperty("Number of clicks. Defaults to 1"),
-			"element_index": stringProperty("Element index to click"),
-			"mouse_button":  enumStringProperty("Mouse button to click. Defaults to left.", "left", "right", "middle"),
-			"state_id":      stringProperty("State token returned by get_app_state"),
-			"x":             numberProperty("X coordinate in screenshot pixel coordinates"),
-			"y":             numberProperty("Y coordinate in screenshot pixel coordinates"),
+			"app":            stringProperty("App name or bundle identifier"),
+			"click_count":    integerProperty("Number of clicks. Defaults to 1"),
+			"element_index":  stringProperty("Element index to click"),
+			"foreground_hid": booleanProperty("Activate the app and use the global HID event tap. This may steal focus; use only for opaque canvas/WebGL/Metal targets that reject background events."),
+			"mouse_button":   enumStringProperty("Mouse button to click. Defaults to left.", "left", "right", "middle"),
+			"state_id":       stringProperty("State token returned by get_app_state"),
+			"x":              numberProperty("X coordinate in screenshot pixel coordinates"),
+			"y":              numberProperty("Y coordinate in screenshot pixel coordinates"),
 		}, "app", "state_id"),
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args clickInput) (*mcp.CallToolResult, any, error) {
 		if res, payload, ok := actionBlockedForPermissions("click"); ok {
@@ -231,7 +233,11 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 		if err != nil {
 			return toolError(err), nil, nil
 		}
-		if canUseSkyLightPixelClick(args.MouseButton, clickCount, state) {
+		if args.ForegroundHID {
+			if err := activatePID(state.App.PID); err != nil {
+				return toolError(err), nil, nil
+			}
+		} else if canUseSkyLightPixelClick(args.MouseButton, clickCount, state) {
 			screen := skylightinput.Point{
 				X: float64(state.Window.X + point.X),
 				Y: float64(state.Window.Y + point.Y),
@@ -256,16 +262,33 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 		if err := input.ClickElementAt(root, point, args.MouseButton, clickCount); err != nil {
 			return toolError(err), nil, nil
 		}
+		message := fmt.Sprintf("clicked pixel %d,%d", x, y)
+		if args.ForegroundHID {
+			message = fmt.Sprintf("clicked pixel %d,%d using foreground HID fallback", x, y)
+		}
 		out := computeruse.ActionResult{
 			SessionID: state.SessionID,
 			StateID:   state.StateID,
 			Action:    "click",
 			Target:    fmt.Sprintf("pixel %d,%d", x, y),
-			Message:   fmt.Sprintf("clicked pixel %d,%d", x, y),
+			Message:   message,
 		}
 		rt.recording.record("click", args, out)
 		return &mcp.CallToolResult{}, out, nil
 	})
+}
+
+func activatePID(pid int) error {
+	if pid <= 0 {
+		return fmt.Errorf("invalid pid %d", pid)
+	}
+	for _, app := range appkit.GetNSWorkspaceClass().SharedWorkspace().RunningApplications() {
+		if int(app.ProcessIdentifier()) == pid {
+			app.ActivateWithOptions(appkit.NSApplicationActivateIgnoringOtherApps)
+			return nil
+		}
+	}
+	return fmt.Errorf("running app pid %d not found", pid)
 }
 
 func canUseSkyLightPixelClick(button string, clickCount int, state computeruse.AppState) bool {

@@ -133,7 +133,11 @@ func (rt *runtimeState) replayClick(ctx context.Context, args clickInput) (compu
 	if err != nil {
 		return computeruse.ActionResult{}, err
 	}
-	if canUseSkyLightPixelClick(args.MouseButton, clickCount, state) {
+	if args.ForegroundHID {
+		if err := activatePID(state.App.PID); err != nil {
+			return computeruse.ActionResult{}, err
+		}
+	} else if canUseSkyLightPixelClick(args.MouseButton, clickCount, state) {
 		screen := skylightinput.Point{X: float64(state.Window.X + point.X), Y: float64(state.Window.Y + point.Y)}
 		local := skylightinput.Point{X: float64(point.X), Y: float64(point.Y)}
 		if err := skylightinput.MouseClick(int32(state.App.PID), screen, local, state.Window.WindowID, clickCount); err == nil {
@@ -147,7 +151,11 @@ func (rt *runtimeState) replayClick(ctx context.Context, args clickInput) (compu
 	if err := input.ClickElementAt(root, point, args.MouseButton, clickCount); err != nil {
 		return computeruse.ActionResult{}, err
 	}
-	return computeruse.ActionResult{SessionID: state.SessionID, StateID: state.StateID, Action: "click", Target: fmt.Sprintf("pixel %d,%d", x, y), Message: fmt.Sprintf("clicked pixel %d,%d", x, y)}, nil
+	message := fmt.Sprintf("clicked pixel %d,%d", x, y)
+	if args.ForegroundHID {
+		message = fmt.Sprintf("clicked pixel %d,%d using foreground HID fallback", x, y)
+	}
+	return computeruse.ActionResult{SessionID: state.SessionID, StateID: state.StateID, Action: "click", Target: fmt.Sprintf("pixel %d,%d", x, y), Message: message}, nil
 }
 
 func (rt *runtimeState) replayPerformSecondaryAction(ctx context.Context, args performSecondaryActionInput) (computeruse.ActionResult, error) {

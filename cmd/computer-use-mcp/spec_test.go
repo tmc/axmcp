@@ -145,6 +145,21 @@ func TestCanUseSkyLightPixelClick(t *testing.T) {
 	}
 }
 
+func TestClickToolExposesForegroundHIDFallback(t *testing.T) {
+	for _, tool := range orderedComputerUseTools() {
+		if tool.Name != "click" {
+			continue
+		}
+		schema := normalizeJSON(t, tool.InputSchema).(map[string]any)
+		props := schema["properties"].(map[string]any)
+		if _, ok := props["foreground_hid"]; !ok {
+			t.Fatalf("click schema missing foreground_hid: %#v", props)
+		}
+		return
+	}
+	t.Fatalf("click tool missing")
+}
+
 func TestEvaluateJavascriptBuildsAppleScriptTarget(t *testing.T) {
 	if got := browserScriptTarget(computeruse.AppInfo{BundleID: "com.brave.Browser", Name: "Brave Browser"}); got != `id "com.brave.Browser"` {
 		t.Fatalf("browserScriptTarget bundle = %q", got)

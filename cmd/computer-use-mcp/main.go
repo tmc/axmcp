@@ -226,6 +226,7 @@ func computerUseInstructions() string {
 		"",
 		"After each action, use the action result or fetch the latest state to verify the UI changed as expected.",
 		"Prefer element-targeted interactions over coordinate clicks when an index for the targeted element is available. Note that element indices are the sequential integers from the app state's accessibility tree.",
+		"Use click with foreground_hid only for opaque canvas, WebGL, Metal, or game-like viewports that reject background PID-routed events. It activates the app and can disrupt the user's foreground session.",
 		"Prefer type_text with element_index when a text target is available; omit element_index only when you intentionally want to type into the app's currently focused element.",
 		"Prefer Computer Use tools as much as possible to complete tasks. Use evaluate_javascript only as a browser fallback when the accessibility tree cannot expose or operate the needed page state. Use evaluate_cdp_javascript for local Electron or Chromium DevTools targets when Apple Events are unavailable.",
 		"Ask the user before taking destructive or externally visible actions such as sending, deleting, or purchasing. If helpful, you can ask follow-up questions before taking action to make sure you’re understanding the user’s request correctly.",

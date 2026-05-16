@@ -13,13 +13,14 @@ type getAppStateInput struct {
 }
 
 type clickInput struct {
-	App          string   `json:"app"`
-	StateID      string   `json:"state_id"`
-	ElementIndex *string  `json:"element_index,omitempty"`
-	X            *float64 `json:"x,omitempty"`
-	Y            *float64 `json:"y,omitempty"`
-	MouseButton  string   `json:"mouse_button,omitempty"`
-	ClickCount   int      `json:"click_count,omitempty"`
+	App           string   `json:"app"`
+	StateID       string   `json:"state_id"`
+	ElementIndex  *string  `json:"element_index,omitempty"`
+	X             *float64 `json:"x,omitempty"`
+	Y             *float64 `json:"y,omitempty"`
+	MouseButton   string   `json:"mouse_button,omitempty"`
+	ClickCount    int      `json:"click_count,omitempty"`
+	ForegroundHID bool     `json:"foreground_hid,omitempty"`
 }
 
 type performSecondaryActionInput struct {
