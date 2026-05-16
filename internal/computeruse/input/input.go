@@ -14,6 +14,7 @@ import (
 	"github.com/tmc/axmcp/internal/computeruse"
 	"github.com/tmc/axmcp/internal/computeruse/coords"
 	"github.com/tmc/axmcp/internal/ghostcursor"
+	"github.com/tmc/axmcp/internal/skylightinput"
 )
 
 type LocalPoint struct {
@@ -359,6 +360,9 @@ func SendKeyComboToPID(pid int32, spec string) error {
 		return err
 	}
 	flags := keyEventFlags(combo)
+	if err := skylightinput.KeyPress(pid, combo.KeyCode, flags, true); err == nil {
+		return nil
+	}
 	keyDown := coregraphics.CGEventCreateKeyboardEvent(0, combo.KeyCode, true)
 	if keyDown == 0 {
 		return fmt.Errorf("failed to create key down event")

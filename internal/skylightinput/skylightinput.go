@@ -6,10 +6,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/tmc/apple/applicationservices"
 	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/coregraphics"
+	"github.com/tmc/apple/objc"
+	"github.com/tmc/apple/objectivec"
 	"github.com/tmc/apple/private/skylight"
 )
 
@@ -32,6 +35,7 @@ var (
 
 	getProcessForPIDErr error
 	windowPSNErr        error
+	authMessageErr      error
 
 	// resolveStatus is a one-line summary of which SPIs are usable on the
 	// current OS, suitable for logging at startup. Populated even on
@@ -56,6 +60,11 @@ func resolve() {
 		} else {
 			diag = append(diag, "SLSWindowPSN=miss")
 		}
+		if authMessageErr = probeAuthMessageBinding(); authMessageErr == nil {
+			diag = append(diag, "SLSEventAuthenticationMessage=ok")
+		} else {
+			diag = append(diag, "SLSEventAuthenticationMessage=miss")
+		}
 		// Probe SLEventPostToPid via the tmc/apple binding (it loads on
 		// package init; if it's missing we can't post anything).
 		if _, err := skylight.SLEventPostToPid(-1, 0); err != nil && isSymbolUnavailable(err) {
@@ -65,6 +74,14 @@ func resolve() {
 		}
 		resolveStatus = strings.Join(diag, " ")
 	})
+}
+
+func probeAuthMessageBinding() error {
+	class := skylight.GetSLSEventAuthenticationMessageClass().Class()
+	if class == 0 {
+		return fmt.Errorf("SLSEventAuthenticationMessage class unavailable")
+	}
+	return nil
 }
 
 func probeWindowPSNBindings() error {
@@ -79,6 +96,41 @@ func probeWindowPSNBindings() error {
 	var psn skylight.ProcessSerialNumber
 	if _, err := skylight.SLSGetConnectionPSN(owner, &psn); err != nil {
 		return fmt.Errorf("SLSGetConnectionPSN: %w", err)
+	}
+	return nil
+}
+
+func attachAuthenticationMessage(event coregraphics.CGEventRef, pid int32) error {
+	if authMessageErr != nil {
+		return authMessageErr
+	}
+	record := eventRecord(event)
+	if record == nil {
+		return fmt.Errorf("event record unavailable")
+	}
+	class := skylight.GetSLSEventAuthenticationMessageClass().Class()
+	msg := objc.Send[objc.ID](
+		objc.ID(class),
+		objc.Sel("messageWithEventRecord:pid:version:"),
+		record,
+		pid,
+		uint32(0),
+	)
+	if msg == 0 {
+		return fmt.Errorf("SLSEventAuthenticationMessage factory returned nil")
+	}
+	return skylight.SLEventSetAuthenticationMessage(event, objectivec.Object{ID: msg})
+}
+
+func eventRecord(event coregraphics.CGEventRef) unsafe.Pointer {
+	base := unsafe.Pointer(uintptr(event))
+	if base == nil {
+		return nil
+	}
+	for _, offset := range []uintptr{24, 32, 16} {
+		if p := *(*unsafe.Pointer)(unsafe.Add(base, offset)); p != nil {
+			return p
+		}
 	}
 	return nil
 }
@@ -364,6 +416,56 @@ func MouseClick(pid int32, screenPt, windowLocalPt Point, windowID uint32) error
 		return fmt.Errorf("SLEventPostToPid up: %w", err)
 	}
 	return nil
+}
+
+// KeyPress synthesizes a keyboard down/up pair and posts it to pid through
+// SkyLight. When attachAuthMessage is true, each event gets the
+// SLSEventAuthenticationMessage envelope Chromium-family apps require for
+// background keyboard input.
+func KeyPress(pid int32, keyCode uint16, flags coregraphics.CGEventFlags, attachAuthMessage bool) error {
+	resolve()
+	if resolveErr != nil {
+		return resolveErr
+	}
+	down, err := makeKeyboardEvent(keyCode, true, flags)
+	if err != nil {
+		return err
+	}
+	defer corefoundation.CFRelease(corefoundation.CFTypeRef(down))
+	up, err := makeKeyboardEvent(keyCode, false, flags)
+	if err != nil {
+		return err
+	}
+	defer corefoundation.CFRelease(corefoundation.CFTypeRef(up))
+	if attachAuthMessage {
+		if err := attachAuthenticationMessage(down, pid); err != nil {
+			return fmt.Errorf("auth message down: %w", err)
+		}
+		if err := attachAuthenticationMessage(up, pid); err != nil {
+			return fmt.Errorf("auth message up: %w", err)
+		}
+	}
+	rc, err := skylight.SLEventPostToPid(pid, down)
+	trace("key.post.down", map[string]any{"pid": pid, "keycode": keyCode, "rc": rc, "err": err})
+	if err != nil {
+		return fmt.Errorf("SLEventPostToPid keyDown: %w", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	rc, err = skylight.SLEventPostToPid(pid, up)
+	trace("key.post.up", map[string]any{"pid": pid, "keycode": keyCode, "rc": rc, "err": err})
+	if err != nil {
+		return fmt.Errorf("SLEventPostToPid keyUp: %w", err)
+	}
+	return nil
+}
+
+func makeKeyboardEvent(keyCode uint16, down bool, flags coregraphics.CGEventFlags) (coregraphics.CGEventRef, error) {
+	ev := coregraphics.CGEventCreateKeyboardEvent(0, keyCode, down)
+	if ev == 0 {
+		return 0, fmt.Errorf("CGEventCreateKeyboardEvent failed")
+	}
+	coregraphics.CGEventSetFlags(ev, flags)
+	return ev, nil
 }
 
 // makeMouseEvent builds a CGEvent at screenPt using the HIDSystemState
