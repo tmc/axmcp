@@ -17,6 +17,7 @@ import (
 	"github.com/ebitengine/purego"
 	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/x/axuiautomation"
+	"github.com/tmc/axmcp/internal/axpump"
 	"github.com/tmc/axmcp/internal/computeruse"
 	"github.com/tmc/axmcp/internal/ghostcursor"
 	"github.com/tmc/axmcp/internal/macosapp"
@@ -374,12 +375,14 @@ func openApp(ctx context.Context, selector string) (*axuiautomation.Application,
 			return nil, computeruse.AppInfo{}, fmt.Errorf("cannot connect to pid %d", pid)
 		}
 		setAXTimeout(app)
+		_, _ = axpump.Ensure(app.PID())
 		axuiautomation.SpinRunLoop(200 * time.Millisecond)
 		info := lookupAppInfo(ctx, app.PID(), app.BundleID(), selector)
 		return app, info, nil
 	}
 	if app, err := axuiautomation.NewApplication(selector); err == nil {
 		setAXTimeout(app)
+		_, _ = axpump.Ensure(app.PID())
 		axuiautomation.SpinRunLoop(200 * time.Millisecond)
 		info := lookupAppInfo(ctx, app.PID(), app.BundleID(), selector)
 		return app, info, nil
@@ -395,6 +398,7 @@ func openApp(ctx context.Context, selector string) (*axuiautomation.Application,
 				continue
 			}
 			setAXTimeout(app)
+			_, _ = axpump.Ensure(app.PID())
 			axuiautomation.SpinRunLoop(200 * time.Millisecond)
 			return app, computeruse.AppInfo{
 				Name:     candidate.Name,
