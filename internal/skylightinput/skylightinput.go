@@ -94,7 +94,8 @@ func probeWindowPSNBindings() error {
 		return fmt.Errorf("SLSGetWindowOwner: %w", err)
 	}
 	var psn skylight.ProcessSerialNumber
-	if _, err := skylight.SLSGetConnectionPSN(owner, &psn); err != nil {
+	psnPtr := &psn
+	if _, err := skylight.SLSGetConnectionPSN(owner, &psnPtr); err != nil {
 		return fmt.Errorf("SLSGetConnectionPSN: %w", err)
 	}
 	return nil
@@ -171,7 +172,8 @@ func processForWindow(windowID uint32) (skylight.ProcessSerialNumber, error) {
 		return skylight.ProcessSerialNumber{}, fmt.Errorf("SLSGetWindowOwner(%d) returned %s", windowID, rc)
 	}
 	var psn skylight.ProcessSerialNumber
-	if rc, err := skylight.SLSGetConnectionPSN(owner, &psn); err != nil {
+	psnPtr := &psn
+	if rc, err := skylight.SLSGetConnectionPSN(owner, &psnPtr); err != nil {
 		return skylight.ProcessSerialNumber{}, fmt.Errorf("SLSGetConnectionPSN(%d): %w", owner, err)
 	} else if rc != coregraphics.KCGErrorSuccess {
 		return skylight.ProcessSerialNumber{}, fmt.Errorf("SLSGetConnectionPSN(%d) returned %s", owner, rc)
@@ -259,7 +261,8 @@ func ActivateWithoutRaise(targetPID int32, targetWindowID uint32) error {
 		return resolveErr
 	}
 	var prev skylight.ProcessSerialNumber
-	if rc, err := skylight.SLPSGetFrontProcess(&prev); err != nil {
+	prevPtr := &prev
+	if rc, err := skylight.SLPSGetFrontProcess(&prevPtr); err != nil {
 		return fmt.Errorf("SLPSGetFrontProcess: %w", err)
 	} else if rc != 0 {
 		return fmt.Errorf("SLPSGetFrontProcess returned %d", rc)
@@ -293,7 +296,7 @@ func ActivateWithoutRaise(targetPID int32, targetWindowID uint32) error {
 	})
 
 	buf := buildFocusEventRecord(targetWindowID, false /*defocus*/)
-	rc, err := skylight.SLPSPostEventRecordTo(&prev, buf)
+	rc, err := skylight.SLPSPostEventRecordTo(&prevPtr, buf)
 	trace("activate.defocus", map[string]any{"rc": rc, "err": err})
 	if err != nil {
 		return fmt.Errorf("SLPSPostEventRecordTo defocus: %w", err)
@@ -302,7 +305,8 @@ func ActivateWithoutRaise(targetPID int32, targetWindowID uint32) error {
 		return fmt.Errorf("SLPSPostEventRecordTo defocus returned %d", rc)
 	}
 	buf = buildFocusEventRecord(targetWindowID, true /*focus*/)
-	rc, err = skylight.SLPSPostEventRecordTo(&target, buf)
+	targetPtr := &target
+	rc, err = skylight.SLPSPostEventRecordTo(&targetPtr, buf)
 	trace("activate.focus", map[string]any{"rc": rc, "err": err})
 	if err != nil {
 		return fmt.Errorf("SLPSPostEventRecordTo focus: %w", err)
