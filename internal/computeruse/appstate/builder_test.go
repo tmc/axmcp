@@ -1,6 +1,7 @@
 package appstate
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/tmc/apple/x/axuiautomation"
@@ -41,5 +42,23 @@ func TestSnapshotResolveMissing(t *testing.T) {
 	}
 	if _, _, err := s.Resolve(1); err == nil {
 		t.Fatalf("Resolve should fail for missing index")
+	}
+}
+
+func TestWindowResolutionError(t *testing.T) {
+	err := &WindowResolutionError{
+		App:         computeruse.AppInfo{Name: "Brave Browser", BundleID: "com.brave.Browser", PID: 123},
+		WindowTitle: "Smoke",
+		Reason:      "no matching window found",
+	}
+	if got := err.Error(); got != `Brave Browser window "Smoke" unavailable: no matching window found` {
+		t.Fatalf("Error() = %q", got)
+	}
+	var target *WindowResolutionError
+	if !errors.As(err, &target) {
+		t.Fatalf("errors.As failed")
+	}
+	if target.App.PID != 123 || target.App.BundleID != "com.brave.Browser" {
+		t.Fatalf("target = %#v", target)
 	}
 }

@@ -51,6 +51,34 @@ type Snapshot struct {
 	owned    []*axuiautomation.Element
 }
 
+// WindowResolutionError reports why a running app could not be bound to a
+// usable window.
+type WindowResolutionError struct {
+	App         computeruse.AppInfo `json:"app"`
+	WindowTitle string              `json:"window_title,omitempty"`
+	Reason      string              `json:"reason"`
+}
+
+func (e *WindowResolutionError) Error() string {
+	if e == nil {
+		return ""
+	}
+	name := e.App.Name
+	if name == "" {
+		name = e.App.BundleID
+	}
+	if name == "" && e.App.PID != 0 {
+		name = "pid " + strconv.Itoa(e.App.PID)
+	}
+	if name == "" {
+		name = "app"
+	}
+	if e.WindowTitle != "" {
+		return fmt.Sprintf("%s window %q unavailable: %s", name, e.WindowTitle, e.Reason)
+	}
+	return fmt.Sprintf("%s window unavailable: %s", name, e.Reason)
+}
+
 func ListApps(ctx context.Context) ([]computeruse.AppInfo, error) {
 	apps, err := macosapp.ListRunningApps(ctx)
 	if err != nil {
@@ -81,7 +109,7 @@ func (b *Builder) Build(ctx context.Context, selector, windowTitle string, instr
 	if err != nil {
 		return nil, err
 	}
-	window, err := selectWindow(app, windowTitle)
+	window, err := selectWindow(app, info, windowTitle)
 	if err != nil {
 		app.Close()
 		return nil, err
@@ -337,9 +365,9 @@ func captureWindow(window *axuiautomation.Element) ([]byte, error) {
 	return data, nil
 }
 
-func selectWindow(app *axuiautomation.Application, title string) (*axuiautomation.Element, error) {
+func selectWindow(app *axuiautomation.Application, info computeruse.AppInfo, title string) (*axuiautomation.Element, error) {
 	if app == nil {
-		return nil, fmt.Errorf("nil application")
+		return nil, &WindowResolutionError{App: info, WindowTitle: title, Reason: "nil application"}
 	}
 	if title != "" {
 		if win := app.WindowByTitleContains(title); win != nil {
@@ -361,7 +389,8 @@ func selectWindow(app *axuiautomation.Application, title string) (*axuiautomatio
 		}
 		win.Release()
 	}
-	return nil, fmt.Errorf("no matching window found")
+	reason := "no matching window found; the app may have no windows, be minimized, or have windows on another Space or display"
+	return nil, &WindowResolutionError{App: info, WindowTitle: title, Reason: reason}
 }
 
 func openApp(ctx context.Context, selector string) (*axuiautomation.Application, computeruse.AppInfo, error) {
