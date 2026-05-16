@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ebitengine/purego"
+	"github.com/tmc/apple/applicationservices"
 	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/coregraphics"
 	"github.com/tmc/apple/private/skylight"
@@ -24,14 +24,13 @@ type Point struct {
 	Y float64
 }
 
-// init resolves private SPIs that are not part of the SkyLight binding slice.
-// The SkyLight event posting/stamping functions come from tmc/apple. The
-// remaining hand-resolved symbol is GetProcessForPID, a deprecated Carbon SPI
-// that lives in ApplicationServices.framework, not SkyLight.
+// init probes the generated private bindings used by this package. SkyLight
+// event posting/stamping functions come from tmc/apple/private/skylight.
+// GetProcessForPID comes from tmc/apple/applicationservices.
 var (
 	resolveOnce sync.Once
 
-	getProcessForPID func(pid int32, psn *skylight.ProcessSerialNumber) int32
+	getProcessForPIDErr error
 
 	// resolveStatus is a one-line summary of which SPIs are usable on the
 	// current OS, suitable for logging at startup. Populated even on
@@ -43,21 +42,10 @@ var (
 func resolve() {
 	resolveOnce.Do(func() {
 		var diag []string
-		hAS, err := purego.Dlopen(
-			"/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices",
-			purego.RTLD_LAZY|purego.RTLD_GLOBAL,
-		)
-		if err != nil {
-			resolveErr = fmt.Errorf("dlopen ApplicationServices: %w", err)
-			resolveStatus = resolveErr.Error()
-			return
-		}
 
 		diag = append(diag, "CGEventSetWindowLocation=bound")
 		diag = append(diag, "SLEventSetIntegerValueField=bound")
-		// GetProcessForPID: deprecated Carbon, lives in ApplicationServices.
-		if sym, _ := purego.Dlsym(hAS, "GetProcessForPID"); sym != 0 {
-			purego.RegisterFunc(&getProcessForPID, sym)
+		if getProcessForPIDErr = probeGetProcessForPID(); getProcessForPIDErr == nil {
 			diag = append(diag, "GetProcessForPID=ok")
 		} else {
 			diag = append(diag, "GetProcessForPID=miss")
@@ -71,6 +59,37 @@ func resolve() {
 		}
 		resolveStatus = strings.Join(diag, " ")
 	})
+}
+
+func probeGetProcessForPID() (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("GetProcessForPID: %v", r)
+		}
+	}()
+	var psn applicationservices.ProcessSerialNumber
+	_ = applicationservices.GetProcessForPID(-1, &psn)
+	return nil
+}
+
+func processForPID(pid int32) (psn applicationservices.ProcessSerialNumber, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("GetProcessForPID: %v", r)
+		}
+	}()
+	rc := applicationservices.GetProcessForPID(pid, &psn)
+	if rc != 0 {
+		return psn, fmt.Errorf("GetProcessForPID(%d) returned %d", pid, rc)
+	}
+	return psn, nil
+}
+
+func skylightPSN(psn applicationservices.ProcessSerialNumber) skylight.ProcessSerialNumber {
+	return skylight.ProcessSerialNumber{
+		HighLongOfPSN: psn.HighLongOfPSN,
+		LowLongOfPSN:  psn.LowLongOfPSN,
+	}
 }
 
 // Status returns a one-line human-readable summary of which SkyLight SPIs
@@ -110,8 +129,8 @@ func Available() error {
 	if _, err := skylight.SLEventPostToPid(-1, 0); err != nil && isSymbolUnavailable(err) {
 		return fmt.Errorf("%w: SLEventPostToPid: %v", ErrUnavailable, err)
 	}
-	if getProcessForPID == nil {
-		return fmt.Errorf("%w: GetProcessForPID", ErrUnavailable)
+	if getProcessForPIDErr != nil {
+		return fmt.Errorf("%w: %v", ErrUnavailable, getProcessForPIDErr)
 	}
 	return nil
 }
@@ -132,7 +151,7 @@ var _ = errors.Is // keep errors import; reserved for future sentinel matching
 // window_manager_focus_window_without_raise:
 //
 //  1. _SLPSGetFrontProcess(&prev) - capture current front PSN.
-//  2. GetProcessForPID(targetPID, &target).
+//  2. applicationservices.GetProcessForPID(targetPID, &target).
 //  3. SLPSPostEventRecordTo(prev, defocus-record).
 //  4. SLPSPostEventRecordTo(target, focus-record-with-window-id).
 //
@@ -144,18 +163,20 @@ func ActivateWithoutRaise(targetPID int32, targetWindowID uint32) error {
 	if resolveErr != nil {
 		return resolveErr
 	}
-	if getProcessForPID == nil {
-		return fmt.Errorf("%w: GetProcessForPID", ErrUnavailable)
+	if getProcessForPIDErr != nil {
+		return fmt.Errorf("%w: %v", ErrUnavailable, getProcessForPIDErr)
 	}
-	var prev, target skylight.ProcessSerialNumber
+	var prev skylight.ProcessSerialNumber
 	if rc, err := skylight.SLPSGetFrontProcess(&prev); err != nil {
 		return fmt.Errorf("SLPSGetFrontProcess: %w", err)
 	} else if rc != 0 {
 		return fmt.Errorf("SLPSGetFrontProcess returned %d", rc)
 	}
-	if rc := getProcessForPID(targetPID, &target); rc != 0 {
-		return fmt.Errorf("GetProcessForPID(%d) returned %d", targetPID, rc)
+	targetAS, err := processForPID(targetPID)
+	if err != nil {
+		return err
 	}
+	target := skylightPSN(targetAS)
 	trace("activate.psn", map[string]any{
 		"target_pid": targetPID,
 		"target_wid": targetWindowID,
