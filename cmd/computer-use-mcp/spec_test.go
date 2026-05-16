@@ -109,6 +109,32 @@ func TestActionBlockedForIntervention(t *testing.T) {
 	}
 }
 
+func TestCanUseSkyLightPixelClick(t *testing.T) {
+	state := computeruse.AppState{
+		App:    computeruse.AppInfo{PID: 123},
+		Window: computeruse.WindowInfo{WindowID: 456},
+	}
+	tests := []struct {
+		name       string
+		button     string
+		clickCount int
+		state      computeruse.AppState
+		want       bool
+	}{
+		{name: "default left", clickCount: 1, state: state, want: true},
+		{name: "spaced left", button: " Left ", clickCount: 1, state: state, want: true},
+		{name: "right button", button: "right", clickCount: 1, state: state},
+		{name: "double click", clickCount: 2, state: state},
+		{name: "missing pid", clickCount: 1, state: computeruse.AppState{Window: computeruse.WindowInfo{WindowID: 456}}},
+		{name: "missing window id", clickCount: 1, state: computeruse.AppState{App: computeruse.AppInfo{PID: 123}}},
+	}
+	for _, tt := range tests {
+		if got := canUseSkyLightPixelClick(tt.button, tt.clickCount, tt.state); got != tt.want {
+			t.Fatalf("%s: canUseSkyLightPixelClick() = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
 func TestStateForActionRequiresFreshStateID(t *testing.T) {
 	rt := &runtimeState{sessions: session.NewStore()}
 	if _, err := stateForAction(rt, "click", "Finder", ""); err == nil {

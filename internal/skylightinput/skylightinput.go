@@ -24,32 +24,14 @@ type Point struct {
 	Y float64
 }
 
-// CGPoint is what CG private SPIs expect on the wire.
-type cgPoint struct {
-	X float64
-	Y float64
-}
-
-// init resolves the private SPIs not exposed by tmc/apple bindings.
-// Public Apple symbols (CGEventCreateMouseEvent, CGEventSetIntegerValueField,
-// CGEventSourceCreate) are taken from coregraphics; SPIs for which tmc/apple
-// has no wrapper are resolved here:
-//
-//   - CGEventSetWindowLocation - SkyLight private SPI re-exported by
-//     CoreGraphics; the SkyLight bundle is the source of truth.
-//   - SLEventSetIntegerValueField - SkyLight raw-field SPI.
-//   - GetProcessForPID - deprecated Carbon SPI; lives in
-//     ApplicationServices.framework, NOT SkyLight.
-//
-// purego.Dlsym does NOT honour RTLD_DEFAULT (handle 0 returns
-// "invalid handle"), so each symbol must be looked up against the bundle
-// it actually lives in.
+// init resolves private SPIs that are not part of the SkyLight binding slice.
+// The SkyLight event posting/stamping functions come from tmc/apple. The
+// remaining hand-resolved symbol is GetProcessForPID, a deprecated Carbon SPI
+// that lives in ApplicationServices.framework, not SkyLight.
 var (
 	resolveOnce sync.Once
 
-	cgEventSetWindowLocation func(event uintptr, point cgPoint)
-	slEventSetIntegerField   func(event uintptr, field uint32, value int64)
-	getProcessForPID         func(pid int32, psn *skylight.ProcessSerialNumber) int32
+	getProcessForPID func(pid int32, psn *skylight.ProcessSerialNumber) int32
 
 	// resolveStatus is a one-line summary of which SPIs are usable on the
 	// current OS, suitable for logging at startup. Populated even on
@@ -61,15 +43,6 @@ var (
 func resolve() {
 	resolveOnce.Do(func() {
 		var diag []string
-		hSky, err := purego.Dlopen(
-			"/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight",
-			purego.RTLD_LAZY|purego.RTLD_GLOBAL,
-		)
-		if err != nil {
-			resolveErr = fmt.Errorf("dlopen SkyLight: %w", err)
-			resolveStatus = resolveErr.Error()
-			return
-		}
 		hAS, err := purego.Dlopen(
 			"/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices",
 			purego.RTLD_LAZY|purego.RTLD_GLOBAL,
@@ -80,20 +53,8 @@ func resolve() {
 			return
 		}
 
-		// CGEventSetWindowLocation: SkyLight bundle exports it.
-		if sym, _ := purego.Dlsym(hSky, "CGEventSetWindowLocation"); sym != 0 {
-			purego.RegisterFunc(&cgEventSetWindowLocation, sym)
-			diag = append(diag, "CGEventSetWindowLocation=ok")
-		} else {
-			diag = append(diag, "CGEventSetWindowLocation=miss")
-		}
-		// SLEventSetIntegerValueField: SkyLight private SPI, raw-field write.
-		if sym, _ := purego.Dlsym(hSky, "SLEventSetIntegerValueField"); sym != 0 {
-			purego.RegisterFunc(&slEventSetIntegerField, sym)
-			diag = append(diag, "SLEventSetIntegerValueField=ok")
-		} else {
-			diag = append(diag, "SLEventSetIntegerValueField=miss")
-		}
+		diag = append(diag, "CGEventSetWindowLocation=bound")
+		diag = append(diag, "SLEventSetIntegerValueField=bound")
 		// GetProcessForPID: deprecated Carbon, lives in ApplicationServices.
 		if sym, _ := purego.Dlsym(hAS, "GetProcessForPID"); sym != 0 {
 			purego.RegisterFunc(&getProcessForPID, sym)
@@ -352,10 +313,7 @@ func makeMouseEvent(eventType coregraphics.CGEventType, screenPt Point) (coregra
 
 func stampMouseEvent(event coregraphics.CGEventRef, pid int32, windowID uint32, windowLocalPt Point, clickState int64) {
 	coregraphics.CGEventSetIntegerValueField(event, coregraphics.KCGMouseEventButtonNumber, 0)
-	// kCGMouseEventSubtype field id is 8 (per CGEventTypes.h); tmc/apple's
-	// generated enum maps the Subtype name to a different group, so we use
-	// the integer literal here and document the SPI source.
-	coregraphics.CGEventSetIntegerValueField(event, coregraphics.CGEventField(8), 3)
+	coregraphics.CGEventSetIntegerValueField(event, coregraphics.KCGMouseEventSubtype, 3)
 	coregraphics.CGEventSetIntegerValueField(event, coregraphics.KCGMouseEventClickState, clickState)
 	if windowID != 0 {
 		coregraphics.CGEventSetIntegerValueField(event,
@@ -363,14 +321,14 @@ func stampMouseEvent(event coregraphics.CGEventRef, pid int32, windowID uint32, 
 		coregraphics.CGEventSetIntegerValueField(event,
 			coregraphics.KCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent, int64(windowID))
 	}
-	if cgEventSetWindowLocation != nil {
-		cgEventSetWindowLocation(uintptr(event), cgPoint{X: windowLocalPt.X, Y: windowLocalPt.Y})
+	if err := skylight.CGEventSetWindowLocation(event, corefoundation.CGPoint{X: windowLocalPt.X, Y: windowLocalPt.Y}); err != nil {
+		trace("click.stamp.window_location", map[string]any{"err": err})
 	}
-	if slEventSetIntegerField != nil {
-		// Field 40 = kCGEventTargetUnixProcessID. Chromium's renderer-side
-		// filter latches onto this; iPhone Mirroring is suspected to do the
-		// same. Use the raw-field SPI rather than the public one so we can
-		// stamp it on events the public field-id table doesn't accept.
-		slEventSetIntegerField(uintptr(event), 40, int64(pid))
+	// Field 40 = kCGEventTargetUnixProcessID. Chromium's renderer-side
+	// filter latches onto this; iPhone Mirroring is suspected to do the
+	// same. Use the raw-field SPI rather than the public one so we can
+	// stamp it on events the public field-id table doesn't accept.
+	if err := skylight.SLEventSetIntegerValueField(event, coregraphics.KCGEventTargetUnixProcessID, int64(pid)); err != nil {
+		trace("click.stamp.target_pid", map[string]any{"err": err})
 	}
 }

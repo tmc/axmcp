@@ -184,6 +184,7 @@ func buildState(app computeruse.AppInfo, window *axuiautomation.Element, instruc
 	state := computeruse.AppState{
 		App: app,
 		Window: computeruse.WindowInfo{
+			WindowID:         window.WindowID(),
 			Title:            strings.TrimSpace(window.Title()),
 			X:                int(math.Round(frame.Origin.X)),
 			Y:                int(math.Round(frame.Origin.Y)),

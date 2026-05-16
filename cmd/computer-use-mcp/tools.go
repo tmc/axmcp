@@ -12,6 +12,7 @@ import (
 	"github.com/tmc/axmcp/internal/computeruse"
 	"github.com/tmc/axmcp/internal/computeruse/appstate"
 	"github.com/tmc/axmcp/internal/computeruse/input"
+	"github.com/tmc/axmcp/internal/skylightinput"
 	"github.com/tmc/axmcp/internal/ui/permissions"
 )
 
@@ -158,15 +159,31 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 		if args.X == nil || args.Y == nil {
 			return toolError(missingCoordinatesError()), nil, nil
 		}
-		root, _, err := rt.sessions.Resolve(args.StateID, 0)
-		if err != nil {
-			return staleStateResult("click", err)
-		}
 		x := roundCoordinate(*args.X)
 		y := roundCoordinate(*args.Y)
 		point, err := input.ScreenshotPointToWindowLocal(state.Window, x, y)
 		if err != nil {
 			return toolError(err), nil, nil
+		}
+		if canUseSkyLightPixelClick(args.MouseButton, clickCount, state) {
+			screen := skylightinput.Point{
+				X: float64(state.Window.X + point.X),
+				Y: float64(state.Window.Y + point.Y),
+			}
+			local := skylightinput.Point{X: float64(point.X), Y: float64(point.Y)}
+			if err := skylightinput.MouseClick(int32(state.App.PID), screen, local, state.Window.WindowID); err == nil {
+				return &mcp.CallToolResult{}, computeruse.ActionResult{
+					SessionID: state.SessionID,
+					StateID:   state.StateID,
+					Action:    "click",
+					Target:    fmt.Sprintf("pixel %d,%d", x, y),
+					Message:   fmt.Sprintf("clicked pixel %d,%d", x, y),
+				}, nil
+			}
+		}
+		root, _, err := rt.sessions.Resolve(args.StateID, 0)
+		if err != nil {
+			return staleStateResult("click", err)
 		}
 		if err := input.ClickElementAt(root, point, args.MouseButton, clickCount); err != nil {
 			return toolError(err), nil, nil
@@ -179,6 +196,14 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 			Message:   fmt.Sprintf("clicked pixel %d,%d", x, y),
 		}, nil
 	})
+}
+
+func canUseSkyLightPixelClick(button string, clickCount int, state computeruse.AppState) bool {
+	button = strings.ToLower(strings.TrimSpace(button))
+	return (button == "" || button == "left") &&
+		clickCount == 1 &&
+		state.App.PID > 0 &&
+		state.Window.WindowID != 0
 }
 
 func registerPerformSecondaryAction(s *mcp.Server, rt *runtimeState) {
