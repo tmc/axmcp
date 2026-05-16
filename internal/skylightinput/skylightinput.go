@@ -337,7 +337,7 @@ func buildFocusEventRecord(windowID uint32, focus bool) []byte {
 	return buf
 }
 
-// MouseClick synthesises a single left-click at screenPt and posts it to
+// MouseClick synthesises one or more left-clicks at screenPt and posts them to
 // pid via SLEventPostToPid. windowID is the target CGWindowID (zero if
 // unknown - the click still posts, but field stamps that depend on the
 // window are skipped). When windowID is non-zero, ActivateWithoutRaise is
@@ -348,28 +348,32 @@ func buildFocusEventRecord(windowID uint32, focus bool) []byte {
 //
 //   - kCGMouseEventButtonNumber = 0
 //   - kCGMouseEventSubtype = 3 (NSEventSubtypeMouseEvent)
-//   - kCGMouseEventClickState = 1
+//   - kCGMouseEventClickState = click sequence number
 //   - kCGMouseEventWindowUnderMousePointer = windowID
 //   - kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent = windowID
 //   - CGEventSetWindowLocation(windowLocalPt) [private SPI]
 //   - SkyLight raw field 40 = pid (Chromium-required; iPhone Mirroring
 //     suspected to require it too)
 //
-// Sequence: mouseMoved at target, 15ms gap, leftMouseDown, 1ms gap,
-// leftMouseUp. Off-screen primer click is omitted - that's a Chromium
+// Sequence: mouseMoved at target, then one leftMouseDown/leftMouseUp pair per
+// click. Off-screen primer click is omitted - that's a Chromium
 // user-activation-gate workaround unrelated to iPhone Mirroring.
-func MouseClick(pid int32, screenPt, windowLocalPt Point, windowID uint32) error {
+func MouseClick(pid int32, screenPt, windowLocalPt Point, windowID uint32, clickCount int) error {
 	resolve()
 	if resolveErr != nil {
 		return resolveErr
 	}
+	if clickCount < 1 {
+		clickCount = 1
+	}
 	trace("click.begin", map[string]any{
-		"pid":      pid,
-		"wid":      windowID,
-		"screen_x": screenPt.X,
-		"screen_y": screenPt.Y,
-		"local_x":  windowLocalPt.X,
-		"local_y":  windowLocalPt.Y,
+		"pid":         pid,
+		"wid":         windowID,
+		"click_count": clickCount,
+		"screen_x":    screenPt.X,
+		"screen_y":    screenPt.Y,
+		"local_x":     windowLocalPt.X,
+		"local_y":     windowLocalPt.Y,
 	})
 	if windowID != 0 {
 		if err := ActivateWithoutRaise(pid, windowID); err != nil {
@@ -384,34 +388,47 @@ func MouseClick(pid int32, screenPt, windowLocalPt Point, windowID uint32) error
 	defer corefoundation.CFRelease(corefoundation.CFTypeRef(move))
 	stampMouseEvent(move, pid, windowID, windowLocalPt, 1)
 
-	down, err := makeMouseEvent(coregraphics.KCGEventLeftMouseDown, screenPt)
-	if err != nil {
-		return err
-	}
-	defer corefoundation.CFRelease(corefoundation.CFTypeRef(down))
-	stampMouseEvent(down, pid, windowID, windowLocalPt, 1)
-
-	up, err := makeMouseEvent(coregraphics.KCGEventLeftMouseUp, screenPt)
-	if err != nil {
-		return err
-	}
-	defer corefoundation.CFRelease(corefoundation.CFTypeRef(up))
-	stampMouseEvent(up, pid, windowID, windowLocalPt, 1)
-
 	rc, err := skylight.SLEventPostToPid(pid, move)
 	trace("click.post.moved", map[string]any{"rc": rc, "err": err})
 	if err != nil {
 		return fmt.Errorf("SLEventPostToPid mouseMoved: %w", err)
 	}
 	time.Sleep(15 * time.Millisecond)
-	rc, err = skylight.SLEventPostToPid(pid, down)
-	trace("click.post.down", map[string]any{"rc": rc, "err": err})
+
+	for i := 1; i <= clickCount; i++ {
+		if err := postMouseClickPair(pid, screenPt, windowLocalPt, windowID, int64(i)); err != nil {
+			return err
+		}
+		if i < clickCount {
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	return nil
+}
+
+func postMouseClickPair(pid int32, screenPt, windowLocalPt Point, windowID uint32, clickState int64) error {
+	down, err := makeMouseEvent(coregraphics.KCGEventLeftMouseDown, screenPt)
+	if err != nil {
+		return err
+	}
+	defer corefoundation.CFRelease(corefoundation.CFTypeRef(down))
+	stampMouseEvent(down, pid, windowID, windowLocalPt, clickState)
+
+	up, err := makeMouseEvent(coregraphics.KCGEventLeftMouseUp, screenPt)
+	if err != nil {
+		return err
+	}
+	defer corefoundation.CFRelease(corefoundation.CFTypeRef(up))
+	stampMouseEvent(up, pid, windowID, windowLocalPt, clickState)
+
+	rc, err := skylight.SLEventPostToPid(pid, down)
+	trace("click.post.down", map[string]any{"click_state": clickState, "rc": rc, "err": err})
 	if err != nil {
 		return fmt.Errorf("SLEventPostToPid down: %w", err)
 	}
 	time.Sleep(time.Millisecond)
 	rc, err = skylight.SLEventPostToPid(pid, up)
-	trace("click.post.up", map[string]any{"rc": rc, "err": err})
+	trace("click.post.up", map[string]any{"click_state": clickState, "rc": rc, "err": err})
 	if err != nil {
 		return fmt.Errorf("SLEventPostToPid up: %w", err)
 	}

@@ -123,8 +123,9 @@ func TestCanUseSkyLightPixelClick(t *testing.T) {
 	}{
 		{name: "default left", clickCount: 1, state: state, want: true},
 		{name: "spaced left", button: " Left ", clickCount: 1, state: state, want: true},
+		{name: "double click", clickCount: 2, state: state, want: true},
 		{name: "right button", button: "right", clickCount: 1, state: state},
-		{name: "double click", clickCount: 2, state: state},
+		{name: "triple click", clickCount: 3, state: state},
 		{name: "missing pid", clickCount: 1, state: computeruse.AppState{Window: computeruse.WindowInfo{WindowID: 456}}},
 		{name: "missing window id", clickCount: 1, state: computeruse.AppState{App: computeruse.AppInfo{PID: 123}}},
 	}

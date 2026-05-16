@@ -928,7 +928,7 @@ func clickIPhoneMirroring(win ocrwindow.Window, sx, sy int) error {
 		}
 		screen := skylightinput.Point{X: float64(sx), Y: float64(sy)}
 		local := skylightinput.Point{X: float64(sx) - win.X, Y: float64(sy) - win.Y}
-		if err := skylightinput.MouseClick(int32(win.OwnerPID), screen, local, win.ID); err != nil {
+		if err := skylightinput.MouseClick(int32(win.OwnerPID), screen, local, win.ID, 1); err != nil {
 			log.Printf("skylightinput.MouseClick failed (%v); falling back to cgpost", err)
 			return input.ClickScreenPoint(sx, sy)
 		}

@@ -171,7 +171,7 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 				Y: float64(state.Window.Y + point.Y),
 			}
 			local := skylightinput.Point{X: float64(point.X), Y: float64(point.Y)}
-			if err := skylightinput.MouseClick(int32(state.App.PID), screen, local, state.Window.WindowID); err == nil {
+			if err := skylightinput.MouseClick(int32(state.App.PID), screen, local, state.Window.WindowID, clickCount); err == nil {
 				return &mcp.CallToolResult{}, computeruse.ActionResult{
 					SessionID: state.SessionID,
 					StateID:   state.StateID,
@@ -201,7 +201,7 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 func canUseSkyLightPixelClick(button string, clickCount int, state computeruse.AppState) bool {
 	button = strings.ToLower(strings.TrimSpace(button))
 	return (button == "" || button == "left") &&
-		clickCount == 1 &&
+		clickCount <= 2 &&
 		state.App.PID > 0 &&
 		state.Window.WindowID != 0
 }
