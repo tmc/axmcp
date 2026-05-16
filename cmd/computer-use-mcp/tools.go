@@ -24,6 +24,8 @@ type listAppsOutput struct {
 func registerComputerUseTools(s *mcp.Server, rt *runtimeState) {
 	registerListApps(s, rt)
 	registerGetAppState(s, rt)
+	registerSetRecording(s, rt)
+	registerReplayTrajectory(s, rt)
 	registerClick(s, rt)
 	registerPerformSecondaryAction(s, rt)
 	registerSetValue(s, rt)
@@ -109,6 +111,64 @@ func registerGetAppState(s *mcp.Server, rt *runtimeState) {
 	})
 }
 
+func registerSetRecording(s *mcp.Server, rt *runtimeState) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "set_recording",
+		Description: "Start or stop in-memory trajectory recording for subsequent action tools.",
+		Annotations: actionToolAnnotations(),
+		InputSchema: exactObjectSchema(map[string]any{
+			"clear":   booleanProperty("Clear any previously recorded trajectory steps"),
+			"enabled": booleanProperty("Whether trajectory recording should be enabled"),
+		}, "enabled"),
+	}, func(_ context.Context, _ *mcp.CallToolRequest, args setRecordingInput) (*mcp.CallToolResult, any, error) {
+		if rt.recording == nil {
+			rt.recording = newTrajectoryRecorder()
+		}
+		out := rt.recording.set(args.Enabled, args.Clear)
+		return &mcp.CallToolResult{}, out, nil
+	})
+}
+
+func registerReplayTrajectory(s *mcp.Server, rt *runtimeState) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "replay_trajectory",
+		Description: "Replay the recorded trajectory. Use dry_run to inspect the recorded steps without executing them.",
+		Annotations: actionToolAnnotations(),
+		InputSchema: exactObjectSchema(map[string]any{
+			"dry_run":   booleanProperty("Return recorded steps without executing them"),
+			"from_step": integerProperty("First 1-based recorded step to replay. Defaults to 1"),
+		}),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args replayTrajectoryInput) (*mcp.CallToolResult, any, error) {
+		if rt.recording == nil {
+			return &mcp.CallToolResult{}, replayTrajectoryOutput{}, nil
+		}
+		fromStep := args.FromStep
+		if fromStep <= 0 {
+			fromStep = 1
+		}
+		steps := rt.recording.snapshot(fromStep)
+		if args.DryRun {
+			return &mcp.CallToolResult{}, replayTrajectoryOutput{Steps: steps}, nil
+		}
+		var out []trajectoryStep
+		err := rt.recording.replayingMode(func() error {
+			for _, step := range steps {
+				result, err := rt.replayTrajectoryStep(ctx, step)
+				if err != nil {
+					return fmt.Errorf("replay step %d %s: %w", step.Index, step.Tool, err)
+				}
+				step.Result = result
+				out = append(out, step)
+			}
+			return nil
+		})
+		if err != nil {
+			return toolError(err), nil, nil
+		}
+		return &mcp.CallToolResult{}, replayTrajectoryOutput{Replayed: len(out), Steps: out}, nil
+	})
+}
+
 func registerClick(s *mcp.Server, rt *runtimeState) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "click",
@@ -150,13 +210,15 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 			if err := input.ClickElement(el, args.MouseButton, clickCount); err != nil {
 				return toolError(err), nil, nil
 			}
-			return &mcp.CallToolResult{}, computeruse.ActionResult{
+			out := computeruse.ActionResult{
 				SessionID: state.SessionID,
 				StateID:   state.StateID,
 				Action:    "click",
 				Target:    formatNode(node),
 				Message:   fmt.Sprintf("clicked %s", formatNode(node)),
-			}, nil
+			}
+			rt.recording.record("click", args, out)
+			return &mcp.CallToolResult{}, out, nil
 		}
 		if args.X == nil || args.Y == nil {
 			return toolError(missingCoordinatesError()), nil, nil
@@ -174,13 +236,15 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 			}
 			local := skylightinput.Point{X: float64(point.X), Y: float64(point.Y)}
 			if err := skylightinput.MouseClick(int32(state.App.PID), screen, local, state.Window.WindowID, clickCount); err == nil {
-				return &mcp.CallToolResult{}, computeruse.ActionResult{
+				out := computeruse.ActionResult{
 					SessionID: state.SessionID,
 					StateID:   state.StateID,
 					Action:    "click",
 					Target:    fmt.Sprintf("pixel %d,%d", x, y),
 					Message:   fmt.Sprintf("clicked pixel %d,%d", x, y),
-				}, nil
+				}
+				rt.recording.record("click", args, out)
+				return &mcp.CallToolResult{}, out, nil
 			}
 		}
 		root, _, err := rt.sessions.Resolve(args.StateID, 0)
@@ -190,13 +254,15 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 		if err := input.ClickElementAt(root, point, args.MouseButton, clickCount); err != nil {
 			return toolError(err), nil, nil
 		}
-		return &mcp.CallToolResult{}, computeruse.ActionResult{
+		out := computeruse.ActionResult{
 			SessionID: state.SessionID,
 			StateID:   state.StateID,
 			Action:    "click",
 			Target:    fmt.Sprintf("pixel %d,%d", x, y),
 			Message:   fmt.Sprintf("clicked pixel %d,%d", x, y),
-		}, nil
+		}
+		rt.recording.record("click", args, out)
+		return &mcp.CallToolResult{}, out, nil
 	})
 }
 
@@ -241,13 +307,15 @@ func registerPerformSecondaryAction(s *mcp.Server, rt *runtimeState) {
 		if err := el.PerformAction(args.Action); err != nil {
 			return toolError(err), nil, nil
 		}
-		return &mcp.CallToolResult{}, computeruse.ActionResult{
+		out := computeruse.ActionResult{
 			SessionID: state.SessionID,
 			StateID:   state.StateID,
 			Action:    args.Action,
 			Target:    formatNode(node),
 			Message:   fmt.Sprintf("performed %s on %s", args.Action, formatNode(node)),
-		}, nil
+		}
+		rt.recording.record("perform_secondary_action", args, out)
+		return &mcp.CallToolResult{}, out, nil
 	})
 }
 
@@ -284,13 +352,15 @@ func registerSetValue(s *mcp.Server, rt *runtimeState) {
 		if err := el.SetValue(args.Value); err != nil {
 			return toolError(err), nil, nil
 		}
-		return &mcp.CallToolResult{}, computeruse.ActionResult{
+		out := computeruse.ActionResult{
 			SessionID: state.SessionID,
 			StateID:   state.StateID,
 			Action:    "set_value",
 			Target:    formatNode(node),
 			Message:   fmt.Sprintf("set value on %s", formatNode(node)),
-		}, nil
+		}
+		rt.recording.record("set_value", args, out)
+		return &mcp.CallToolResult{}, out, nil
 	})
 }
 
@@ -328,13 +398,15 @@ func registerScroll(s *mcp.Server, rt *runtimeState) {
 		if err := input.ScrollElement(el, args.Direction, args.Pages); err != nil {
 			return toolError(err), nil, nil
 		}
-		return &mcp.CallToolResult{}, computeruse.ActionResult{
+		out := computeruse.ActionResult{
 			SessionID: state.SessionID,
 			StateID:   state.StateID,
 			Action:    "scroll",
 			Target:    formatNode(node),
 			Message:   fmt.Sprintf("scrolled %s %s", formatNode(node), args.Direction),
-		}, nil
+		}
+		rt.recording.record("scroll", args, out)
+		return &mcp.CallToolResult{}, out, nil
 	})
 }
 
@@ -381,13 +453,15 @@ func registerDrag(s *mcp.Server, rt *runtimeState) {
 		if err := input.DragElement(root, start, end, "left"); err != nil {
 			return toolError(err), nil, nil
 		}
-		return &mcp.CallToolResult{}, computeruse.ActionResult{
+		out := computeruse.ActionResult{
 			SessionID: state.SessionID,
 			StateID:   state.StateID,
 			Action:    "drag",
 			Target:    fmt.Sprintf("%d,%d -> %d,%d", startX, startY, endX, endY),
 			Message:   fmt.Sprintf("dragged from %d,%d to %d,%d", startX, startY, endX, endY),
-		}, nil
+		}
+		rt.recording.record("drag", args, out)
+		return &mcp.CallToolResult{}, out, nil
 	})
 }
 
@@ -415,13 +489,15 @@ func registerPressKey(s *mcp.Server, rt *runtimeState) {
 		if err := input.SendKeyComboToPID(int32(state.App.PID), args.Key); err != nil {
 			return toolError(err), nil, nil
 		}
-		return &mcp.CallToolResult{}, computeruse.ActionResult{
+		out := computeruse.ActionResult{
 			SessionID: state.SessionID,
 			StateID:   state.StateID,
 			Action:    "press_key",
 			Target:    args.Key,
 			Message:   fmt.Sprintf("pressed %s", args.Key),
-		}, nil
+		}
+		rt.recording.record("press_key", args, out)
+		return &mcp.CallToolResult{}, out, nil
 	})
 }
 
@@ -461,13 +537,15 @@ func registerTypeText(s *mcp.Server, rt *runtimeState) {
 			if err := el.TypeText(args.Text); err != nil {
 				return toolError(err), nil, nil
 			}
-			return &mcp.CallToolResult{}, computeruse.ActionResult{
+			out := computeruse.ActionResult{
 				SessionID: state.SessionID,
 				StateID:   state.StateID,
 				Action:    "type_text",
 				Target:    formatNode(node),
 				Message:   fmt.Sprintf("typed into %s", formatNode(node)),
-			}, nil
+			}
+			rt.recording.record("type_text", args, out)
+			return &mcp.CallToolResult{}, out, nil
 		}
 		root, _, err := rt.sessions.Resolve(args.StateID, 0)
 		if err != nil {
@@ -487,13 +565,15 @@ func registerTypeText(s *mcp.Server, rt *runtimeState) {
 			return toolError(err), nil, nil
 		}
 		node := computeruse.ElementNode{Role: "AXUIElement", Title: "focused element"}
-		return &mcp.CallToolResult{}, computeruse.ActionResult{
+		out := computeruse.ActionResult{
 			SessionID: state.SessionID,
 			StateID:   state.StateID,
 			Action:    "type_text",
 			Target:    formatNode(node),
 			Message:   fmt.Sprintf("typed into %s", formatNode(node)),
-		}, nil
+		}
+		rt.recording.record("type_text", args, out)
+		return &mcp.CallToolResult{}, out, nil
 	})
 }
 
@@ -524,12 +604,14 @@ func registerEvaluateJavascript(s *mcp.Server, rt *runtimeState) {
 		if err != nil {
 			return toolError(err), nil, nil
 		}
-		return &mcp.CallToolResult{}, evaluateJavascriptOutput{
+		out := evaluateJavascriptOutput{
 			SessionID: state.SessionID,
 			StateID:   state.StateID,
 			Action:    "evaluate_javascript",
 			Result:    result,
-		}, nil
+		}
+		rt.recording.record("evaluate_javascript", args, out)
+		return &mcp.CallToolResult{}, out, nil
 	})
 }
 

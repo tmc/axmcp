@@ -18,6 +18,7 @@ type runtimeState struct {
 	builder      *appstate.Builder
 	instructions *instruction.Provider
 	intervention *intervention.Monitor
+	recording    *trajectoryRecorder
 	urlPolicy    *policy.URLPolicy
 	sessions     *session.Store
 }
@@ -51,6 +52,7 @@ func newRuntimeState(opts ...runtimeOptions) (*runtimeState, error) {
 		builder:      appstate.NewBuilder(),
 		instructions: instruction.New(),
 		intervention: monitor,
+		recording:    newTrajectoryRecorder(),
 		urlPolicy:    policy.NewURLPolicy(opt.blockedURLs),
 		sessions:     session.NewStore(),
 	}, nil

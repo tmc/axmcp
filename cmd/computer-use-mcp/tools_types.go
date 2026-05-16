@@ -131,6 +131,13 @@ func integerProperty(description string) map[string]any {
 	}
 }
 
+func booleanProperty(description string) map[string]any {
+	return map[string]any{
+		"type":        "boolean",
+		"description": description,
+	}
+}
+
 func enumStringProperty(description string, values ...string) map[string]any {
 	property := stringProperty(description)
 	property["enum"] = values

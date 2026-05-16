@@ -160,6 +160,33 @@ func TestEvaluateJavascriptBuildsAppleScriptTarget(t *testing.T) {
 	}
 }
 
+func TestTrajectoryRecorderRecordsActionArgs(t *testing.T) {
+	rec := newTrajectoryRecorder()
+	if out := rec.set(true, true); !out.Enabled || out.Count != 0 {
+		t.Fatalf("set recording = %#v, want enabled empty recorder", out)
+	}
+	rec.record("press_key", pressKeyInput{App: "Brave", StateID: "stale", Key: "a"}, computeruse.ActionResult{Action: "press_key"})
+	steps := rec.snapshot(1)
+	if len(steps) != 1 {
+		t.Fatalf("recorded steps = %d, want 1", len(steps))
+	}
+	if steps[0].Tool != "press_key" || steps[0].Args["key"] != "a" {
+		t.Fatalf("step = %#v, want press_key a", steps[0])
+	}
+	if _, ok := steps[0].Args["state_id"]; ok {
+		t.Fatalf("recorded args retained state_id: %#v", steps[0].Args)
+	}
+	if err := rec.replayingMode(func() error {
+		rec.record("press_key", pressKeyInput{App: "Brave", Key: "b"}, nil)
+		return nil
+	}); err != nil {
+		t.Fatalf("replayingMode: %v", err)
+	}
+	if got := len(rec.snapshot(1)); got != 1 {
+		t.Fatalf("recorded during replay; steps = %d, want 1", got)
+	}
+}
+
 func TestStateForActionRequiresFreshStateID(t *testing.T) {
 	rt := &runtimeState{sessions: session.NewStore()}
 	if _, err := stateForAction(rt, "click", "Finder", ""); err == nil {

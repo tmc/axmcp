@@ -96,6 +96,24 @@ func orderedComputerUseTools() []*mcp.Tool {
 			}, "app"),
 		},
 		{
+			Name:        "set_recording",
+			Description: "Start or stop in-memory trajectory recording for subsequent action tools.",
+			Annotations: actionToolAnnotations(),
+			InputSchema: exactObjectSchema(map[string]any{
+				"clear":   booleanProperty("Clear any previously recorded trajectory steps"),
+				"enabled": booleanProperty("Whether trajectory recording should be enabled"),
+			}, "enabled"),
+		},
+		{
+			Name:        "replay_trajectory",
+			Description: "Replay the recorded trajectory. Use dry_run to inspect the recorded steps without executing them.",
+			Annotations: actionToolAnnotations(),
+			InputSchema: exactObjectSchema(map[string]any{
+				"dry_run":   booleanProperty("Return recorded steps without executing them"),
+				"from_step": integerProperty("First 1-based recorded step to replay. Defaults to 1"),
+			}),
+		},
+		{
 			Name:        "click",
 			Description: "Click an element by index or pixel coordinates from screenshot",
 			Annotations: actionToolAnnotations(),
