@@ -1,7 +1,12 @@
 package input
 
 import (
+	"time"
+
+	"github.com/tmc/apple/appkit"
 	"github.com/tmc/apple/corefoundation"
+	"github.com/tmc/apple/foundation"
+	"github.com/tmc/apple/objectivec"
 	"github.com/tmc/apple/x/axuiautomation"
 )
 
@@ -19,7 +24,7 @@ type focusState struct {
 
 func withSyntheticFocus(el *axuiautomation.Element, fn func() error) error {
 	state := suppressFocus(el)
-	err := fn()
+	err := withSystemFocusStealSuppressed(el, fn)
 	restoreFocus(state)
 	return err
 }
@@ -124,4 +129,43 @@ func writeAXBool(el *axuiautomation.Element, name string, value bool) bool {
 
 func cfString(s string) corefoundation.CFStringRef {
 	return corefoundation.CFStringCreateWithCString(0, s, focusAttrEncodingUTF8)
+}
+
+func withSystemFocusStealSuppressed(el *axuiautomation.Element, fn func() error) error {
+	if el == nil || el.Application() == nil {
+		return fn()
+	}
+	targetPID := el.Application().PID()
+	ws := appkit.GetNSWorkspaceClass().SharedWorkspace()
+	previous := ws.FrontmostApplication()
+	if previous == nil || previous.ProcessIdentifier() == targetPID {
+		return fn()
+	}
+
+	center := ws.NotificationCenter()
+	restore := func() {
+		front := ws.FrontmostApplication()
+		if front != nil && front.ProcessIdentifier() == targetPID {
+			previous.ActivateWithOptions(appkit.NSApplicationActivateIgnoringOtherApps)
+		}
+	}
+	observer := center.AddObserverForNameObjectQueueUsingBlock(
+		appkit.WorkspaceDidActivateApplicationNotification,
+		objectivec.Object{},
+		nil,
+		func(_ *foundation.NSNotification) {
+			restore()
+		},
+	)
+	defer func() {
+		if observer.ID != 0 {
+			center.RemoveObserver(observer)
+		}
+	}()
+
+	err := fn()
+	restore()
+	time.Sleep(50 * time.Millisecond)
+	restore()
+	return err
 }
