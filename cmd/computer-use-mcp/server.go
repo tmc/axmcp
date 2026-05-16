@@ -177,5 +177,17 @@ func orderedComputerUseTools() []*mcp.Tool {
 				"text":          stringProperty("Literal text to type"),
 			}, "app", "state_id", "text"),
 		},
+		{
+			Name:        "evaluate_javascript",
+			Description: "Evaluate JavaScript in a browser tab via the browser's Apple Events scripting interface. Use only when the accessibility tree is insufficient.",
+			Annotations: actionToolAnnotations(),
+			InputSchema: exactObjectSchema(map[string]any{
+				"app":          stringProperty("Browser app name or bundle identifier"),
+				"script":       stringProperty("JavaScript source to evaluate"),
+				"state_id":     stringProperty("State token returned by get_app_state"),
+				"tab_index":    integerProperty("1-based tab index. Defaults to the active tab"),
+				"window_index": integerProperty("1-based window index. Defaults to the front window"),
+			}, "app", "state_id", "script"),
+		},
 	}
 }

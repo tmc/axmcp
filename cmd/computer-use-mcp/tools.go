@@ -12,6 +12,7 @@ import (
 	"github.com/tmc/axmcp/internal/computeruse"
 	"github.com/tmc/axmcp/internal/computeruse/appstate"
 	"github.com/tmc/axmcp/internal/computeruse/input"
+	"github.com/tmc/axmcp/internal/sdef"
 	"github.com/tmc/axmcp/internal/skylightinput"
 	"github.com/tmc/axmcp/internal/ui/permissions"
 )
@@ -30,6 +31,7 @@ func registerComputerUseTools(s *mcp.Server, rt *runtimeState) {
 	registerDrag(s, rt)
 	registerPressKey(s, rt)
 	registerTypeText(s, rt)
+	registerEvaluateJavascript(s, rt)
 }
 
 func registerListApps(s *mcp.Server, rt *runtimeState) {
@@ -493,6 +495,103 @@ func registerTypeText(s *mcp.Server, rt *runtimeState) {
 			Message:   fmt.Sprintf("typed into %s", formatNode(node)),
 		}, nil
 	})
+}
+
+func registerEvaluateJavascript(s *mcp.Server, rt *runtimeState) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "evaluate_javascript",
+		Description: "Evaluate JavaScript in a browser tab via the browser's Apple Events scripting interface. Use only when the accessibility tree is insufficient.",
+		Annotations: actionToolAnnotations(),
+		InputSchema: exactObjectSchema(map[string]any{
+			"app":          stringProperty("Browser app name or bundle identifier"),
+			"script":       stringProperty("JavaScript source to evaluate"),
+			"state_id":     stringProperty("State token returned by get_app_state"),
+			"tab_index":    integerProperty("1-based tab index. Defaults to the active tab"),
+			"window_index": integerProperty("1-based window index. Defaults to the front window"),
+		}, "app", "state_id", "script"),
+	}, func(_ context.Context, _ *mcp.CallToolRequest, args evaluateJavascriptInput) (*mcp.CallToolResult, any, error) {
+		if res, payload, ok := actionBlockedForPermissions("evaluate_javascript"); ok {
+			return res, payload, nil
+		}
+		if res, payload, ok := actionBlockedForIntervention(rt, "evaluate_javascript"); ok {
+			return res, payload, nil
+		}
+		state, err := stateForAction(rt, "evaluate_javascript", args.App, args.StateID)
+		if err != nil {
+			return staleStateResult("evaluate_javascript", err)
+		}
+		result, err := evaluateJavascript(state.App, args.Script, args.WindowIndex, args.TabIndex)
+		if err != nil {
+			return toolError(err), nil, nil
+		}
+		return &mcp.CallToolResult{}, evaluateJavascriptOutput{
+			SessionID: state.SessionID,
+			StateID:   state.StateID,
+			Action:    "evaluate_javascript",
+			Result:    result,
+		}, nil
+	})
+}
+
+func evaluateJavascript(app computeruse.AppInfo, script string, windowIndex, tabIndex int) (string, error) {
+	if strings.TrimSpace(script) == "" {
+		return "", fmt.Errorf("script is required")
+	}
+	if windowIndex <= 0 {
+		windowIndex = 1
+	}
+	if tabIndex < 0 {
+		return "", fmt.Errorf("tab_index must be non-negative")
+	}
+	source := browserScriptTarget(app)
+	if source == "" {
+		return "", fmt.Errorf("browser app is required")
+	}
+	selector := "active tab of front window"
+	if tabIndex > 0 {
+		selector = fmt.Sprintf("tab %d of window %d", tabIndex, windowIndex)
+	} else if windowIndex != 1 {
+		selector = fmt.Sprintf("active tab of window %d", windowIndex)
+	}
+	applescript := fmt.Sprintf(
+		"tell application %s\n\treturn execute javascript %s in %s\nend tell",
+		source,
+		appleScriptString(script),
+		selector,
+	)
+	return sdef.RunScript(applescript)
+}
+
+func browserScriptTarget(app computeruse.AppInfo) string {
+	if bundleID := strings.TrimSpace(app.BundleID); bundleID != "" {
+		return "id " + appleScriptString(bundleID)
+	}
+	if name := strings.TrimSpace(app.Name); name != "" {
+		return appleScriptString(name)
+	}
+	return ""
+}
+
+func appleScriptString(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '\\', '"':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 func readOnlyToolAnnotations() *mcp.ToolAnnotations {

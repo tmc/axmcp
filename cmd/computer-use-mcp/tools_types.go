@@ -66,6 +66,21 @@ type setValueInput struct {
 	Value        string `json:"value"`
 }
 
+type evaluateJavascriptInput struct {
+	App         string `json:"app"`
+	StateID     string `json:"state_id"`
+	Script      string `json:"script"`
+	WindowIndex int    `json:"window_index,omitempty"`
+	TabIndex    int    `json:"tab_index,omitempty"`
+}
+
+type evaluateJavascriptOutput struct {
+	SessionID string `json:"session_id,omitempty"`
+	StateID   string `json:"state_id,omitempty"`
+	Action    string `json:"action,omitempty"`
+	Result    string `json:"result,omitempty"`
+}
+
 func textResult(text string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: text}},

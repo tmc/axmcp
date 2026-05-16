@@ -145,6 +145,21 @@ func TestCanUseSkyLightPixelClick(t *testing.T) {
 	}
 }
 
+func TestEvaluateJavascriptBuildsAppleScriptTarget(t *testing.T) {
+	if got := browserScriptTarget(computeruse.AppInfo{BundleID: "com.brave.Browser", Name: "Brave Browser"}); got != `id "com.brave.Browser"` {
+		t.Fatalf("browserScriptTarget bundle = %q", got)
+	}
+	if got := browserScriptTarget(computeruse.AppInfo{Name: "Safari"}); got != `"Safari"` {
+		t.Fatalf("browserScriptTarget name = %q", got)
+	}
+	if got := appleScriptString("quote \" slash \\ newline\n"); got != `"quote \" slash \\ newline\n"` {
+		t.Fatalf("appleScriptString = %q", got)
+	}
+	if _, err := evaluateJavascript(computeruse.AppInfo{Name: "Safari"}, "", 0, 0); err == nil {
+		t.Fatalf("evaluateJavascript empty script = nil, want error")
+	}
+}
+
 func TestStateForActionRequiresFreshStateID(t *testing.T) {
 	rt := &runtimeState{sessions: session.NewStore()}
 	if _, err := stateForAction(rt, "click", "Finder", ""); err == nil {
