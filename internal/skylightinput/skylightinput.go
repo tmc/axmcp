@@ -31,6 +31,7 @@ var (
 	resolveOnce sync.Once
 
 	getProcessForPIDErr error
+	windowPSNErr        error
 
 	// resolveStatus is a one-line summary of which SPIs are usable on the
 	// current OS, suitable for logging at startup. Populated even on
@@ -50,6 +51,11 @@ func resolve() {
 		} else {
 			diag = append(diag, "GetProcessForPID=miss")
 		}
+		if windowPSNErr = probeWindowPSNBindings(); windowPSNErr == nil {
+			diag = append(diag, "SLSWindowPSN=ok")
+		} else {
+			diag = append(diag, "SLSWindowPSN=miss")
+		}
 		// Probe SLEventPostToPid via the tmc/apple binding (it loads on
 		// package init; if it's missing we can't post anything).
 		if _, err := skylight.SLEventPostToPid(-1, 0); err != nil && isSymbolUnavailable(err) {
@@ -59,6 +65,22 @@ func resolve() {
 		}
 		resolveStatus = strings.Join(diag, " ")
 	})
+}
+
+func probeWindowPSNBindings() error {
+	cid, err := skylight.CGSMainConnectionID()
+	if err != nil {
+		return fmt.Errorf("CGSMainConnectionID: %w", err)
+	}
+	var owner skylight.CGSConnectionID
+	if _, err := skylight.SLSGetWindowOwner(cid, 0, &owner); err != nil {
+		return fmt.Errorf("SLSGetWindowOwner: %w", err)
+	}
+	var psn skylight.ProcessSerialNumber
+	if _, err := skylight.SLSGetConnectionPSN(owner, &psn); err != nil {
+		return fmt.Errorf("SLSGetConnectionPSN: %w", err)
+	}
+	return nil
 }
 
 func probeGetProcessForPID() (err error) {
@@ -81,6 +103,26 @@ func processForPID(pid int32) (psn applicationservices.ProcessSerialNumber, err 
 	rc := applicationservices.GetProcessForPID(pid, &psn)
 	if rc != 0 {
 		return psn, fmt.Errorf("GetProcessForPID(%d) returned %d", pid, rc)
+	}
+	return psn, nil
+}
+
+func processForWindow(windowID uint32) (skylight.ProcessSerialNumber, error) {
+	cid, err := skylight.CGSMainConnectionID()
+	if err != nil {
+		return skylight.ProcessSerialNumber{}, fmt.Errorf("CGSMainConnectionID: %w", err)
+	}
+	var owner skylight.CGSConnectionID
+	if rc, err := skylight.SLSGetWindowOwner(cid, coregraphics.CGWindowID(windowID), &owner); err != nil {
+		return skylight.ProcessSerialNumber{}, fmt.Errorf("SLSGetWindowOwner(%d): %w", windowID, err)
+	} else if rc != coregraphics.KCGErrorSuccess {
+		return skylight.ProcessSerialNumber{}, fmt.Errorf("SLSGetWindowOwner(%d) returned %s", windowID, rc)
+	}
+	var psn skylight.ProcessSerialNumber
+	if rc, err := skylight.SLSGetConnectionPSN(owner, &psn); err != nil {
+		return skylight.ProcessSerialNumber{}, fmt.Errorf("SLSGetConnectionPSN(%d): %w", owner, err)
+	} else if rc != coregraphics.KCGErrorSuccess {
+		return skylight.ProcessSerialNumber{}, fmt.Errorf("SLSGetConnectionPSN(%d) returned %s", owner, rc)
 	}
 	return psn, nil
 }
@@ -129,8 +171,8 @@ func Available() error {
 	if _, err := skylight.SLEventPostToPid(-1, 0); err != nil && isSymbolUnavailable(err) {
 		return fmt.Errorf("%w: SLEventPostToPid: %v", ErrUnavailable, err)
 	}
-	if getProcessForPIDErr != nil {
-		return fmt.Errorf("%w: %v", ErrUnavailable, getProcessForPIDErr)
+	if getProcessForPIDErr != nil && windowPSNErr != nil {
+		return fmt.Errorf("%w: GetProcessForPID: %v; SLS window PSN: %v", ErrUnavailable, getProcessForPIDErr, windowPSNErr)
 	}
 	return nil
 }
@@ -151,7 +193,8 @@ var _ = errors.Is // keep errors import; reserved for future sentinel matching
 // window_manager_focus_window_without_raise:
 //
 //  1. _SLPSGetFrontProcess(&prev) - capture current front PSN.
-//  2. applicationservices.GetProcessForPID(targetPID, &target).
+//  2. SLSGetWindowOwner/SLSGetConnectionPSN, falling back to
+//     applicationservices.GetProcessForPID(targetPID, &target).
 //  3. SLPSPostEventRecordTo(prev, defocus-record).
 //  4. SLPSPostEventRecordTo(target, focus-record-with-window-id).
 //
@@ -163,20 +206,33 @@ func ActivateWithoutRaise(targetPID int32, targetWindowID uint32) error {
 	if resolveErr != nil {
 		return resolveErr
 	}
-	if getProcessForPIDErr != nil {
-		return fmt.Errorf("%w: %v", ErrUnavailable, getProcessForPIDErr)
-	}
 	var prev skylight.ProcessSerialNumber
 	if rc, err := skylight.SLPSGetFrontProcess(&prev); err != nil {
 		return fmt.Errorf("SLPSGetFrontProcess: %w", err)
 	} else if rc != 0 {
 		return fmt.Errorf("SLPSGetFrontProcess returned %d", rc)
 	}
-	targetAS, err := processForPID(targetPID)
-	if err != nil {
-		return err
+
+	var target skylight.ProcessSerialNumber
+	var targetErr error
+	if targetWindowID != 0 && windowPSNErr == nil {
+		target, targetErr = processForWindow(targetWindowID)
+		trace("activate.window_psn", map[string]any{"target_wid": targetWindowID, "err": targetErr})
 	}
-	target := skylightPSN(targetAS)
+	if targetErr != nil || targetWindowID == 0 || windowPSNErr != nil {
+		if getProcessForPIDErr != nil {
+			slsErr := targetErr
+			if slsErr == nil {
+				slsErr = windowPSNErr
+			}
+			return fmt.Errorf("%w: GetProcessForPID: %v; SLS window PSN: %v", ErrUnavailable, getProcessForPIDErr, slsErr)
+		}
+		targetAS, err := processForPID(targetPID)
+		if err != nil {
+			return err
+		}
+		target = skylightPSN(targetAS)
+	}
 	trace("activate.psn", map[string]any{
 		"target_pid": targetPID,
 		"target_wid": targetWindowID,
