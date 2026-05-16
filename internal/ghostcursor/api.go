@@ -1,6 +1,7 @@
 package ghostcursor
 
 import (
+	"context"
 	"errors"
 	"os"
 	"runtime"
@@ -193,6 +194,28 @@ func TypingPositionForFrame(x, y, width, height float64) Position {
 
 func HoverAt(x, y int) {
 	_ = defaultController.Show(ScreenPosition(x, y), ActivityIdle, hoverHideDelay)
+}
+
+// SettleAt moves the ghost cursor toward x, y and returns once the
+// next-interaction timing gate says the cursor is close and slow enough for
+// the real input event to be posted.
+func SettleAt(x, y int, duration time.Duration) {
+	if duration <= 0 {
+		_ = defaultController.Show(ScreenPosition(x, y), ActivityMoving, 0)
+		return
+	}
+	_ = defaultController.MoveTo(context.Background(), ScreenPosition(x, y), MoveOptions{
+		Duration:   duration,
+		Activity:   ActivityMoving,
+		CurveStyle: CurveBezier,
+		NextInteraction: NextInteractionTiming{
+			DistancePx:      2,
+			Progress:        0.95,
+			IdleVelocityPPS: 40,
+			Dwell:           40 * time.Millisecond,
+			MaxWait:         duration,
+		},
+	})
 }
 
 func PressAt(x, y int) {

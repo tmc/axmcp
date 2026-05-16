@@ -108,6 +108,7 @@ func ClickElement(el *axuiautomation.Element, button string, clickCount int) err
 		return fmt.Errorf("target disappeared")
 	}
 	center := elementCenter(el)
+	ghostcursor.SettleAt(center.X, center.Y, 180*time.Millisecond)
 	switch strings.ToLower(strings.TrimSpace(button)) {
 	case "", "left":
 		if clickCount <= 1 {
@@ -424,6 +425,7 @@ func clickScreenPoint(point LocalPoint, downType, upType, button int32, clickCou
 	case cgEventPost == nil:
 		return fmt.Errorf("CGEventPost not available")
 	}
+	ghostcursor.SettleAt(point.X, point.Y, 180*time.Millisecond)
 	ghostcursor.PressAt(point.X, point.Y)
 	// Walk the cursor to the target with a short sequence of mouseMoved
 	// events before the down/up. iPhone Mirroring's input filter on macOS 26

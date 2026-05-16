@@ -409,6 +409,18 @@ func TestMoveGateSignalsOnMaxWait(t *testing.T) {
 	}
 }
 
+func TestSettleAtDisabledControllerReturns(t *testing.T) {
+	c := defaultController
+	defaultController = New(Config{})
+	t.Cleanup(func() { defaultController = c })
+
+	start := time.Now()
+	SettleAt(10, 20, time.Second)
+	if time.Since(start) > 100*time.Millisecond {
+		t.Fatal("SettleAt blocked with disabled controller")
+	}
+}
+
 func TestNormalizeEyecandyDisablesUnsupportedFlagsOnAMD64(t *testing.T) {
 	got := normalizeEyecandy(EyecandyConfig{
 		HolographicOCR: true,
