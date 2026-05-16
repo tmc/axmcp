@@ -68,10 +68,12 @@ leakage). Ghost cursor rendering for click and drag actions lives in
   the lifetime of an AppKit listener (focus-steal prevention,
   long-lived AX observers across multiple MCP client sessions). Today
   the short-lived subprocess shape is the simpler default.
-- Migration off `CGWindowListCreateImage` (deprecated since macOS 14)
-  to `SCContentFilter(desktopIndependentWindow:)`. Unlocks
-  minimized-window capture as a side effect. Separate work item from
-  the cua-driver adoption set.
+- Finish the ScreenCaptureKit migration for rectangle and OCR helper
+  paths. App-backed full-window screenshots now prefer
+  `SCContentFilter(desktopIndependentWindow:)`, with
+  `CGWindowListCreateImage` retained for the pre-AppKit direct fast
+  path and fallback. See `design/screencapturekit-tcc.md` for the TCC
+  flow comparison and remaining capture surfaces.
 - Structured error type for window-resolution failures, replacing the
   current "no windows found …" string with a typed error carrying
   pid, current-Space ID, and per-window Space IDs. Lands once

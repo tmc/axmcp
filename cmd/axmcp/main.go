@@ -174,7 +174,7 @@ func tryDirectWindowScreenshot(args []string) bool {
 		return false
 	}
 	diagf("axmcp: trying direct screenshot fast path for %q\n", app)
-	png, err := captureWindowByName(app)
+	png, err := captureWindowByNameLegacy(app)
 	if err != nil {
 		diagf("axmcp: direct screenshot fast path failed: %v; falling back to app-backed flow\n", err)
 		return false

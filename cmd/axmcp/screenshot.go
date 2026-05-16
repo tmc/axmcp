@@ -238,6 +238,15 @@ func captureWindow(win windowInfo) ([]byte, error) {
 		}
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if png, err := captureWindowSCK(ctx, win.WindowID); err == nil {
+		return png, nil
+	} else {
+		diagf("captureWindow: SCK failed: %v\n", err)
+		appendErr("ScreenCaptureKit", err)
+	}
+
 	if png, err := captureWindowCG(win); err == nil {
 		return png, nil
 	} else {
@@ -261,6 +270,25 @@ func captureWindow(win windowInfo) ([]byte, error) {
 		return nil, fmt.Errorf("capture window %q (id=%d): failed", win.Title, win.WindowID)
 	}
 	return nil, fmt.Errorf("capture window %q (id=%d): %s", win.Title, win.WindowID, strings.Join(errs, "; "))
+}
+
+func captureWindowLegacy(win windowInfo) ([]byte, error) {
+	diagf("captureWindowLegacy: title=%q owner=%q id=%d\n", win.Title, win.OwnerName, win.WindowID)
+
+	if png, err := captureWindowCG(win); err == nil {
+		return png, nil
+	} else if !ui.IsScreenRecordingTrusted() {
+		if !ui.WaitForScreenRecording(30 * time.Second) {
+			return nil, fmt.Errorf("screenshot failed: Screen Recording is still not granted — enable axmcp.app in System Settings > Privacy & Security and retry")
+		}
+		png, retryErr := captureWindowCG(win)
+		if retryErr == nil {
+			return png, nil
+		}
+		return nil, fmt.Errorf("capture window %q (id=%d): CGWindowListCreateImage: %v; after permission: %w", win.Title, win.WindowID, err, retryErr)
+	} else {
+		return nil, fmt.Errorf("capture window %q (id=%d): CGWindowListCreateImage: %w", win.Title, win.WindowID, err)
+	}
 }
 
 // captureWindowCG captures a window screenshot using CGWindowListCreateImage.

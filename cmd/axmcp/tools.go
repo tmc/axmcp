@@ -1053,6 +1053,14 @@ Set padding to expand the capture rect around a targeted element by N pixels on 
 // without any AX IPC. This avoids hanging on apps whose accessibility
 // implementation is unresponsive (e.g. VM windows).
 func captureWindowByName(appName string) ([]byte, error) {
+	return captureWindowByNameWith(appName, captureWindow)
+}
+
+func captureWindowByNameLegacy(appName string) ([]byte, error) {
+	return captureWindowByNameWith(appName, captureWindowLegacy)
+}
+
+func captureWindowByNameWith(appName string, capture func(windowInfo) ([]byte, error)) ([]byte, error) {
 	diagf("captureWindowByName: start app=%s\n", appName)
 
 	diagf("captureWindowByName: listing windows\n")
@@ -1062,7 +1070,7 @@ func captureWindowByName(appName string) ([]byte, error) {
 	}
 	diagf("captureWindowByName: found %d windows, firstID=%d\n", len(windows), windows[0].WindowID)
 
-	png, err := captureWindow(windows[0])
+	png, err := capture(windows[0])
 	if err != nil {
 		return nil, err
 	}
