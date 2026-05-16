@@ -160,6 +160,16 @@ func TestEvaluateJavascriptBuildsAppleScriptTarget(t *testing.T) {
 	}
 }
 
+func TestEvaluateCDPJavascriptToolInSpec(t *testing.T) {
+	tools := orderedComputerUseTools()
+	for _, tool := range tools {
+		if tool.Name == "evaluate_cdp_javascript" {
+			return
+		}
+	}
+	t.Fatalf("evaluate_cdp_javascript missing from ordered tool spec")
+}
+
 func TestTrajectoryRecorderRecordsActionArgs(t *testing.T) {
 	rec := newTrajectoryRecorder()
 	if out := rec.set(true, true); !out.Enabled || out.Count != 0 {

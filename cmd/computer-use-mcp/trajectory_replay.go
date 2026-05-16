@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
+	"github.com/tmc/axmcp/internal/cdp"
 	"github.com/tmc/axmcp/internal/computeruse"
 	"github.com/tmc/axmcp/internal/computeruse/input"
 	"github.com/tmc/axmcp/internal/skylightinput"
@@ -60,6 +62,12 @@ func (rt *runtimeState) replayTrajectoryStep(ctx context.Context, step trajector
 			return nil, err
 		}
 		return rt.replayEvaluateJavascript(ctx, args)
+	case "evaluate_cdp_javascript":
+		var args evaluateCDPJavascriptInput
+		if err := decodeStepArgs(step, &args); err != nil {
+			return nil, err
+		}
+		return rt.replayEvaluateCDPJavascript(ctx, args)
 	default:
 		return nil, fmt.Errorf("unsupported recorded tool %q", step.Tool)
 	}
@@ -289,4 +297,25 @@ func (rt *runtimeState) replayEvaluateJavascript(ctx context.Context, args evalu
 		return evaluateJavascriptOutput{}, err
 	}
 	return evaluateJavascriptOutput{SessionID: state.SessionID, StateID: state.StateID, Action: "evaluate_javascript", Result: result}, nil
+}
+
+func (rt *runtimeState) replayEvaluateCDPJavascript(ctx context.Context, args evaluateCDPJavascriptInput) (evaluateCDPJavascriptOutput, error) {
+	state, err := rt.bindReplayState(ctx, args.App)
+	if err != nil {
+		return evaluateCDPJavascriptOutput{}, err
+	}
+	pid := args.PID
+	if pid == 0 {
+		pid = state.App.PID
+	}
+	result, err := cdp.Evaluate(ctx, cdp.EvaluateOptions{
+		PID:     pid,
+		Port:    args.Port,
+		Script:  args.Script,
+		Timeout: time.Duration(args.Timeout * float64(time.Second)),
+	})
+	if err != nil {
+		return evaluateCDPJavascriptOutput{}, err
+	}
+	return evaluateCDPJavascriptOutput{SessionID: state.SessionID, StateID: state.StateID, Action: "evaluate_cdp_javascript", Type: result.Type, Value: result.Value, Description: result.Description}, nil
 }

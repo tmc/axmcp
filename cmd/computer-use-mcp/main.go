@@ -216,7 +216,7 @@ func computerUseInstructions() string {
 		"Begin by calling `get_app_state` every turn you want to use Computer Use to get the latest state before acting. Codex will automatically stop the session after each assistant turn, so this step is required before interacting with apps in a new assistant turn.",
 		"Pass the returned `state_id` to every action tool. If an action reports `requires_refresh`, call `get_app_state` again and retry against the fresh state.",
 		"",
-		"The available tools are list_apps, get_app_state, set_recording, replay_trajectory, click, perform_secondary_action, scroll, drag, type_text, press_key, set_value, and evaluate_javascript. If any of these are not available in your environment, use tool_search to surface one before calling any Computer Use action tools.",
+		"The available tools are list_apps, get_app_state, set_recording, replay_trajectory, click, perform_secondary_action, scroll, drag, type_text, press_key, set_value, evaluate_javascript, and evaluate_cdp_javascript. If any of these are not available in your environment, use tool_search to surface one before calling any Computer Use action tools.",
 		"",
 		"Computer Use tools allow you to use the user's apps in the background, so while you're using an app, the user can continue to use other apps on their computer. Avoid doing anything that would disrupt the user's active session, such as overwriting the contents of their clipboard, unless they asked you to!",
 		"",
@@ -227,7 +227,7 @@ func computerUseInstructions() string {
 		"After each action, use the action result or fetch the latest state to verify the UI changed as expected.",
 		"Prefer element-targeted interactions over coordinate clicks when an index for the targeted element is available. Note that element indices are the sequential integers from the app state's accessibility tree.",
 		"Prefer type_text with element_index when a text target is available; omit element_index only when you intentionally want to type into the app's currently focused element.",
-		"Prefer Computer Use tools as much as possible to complete tasks. Use evaluate_javascript only as a browser fallback when the accessibility tree cannot expose or operate the needed page state.",
+		"Prefer Computer Use tools as much as possible to complete tasks. Use evaluate_javascript only as a browser fallback when the accessibility tree cannot expose or operate the needed page state. Use evaluate_cdp_javascript for local Electron or Chromium DevTools targets when Apple Events are unavailable.",
 		"Ask the user before taking destructive or externally visible actions such as sending, deleting, or purchasing. If helpful, you can ask follow-up questions before taking action to make sure you’re understanding the user’s request correctly.",
 	}, "\n")
 }

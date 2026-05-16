@@ -74,11 +74,29 @@ type evaluateJavascriptInput struct {
 	TabIndex    int    `json:"tab_index,omitempty"`
 }
 
+type evaluateCDPJavascriptInput struct {
+	App     string  `json:"app"`
+	StateID string  `json:"state_id"`
+	Script  string  `json:"script"`
+	PID     int     `json:"pid,omitempty"`
+	Port    int     `json:"port,omitempty"`
+	Timeout float64 `json:"timeout,omitempty"`
+}
+
 type evaluateJavascriptOutput struct {
 	SessionID string `json:"session_id,omitempty"`
 	StateID   string `json:"state_id,omitempty"`
 	Action    string `json:"action,omitempty"`
 	Result    string `json:"result,omitempty"`
+}
+
+type evaluateCDPJavascriptOutput struct {
+	SessionID   string `json:"session_id,omitempty"`
+	StateID     string `json:"state_id,omitempty"`
+	Action      string `json:"action,omitempty"`
+	Type        string `json:"type,omitempty"`
+	Value       any    `json:"value,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 func textResult(text string) *mcp.CallToolResult {

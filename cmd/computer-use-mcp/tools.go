@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/tmc/axmcp/internal/cdp"
 	"github.com/tmc/axmcp/internal/computeruse"
 	"github.com/tmc/axmcp/internal/computeruse/appstate"
 	"github.com/tmc/axmcp/internal/computeruse/input"
@@ -34,6 +35,7 @@ func registerComputerUseTools(s *mcp.Server, rt *runtimeState) {
 	registerPressKey(s, rt)
 	registerTypeText(s, rt)
 	registerEvaluateJavascript(s, rt)
+	registerEvaluateCDPJavascript(s, rt)
 }
 
 func registerListApps(s *mcp.Server, rt *runtimeState) {
@@ -611,6 +613,56 @@ func registerEvaluateJavascript(s *mcp.Server, rt *runtimeState) {
 			Result:    result,
 		}
 		rt.recording.record("evaluate_javascript", args, out)
+		return &mcp.CallToolResult{}, out, nil
+	})
+}
+
+func registerEvaluateCDPJavascript(s *mcp.Server, rt *runtimeState) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "evaluate_cdp_javascript",
+		Description: "Evaluate JavaScript in a local Electron or Chromium DevTools target. When pid is provided, SIGUSR1 is sent first to start Electron/Node inspector.",
+		Annotations: actionToolAnnotations(),
+		InputSchema: exactObjectSchema(map[string]any{
+			"app":      stringProperty("App name or bundle identifier"),
+			"pid":      integerProperty("Process ID to signal with SIGUSR1 before probing. Defaults to the app PID from state"),
+			"port":     integerProperty("Local DevTools port. Defaults to probing 9229 through 9239"),
+			"script":   stringProperty("JavaScript source to evaluate"),
+			"state_id": stringProperty("State token returned by get_app_state"),
+			"timeout":  numberProperty("Seconds to wait for a DevTools target. Defaults to 2"),
+		}, "app", "state_id", "script"),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args evaluateCDPJavascriptInput) (*mcp.CallToolResult, any, error) {
+		if res, payload, ok := actionBlockedForPermissions("evaluate_cdp_javascript"); ok {
+			return res, payload, nil
+		}
+		if res, payload, ok := actionBlockedForIntervention(rt, "evaluate_cdp_javascript"); ok {
+			return res, payload, nil
+		}
+		state, err := stateForAction(rt, "evaluate_cdp_javascript", args.App, args.StateID)
+		if err != nil {
+			return staleStateResult("evaluate_cdp_javascript", err)
+		}
+		pid := args.PID
+		if pid == 0 {
+			pid = state.App.PID
+		}
+		result, err := cdp.Evaluate(ctx, cdp.EvaluateOptions{
+			PID:     pid,
+			Port:    args.Port,
+			Script:  args.Script,
+			Timeout: time.Duration(args.Timeout * float64(time.Second)),
+		})
+		if err != nil {
+			return toolError(err), nil, nil
+		}
+		out := evaluateCDPJavascriptOutput{
+			SessionID:   state.SessionID,
+			StateID:     state.StateID,
+			Action:      "evaluate_cdp_javascript",
+			Type:        result.Type,
+			Value:       result.Value,
+			Description: result.Description,
+		}
+		rt.recording.record("evaluate_cdp_javascript", args, out)
 		return &mcp.CallToolResult{}, out, nil
 	})
 }

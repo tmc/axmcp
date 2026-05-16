@@ -207,5 +207,18 @@ func orderedComputerUseTools() []*mcp.Tool {
 				"window_index": integerProperty("1-based window index. Defaults to the front window"),
 			}, "app", "state_id", "script"),
 		},
+		{
+			Name:        "evaluate_cdp_javascript",
+			Description: "Evaluate JavaScript in a local Electron or Chromium DevTools target. When pid is provided, SIGUSR1 is sent first to start Electron/Node inspector.",
+			Annotations: actionToolAnnotations(),
+			InputSchema: exactObjectSchema(map[string]any{
+				"app":      stringProperty("App name or bundle identifier"),
+				"pid":      integerProperty("Process ID to signal with SIGUSR1 before probing. Defaults to the app PID from state"),
+				"port":     integerProperty("Local DevTools port. Defaults to probing 9229 through 9239"),
+				"script":   stringProperty("JavaScript source to evaluate"),
+				"state_id": stringProperty("State token returned by get_app_state"),
+				"timeout":  numberProperty("Seconds to wait for a DevTools target. Defaults to 2"),
+			}, "app", "state_id", "script"),
+		},
 	}
 }
