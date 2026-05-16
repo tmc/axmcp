@@ -26,6 +26,8 @@ type Status struct {
 	QuietPeriod time.Duration
 	LastInput   time.Time
 	LastType    string
+	LastKind    string
+	LastPID     int64
 }
 
 // Monitor records that physical input happened recently.
@@ -36,6 +38,8 @@ type Monitor struct {
 	enabled   bool
 	lastInput time.Time
 	lastType  string
+	lastKind  string
+	lastPID   int64
 
 	tap    corefoundation.CFMachPortRef
 	source corefoundation.CFRunLoopSourceRef
@@ -114,12 +118,20 @@ func (m *Monitor) Close() {
 
 // Record records a physical input event. It is exported for tests.
 func (m *Monitor) Record(kind string, now time.Time) {
+	m.RecordEvent(kind, kind, 0, now)
+}
+
+// RecordEvent records a physical input event with normalized kind and source.
+// It is exported for tests.
+func (m *Monitor) RecordEvent(eventType, kind string, sourcePID int64, now time.Time) {
 	if m == nil || !m.isEnabled() {
 		return
 	}
 	m.mu.Lock()
 	m.lastInput = now
-	m.lastType = kind
+	m.lastType = eventType
+	m.lastKind = kind
+	m.lastPID = sourcePID
 	m.mu.Unlock()
 }
 
@@ -144,6 +156,8 @@ func (m *Monitor) Status() Status {
 		QuietPeriod: m.quietPeriod,
 		LastInput:   m.lastInput,
 		LastType:    m.lastType,
+		LastKind:    m.lastKind,
+		LastPID:     m.lastPID,
 	}
 }
 
@@ -163,11 +177,25 @@ func (m *Monitor) callback(_ uintptr, typ coregraphics.CGEventType, event uintpt
 		}
 		return event
 	}
-	if eventSourcePID(event) == int64(os.Getpid()) {
+	sourcePID := eventSourcePID(event)
+	if sourcePID == int64(os.Getpid()) {
 		return event
 	}
-	m.Record(typ.String(), time.Now())
+	m.RecordEvent(typ.String(), eventKind(typ), sourcePID, time.Now())
 	return event
+}
+
+func eventKind(typ coregraphics.CGEventType) string {
+	switch typ {
+	case coregraphics.KCGEventKeyDown, coregraphics.KCGEventFlagsChanged:
+		return "keyboard"
+	case coregraphics.KCGEventLeftMouseDown, coregraphics.KCGEventRightMouseDown, coregraphics.KCGEventOtherMouseDown:
+		return "mouse"
+	case coregraphics.KCGEventScrollWheel:
+		return "scroll"
+	default:
+		return "input"
+	}
 }
 
 func eventSourcePID(event uintptr) int64 {

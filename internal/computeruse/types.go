@@ -102,6 +102,9 @@ type ActionResult struct {
 	Target          string `json:"target,omitempty"`
 	Message         string `json:"message,omitempty"`
 	RequiresRefresh bool   `json:"requires_refresh,omitempty"`
+	BlockReason     string `json:"block_reason,omitempty"`
+	BlockEventType  string `json:"block_event_type,omitempty"`
+	BlockSourcePID  int64  `json:"block_source_pid,omitempty"`
 }
 
 // InstructionProvider returns app-specific guidance for a snapshot.

@@ -94,7 +94,7 @@ func TestRequiresRefreshResult(t *testing.T) {
 
 func TestActionBlockedForIntervention(t *testing.T) {
 	monitor := intervention.New(intervention.Config{Enabled: true, QuietPeriod: time.Second})
-	monitor.Record("KCGEventKeyDown", time.Now())
+	monitor.RecordEvent("KCGEventKeyDown", "keyboard", 4321, time.Now())
 	rt := &runtimeState{intervention: monitor}
 
 	res, payload, ok := actionBlockedForIntervention(rt, "click")
@@ -106,6 +106,15 @@ func TestActionBlockedForIntervention(t *testing.T) {
 	}
 	if !payload.RequiresRefresh {
 		t.Fatalf("RequiresRefresh = false, want true")
+	}
+	if payload.BlockReason != "physical_user_keyboard" {
+		t.Fatalf("BlockReason = %q, want physical_user_keyboard", payload.BlockReason)
+	}
+	if payload.BlockEventType != "KCGEventKeyDown" {
+		t.Fatalf("BlockEventType = %q, want KCGEventKeyDown", payload.BlockEventType)
+	}
+	if payload.BlockSourcePID != 4321 {
+		t.Fatalf("BlockSourcePID = %d, want 4321", payload.BlockSourcePID)
 	}
 }
 

@@ -3,6 +3,8 @@ package intervention
 import (
 	"testing"
 	"time"
+
+	"github.com/tmc/apple/coregraphics"
 )
 
 func TestMonitorDisabledDoesNotBlock(t *testing.T) {
@@ -17,7 +19,7 @@ func TestMonitorDisabledDoesNotBlock(t *testing.T) {
 func TestMonitorBlocksDuringQuietPeriod(t *testing.T) {
 	m := New(Config{Enabled: true, QuietPeriod: time.Second})
 	now := time.Unix(10, 0)
-	m.Record("KCGEventKeyDown", now)
+	m.RecordEvent("KCGEventKeyDown", "keyboard", 1234, now)
 
 	status, blocked := m.Blocked(now.Add(500 * time.Millisecond))
 	if !blocked {
@@ -26,7 +28,30 @@ func TestMonitorBlocksDuringQuietPeriod(t *testing.T) {
 	if status.LastType != "KCGEventKeyDown" {
 		t.Fatalf("LastType = %q, want KCGEventKeyDown", status.LastType)
 	}
+	if status.LastKind != "keyboard" {
+		t.Fatalf("LastKind = %q, want keyboard", status.LastKind)
+	}
+	if status.LastPID != 1234 {
+		t.Fatalf("LastPID = %d, want 1234", status.LastPID)
+	}
 	if _, blocked := m.Blocked(now.Add(2 * time.Second)); blocked {
 		t.Fatalf("Blocked after quiet period = true, want false")
+	}
+}
+
+func TestEventKind(t *testing.T) {
+	tests := []struct {
+		name string
+		typ  coregraphics.CGEventType
+		want string
+	}{
+		{name: "key", typ: coregraphics.KCGEventKeyDown, want: "keyboard"},
+		{name: "mouse", typ: coregraphics.KCGEventLeftMouseDown, want: "mouse"},
+		{name: "scroll", typ: coregraphics.KCGEventScrollWheel, want: "scroll"},
+	}
+	for _, tt := range tests {
+		if got := eventKind(tt.typ); got != tt.want {
+			t.Fatalf("%s: eventKind(%s) = %q, want %q", tt.name, tt.typ, got, tt.want)
+		}
 	}
 }

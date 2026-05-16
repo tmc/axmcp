@@ -548,11 +548,22 @@ func actionBlockedForIntervention(rt *runtimeState, action string) (*mcp.CallToo
 	if wait < 0 {
 		wait = 0
 	}
-	msg := fmt.Sprintf("physical user input detected recently (%s); wait %s and call get_app_state again", status.LastType, wait.Round(100*time.Millisecond))
+	kind := status.LastKind
+	if kind == "" {
+		kind = "input"
+	}
+	eventType := status.LastType
+	if eventType == "" {
+		eventType = kind
+	}
+	msg := fmt.Sprintf("physical %s detected recently (%s); wait %s and call get_app_state again", kind, eventType, wait.Round(100*time.Millisecond))
 	return toolError(fmt.Errorf("%s", msg)), computeruse.ActionResult{
 		Action:          action,
 		Message:         msg,
 		RequiresRefresh: true,
+		BlockReason:     "physical_user_" + kind,
+		BlockEventType:  eventType,
+		BlockSourcePID:  status.LastPID,
 	}, true
 }
 
