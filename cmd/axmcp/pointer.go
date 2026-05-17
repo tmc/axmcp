@@ -550,21 +550,18 @@ func centerClickPoint(snapshot elementSnapshot) (int, int, bool) {
 func prefersAXPress(role string) bool {
 	role = strings.TrimSpace(role)
 	switch role {
-	case "AXRadioButton":
+	case "AXCheckBox", "AXRadioButton", "AXSwitch":
 		return false
 	}
 	switch role {
 	case "AXButton",
-		"AXCheckBox",
 		"AXDisclosureTriangle",
 		"AXLink",
 		"AXMenuBarItem",
 		"AXMenuButton",
 		"AXMenuItem",
 		"AXPopUpButton",
-		"AXRadioButton",
 		"AXSegment",
-		"AXSwitch",
 		"AXTab":
 		return true
 	}

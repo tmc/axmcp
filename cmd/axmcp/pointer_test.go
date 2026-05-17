@@ -103,7 +103,9 @@ func TestPrefersAXPress(t *testing.T) {
 	}{
 		{role: "AXButton", want: true},
 		{role: "AXMenuItem", want: true},
+		{role: "AXCheckBox", want: false},
 		{role: "AXRadioButton", want: false},
+		{role: "AXSwitch", want: false},
 		{role: "AXTextField", want: false},
 		{role: "AXSearchField", want: false},
 		{role: "AXRow", want: false},
