@@ -160,6 +160,41 @@ func TestClickToolExposesForegroundHIDFallback(t *testing.T) {
 	t.Fatalf("click tool missing")
 }
 
+func TestGetAppStateExposesOmitScreenshot(t *testing.T) {
+	for _, tool := range orderedComputerUseTools() {
+		if tool.Name != "get_app_state" {
+			continue
+		}
+		schema := normalizeJSON(t, tool.InputSchema).(map[string]any)
+		props := schema["properties"].(map[string]any)
+		if _, ok := props["omit_screenshot"]; !ok {
+			t.Fatalf("get_app_state schema missing omit_screenshot: %#v", props)
+		}
+		return
+	}
+	t.Fatalf("get_app_state tool missing")
+}
+
+func TestAppStateResponseOmitScreenshot(t *testing.T) {
+	state := computeruse.AppState{
+		ScreenshotPNGBase64: "base64",
+		Window: computeruse.WindowInfo{
+			ScreenshotWidth:  100,
+			ScreenshotHeight: 50,
+		},
+	}
+	got := appStateResponse(state, true)
+	if got.ScreenshotPNGBase64 != "" {
+		t.Fatalf("ScreenshotPNGBase64 = %q, want empty", got.ScreenshotPNGBase64)
+	}
+	if got.Window.ScreenshotWidth != 100 || got.Window.ScreenshotHeight != 50 {
+		t.Fatalf("Window dimensions = %#v, want preserved", got.Window)
+	}
+	if full := appStateResponse(state, false); full.ScreenshotPNGBase64 != "base64" {
+		t.Fatalf("full ScreenshotPNGBase64 = %q, want preserved", full.ScreenshotPNGBase64)
+	}
+}
+
 func TestEvaluateJavascriptBuildsAppleScriptTarget(t *testing.T) {
 	if got := browserScriptTarget(computeruse.AppInfo{BundleID: "com.brave.Browser", Name: "Brave Browser"}); got != `id "com.brave.Browser"` {
 		t.Fatalf("browserScriptTarget bundle = %q", got)

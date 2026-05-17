@@ -9,7 +9,8 @@ import (
 type listAppsInput struct{}
 
 type getAppStateInput struct {
-	App string `json:"app"`
+	App            string `json:"app"`
+	OmitScreenshot bool   `json:"omit_screenshot,omitempty"`
 }
 
 type clickInput struct {

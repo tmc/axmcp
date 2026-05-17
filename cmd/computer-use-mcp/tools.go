@@ -58,10 +58,11 @@ func registerListApps(s *mcp.Server, rt *runtimeState) {
 func registerGetAppState(s *mcp.Server, rt *runtimeState) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_app_state",
-		Description: "Start an app use session if needed, then get the state of the app's key window and return a screenshot and accessibility tree. This must be called once per assistant turn before interacting with the app",
+		Description: "Start an app use session if needed, then get the state of the app's key window and return a screenshot and accessibility tree. This must be called once per assistant turn before interacting with the app. Set omit_screenshot=true for compact automation logs that only need app/window metadata and element IDs.",
 		Annotations: readOnlyToolAnnotations(),
 		InputSchema: exactObjectSchema(map[string]any{
-			"app": stringProperty("App name or bundle identifier"),
+			"app":             stringProperty("App name or bundle identifier"),
+			"omit_screenshot": booleanProperty("Omit screenshot_png_base64 from the returned state. The state_id remains valid for element-index actions; pixel-coordinate actions still require coordinates derived from a screenshot."),
 		}, "app"),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args getAppStateInput) (*mcp.CallToolResult, any, error) {
 		info, err := appstate.ResolveApp(ctx, args.App)
@@ -109,10 +110,17 @@ func registerGetAppState(s *mcp.Server, rt *runtimeState) {
 		state.Permissions = permissions
 		if approvalErr != nil {
 			state.Approval.Message = approvalErr.Error()
-			return textResult(state.Approval.Message), state, nil
+			return textResult(state.Approval.Message), appStateResponse(state, args.OmitScreenshot), nil
 		}
-		return &mcp.CallToolResult{}, state, nil
+		return &mcp.CallToolResult{}, appStateResponse(state, args.OmitScreenshot), nil
 	})
+}
+
+func appStateResponse(state computeruse.AppState, omitScreenshot bool) computeruse.AppState {
+	if omitScreenshot {
+		state.ScreenshotPNGBase64 = ""
+	}
+	return state
 }
 
 func registerSetRecording(s *mcp.Server, rt *runtimeState) {

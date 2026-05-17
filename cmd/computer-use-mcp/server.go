@@ -89,10 +89,11 @@ func orderedComputerUseTools() []*mcp.Tool {
 		},
 		{
 			Name:        "get_app_state",
-			Description: "Start an app use session if needed, then get the state of the app's key window and return a screenshot and accessibility tree. This must be called once per assistant turn before interacting with the app",
+			Description: "Start an app use session if needed, then get the state of the app's key window and return a screenshot and accessibility tree. This must be called once per assistant turn before interacting with the app. Set omit_screenshot=true for compact automation logs that only need app/window metadata and element IDs.",
 			Annotations: readOnlyToolAnnotations(),
 			InputSchema: exactObjectSchema(map[string]any{
-				"app": stringProperty("App name or bundle identifier"),
+				"app":             stringProperty("App name or bundle identifier"),
+				"omit_screenshot": booleanProperty("Omit screenshot_png_base64 from the returned state. The state_id remains valid for element-index actions; pixel-coordinate actions still require coordinates derived from a screenshot."),
 			}, "app"),
 		},
 		{
