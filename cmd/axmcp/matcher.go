@@ -124,7 +124,7 @@ func snapshotElement(element *axuiautomation.Element, depth, index int) elementS
 	role := displayString(element.Role())
 	// Checkboxes/switches store AXValue as CFNumber; Value() returns "".
 	value := displayString(element.Value())
-	if value == "" && (role == "AXCheckBox" || role == "AXSwitch" || role == "AXRadioButton") {
+	if value == "" && isCheckableRole(role) {
 		if element.IsChecked() {
 			value = "1"
 		} else {
@@ -149,6 +149,43 @@ func snapshotElement(element *axuiautomation.Element, depth, index int) elementS
 		h:               h,
 	}
 	return elementSnapshot{element: element, record: record}
+}
+
+func isCheckableRole(role string) bool {
+	switch strings.TrimSpace(role) {
+	case "AXCheckBox", "AXRadioButton", "AXSwitch":
+		return true
+	default:
+		return false
+	}
+}
+
+func checkedStateFromValue(role, value string) (*bool, string) {
+	if !isCheckableRole(role) {
+		return nil, ""
+	}
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "on", "yes":
+		checked := true
+		return &checked, "on"
+	case "0", "false", "off", "no":
+		checked := false
+		return &checked, "off"
+	default:
+		return nil, ""
+	}
+}
+
+func postActionStateNote(snapshot elementSnapshot) string {
+	if snapshot.element == nil || !isCheckableRole(snapshot.record.role) {
+		return ""
+	}
+	after := snapshotElement(snapshot.element, snapshot.record.depth, snapshot.record.index)
+	_, state := checkedStateFromValue(after.record.role, after.record.value)
+	if state == "" {
+		return ""
+	}
+	return "post-action: " + formatSnapshot(after)
 }
 
 func isActionableRole(role string) bool {
@@ -381,6 +418,9 @@ func formatRecord(record elementRecord) string {
 	}
 	if record.desc != "" && record.desc != record.title {
 		parts = append(parts, fmt.Sprintf("desc=%q", record.desc))
+	}
+	if _, state := checkedStateFromValue(record.role, record.value); state != "" {
+		parts = append(parts, fmt.Sprintf("state=%q", state))
 	}
 	if record.value != "" && record.value != record.title && record.value != record.desc {
 		parts = append(parts, fmt.Sprintf("value=%q", record.value))

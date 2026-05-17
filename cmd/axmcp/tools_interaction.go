@@ -436,16 +436,20 @@ func registerAXKeyStroke(s *mcp.Server) {
 // ── ax_perform_action ─────────────────────────────────────────────────────────
 
 type axPerformActionInput struct {
-	App      string `json:"app"`
-	Contains string `json:"contains"`
-	Role     string `json:"role,omitempty"`
-	Action   string `json:"action"`
+	App          string `json:"app"`
+	Window       string `json:"window,omitempty"`
+	Contains     string `json:"contains,omitempty"`
+	Role         string `json:"role,omitempty"`
+	ElementIndex *int   `json:"element_index,omitempty"`
+	Depth        int    `json:"depth,omitempty"`
+	AppRoot      bool   `json:"app_root,omitempty"`
+	Action       string `json:"action"`
 }
 
 func registerAXPerformAction(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "ax_perform_action",
-		Description: `Perform a named AX action on an element (e.g. AXPress, AXConfirm, AXCancel, AXShowMenu, AXIncrement, AXDecrement, AXRaise).`,
+		Description: `Perform a named AX action on an element (e.g. AXPress, AXConfirm, AXCancel, AXShowMenu, AXIncrement, AXDecrement, AXRaise). Use element_index with the same window/app_root/depth scope as ax_tree to target a specific indexed node.`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axPerformActionInput) (*mcp.CallToolResult, any, error) {
 		app, err := spinAndOpen(args.App)
 		if err != nil {
@@ -453,7 +457,38 @@ func registerAXPerformAction(s *mcp.Server) {
 		}
 		defer app.Close()
 
-		result := findElements(app.Root(), searchOptions{
+		if args.ElementIndex != nil {
+			root, scope, err := resolveSnapshotRoot(app, args.Window, args.AppRoot)
+			if err != nil {
+				return nil, nil, err
+			}
+			snapshot, err := resolveAXTreeIndex(root, axTreeDepth(args.Depth, 4), *args.ElementIndex)
+			if err != nil {
+				return nil, nil, fmt.Errorf("resolve %s: %w", scope, err)
+			}
+			if snapshot.element == nil {
+				return nil, nil, fmt.Errorf("action target disappeared: %s", formatSnapshot(snapshot))
+			}
+			if err := snapshot.element.PerformAction(args.Action); err != nil {
+				return nil, nil, fmt.Errorf("perform %s on %s: %w", args.Action, formatSnapshot(snapshot), err)
+			}
+			axuiautomation.SpinRunLoop(200 * time.Millisecond)
+			var buf bytes.Buffer
+			fmt.Fprintf(&buf, "performed %s on %s\nselected element_index=%d in %s", args.Action, formatSnapshot(snapshot), *args.ElementIndex, scope)
+			if note := postActionStateNote(snapshot); note != "" {
+				fmt.Fprintf(&buf, "\n%s", note)
+			}
+			return textResult(buf.String()), nil, nil
+		}
+		if args.Contains == "" && args.Role == "" {
+			return nil, nil, fmt.Errorf("provide element_index or at least one of contains or role")
+		}
+
+		root, _, err := resolveSearchRoot(app, args.Window)
+		if err != nil {
+			return nil, nil, err
+		}
+		result := findElements(root, searchOptions{
 			Role:     args.Role,
 			Contains: args.Contains,
 			Limit:    100,
@@ -473,6 +508,9 @@ func registerAXPerformAction(s *mcp.Server) {
 		var buf bytes.Buffer
 		fmt.Fprintf(&buf, "performed %s on %s", args.Action, formatMatch(result.matches[0]))
 		if note := selectionReason(result); note != "" {
+			fmt.Fprintf(&buf, "\n%s", note)
+		}
+		if note := postActionStateNote(result.matches[0].snapshot); note != "" {
 			fmt.Fprintf(&buf, "\n%s", note)
 		}
 		return textResult(buf.String()), nil, nil

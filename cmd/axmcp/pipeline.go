@@ -766,7 +766,7 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 			// Checkboxes/switches store AXValue as CFNumber; Value() returns "".
 			if val == "" {
 				role := el.Role()
-				if role == "AXCheckBox" || role == "AXSwitch" || role == "AXRadioButton" {
+				if isCheckableRole(role) {
 					if el.IsChecked() {
 						val = "1"
 					} else {

@@ -139,7 +139,7 @@ Non-empty JSON with a `"tools"` array means the binary is healthy and its stdio 
 axmcp
 ```
 
-Exposes `ax_apps`, `ax_tree`, `ax_find`, `ax_focus`, `ax_click`, `ax_drag`, `ax_type`, `ax_menu`, `ax_set_value`, `ax_perform_action`, `ax_keystroke`, `ax_zoom`, `ax_pinch`, `ax_screenshot`, `ax_ocr`, `ax_ocr_diff`, `ax_action_screenshot`, `ax_ocr_action_diff`, `ax_ocr_click`, `ax_ocr_hover`, plus window-scoped variants (`ax_window_*`).
+Exposes `ax_apps`, `ax_tree`, `ax_find`, `ax_focus`, `ax_click`, `ax_drag`, `ax_type`, `ax_menu`, `ax_set_value`, `ax_perform_action`, `ax_keystroke`, `ax_zoom`, `ax_pinch`, `ax_screenshot`, `ax_ocr`, `ax_ocr_diff`, `ax_action_screenshot`, `ax_ocr_action_diff`, `ax_ocr_click`, `ax_ocr_hover`, plus window-scoped variants (`ax_window_*`). `ax_tree` reports indexed controls with switch/checkbox state and secondary actions; `ax_click` and `ax_perform_action` can target those indexes directly.
 
 **Work with Xcode and simulators:**
 

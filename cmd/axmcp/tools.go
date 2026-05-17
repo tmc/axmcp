@@ -152,7 +152,7 @@ func elementAttrs(e *axuiautomation.Element) map[string]any {
 	// Value() can't read (returns ""). Use IsChecked() instead.
 	var val any
 	role := e.Role()
-	if role == "AXCheckBox" || role == "AXSwitch" || role == "AXRadioButton" {
+	if isCheckableRole(role) {
 		if e.IsChecked() {
 			val = 1
 		} else {
@@ -196,6 +196,8 @@ type axTreeNode struct {
 	Role             string   `json:"role,omitempty"`
 	Title            string   `json:"title,omitempty"`
 	Value            string   `json:"value,omitempty"`
+	Checked          *bool    `json:"checked,omitempty"`
+	State            string   `json:"state,omitempty"`
 	Description      string   `json:"description,omitempty"`
 	Identifier       string   `json:"identifier,omitempty"`
 	RoleDescription  string   `json:"role_description,omitempty"`
@@ -251,6 +253,7 @@ func collectAXTreeNodes(root *axuiautomation.Element, maxDepth int) []axTreeNode
 		index := len(nodes)
 		snapshot := snapshotElement(item.element, item.depth, index)
 		record := snapshot.record
+		checked, state := checkedStateFromValue(record.role, record.value)
 		nodes = append(nodes, axTreeNode{
 			Index:            index,
 			ParentIndex:      item.parent,
@@ -258,6 +261,8 @@ func collectAXTreeNodes(root *axuiautomation.Element, maxDepth int) []axTreeNode
 			Role:             record.role,
 			Title:            record.title,
 			Value:            record.value,
+			Checked:          checked,
+			State:            state,
 			Description:      record.desc,
 			Identifier:       record.identifier,
 			RoleDescription:  record.roleDescription,
@@ -280,6 +285,50 @@ func collectAXTreeNodes(root *axuiautomation.Element, maxDepth int) []axTreeNode
 	return nodes
 }
 
+func resolveAXTreeIndex(root *axuiautomation.Element, maxDepth, target int) (elementSnapshot, error) {
+	if target < 0 {
+		return elementSnapshot{}, fmt.Errorf("element_index must be non-negative")
+	}
+	if root == nil {
+		return elementSnapshot{}, fmt.Errorf("no root element")
+	}
+	if maxDepth < 0 {
+		maxDepth = 0
+	}
+	type queueItem struct {
+		element *axuiautomation.Element
+		depth   int
+	}
+	queue := []queueItem{{element: root}}
+	index := 0
+	for len(queue) > 0 {
+		item := queue[0]
+		queue = queue[1:]
+		if item.element == nil || item.depth > maxDepth {
+			continue
+		}
+		snapshot := snapshotElement(item.element, item.depth, index)
+		if index == target {
+			return snapshot, nil
+		}
+		index++
+		if item.depth == maxDepth {
+			continue
+		}
+		for _, child := range item.element.Children() {
+			queue = append(queue, queueItem{element: child, depth: item.depth + 1})
+		}
+	}
+	return elementSnapshot{}, fmt.Errorf("element_index %d not found (tree has %d nodes at depth %d)", target, index, maxDepth)
+}
+
+func axTreeDepth(depth, fallback int) int {
+	if depth <= 0 {
+		return fallback
+	}
+	return depth
+}
+
 func treeTextIndexed(nodes []axTreeNode) string {
 	var b strings.Builder
 	for _, node := range nodes {
@@ -290,6 +339,9 @@ func treeTextIndexed(nodes []axTreeNode) string {
 		}
 		if node.Description != "" && node.Description != node.Title {
 			fmt.Fprintf(&b, " desc=%q", node.Description)
+		}
+		if node.State != "" {
+			fmt.Fprintf(&b, " state=%q", node.State)
 		}
 		if node.Value != "" && node.Value != node.Title && node.Value != node.Description {
 			fmt.Fprintf(&b, " value=%q", node.Value)
@@ -453,10 +505,7 @@ func registerAXTree(s *mcp.Server) {
 			return nil, nil, err
 		}
 		defer app.Close()
-		depth := args.Depth
-		if depth <= 0 {
-			depth = 4
-		}
+		depth := axTreeDepth(args.Depth, 4)
 		root, scope, err := resolveSnapshotRoot(app, args.Window, args.AppRoot)
 		if err != nil {
 			return nil, nil, err
@@ -497,10 +546,7 @@ func registerAXSnapshot(s *mcp.Server) {
 			return nil, nil, err
 		}
 		defer app.Close()
-		depth := args.Depth
-		if depth <= 0 {
-			depth = 6
-		}
+		depth := axTreeDepth(args.Depth, 6)
 		root, scope, err := resolveSnapshotRoot(app, args.Window, args.AppRoot)
 		if err != nil {
 			return nil, nil, err
@@ -625,13 +671,16 @@ Examples:
 // ── ax_click ──────────────────────────────────────────────────────────────────
 
 type axClickInput struct {
-	App      string `json:"app"`
-	Window   string `json:"window,omitempty"`
-	Contains string `json:"contains"`
-	Role     string `json:"role,omitempty"`
-	Exact    bool   `json:"exact,omitempty"`
-	XOffset  *int   `json:"x_offset,omitempty"`
-	YOffset  *int   `json:"y_offset,omitempty"`
+	App          string `json:"app"`
+	Window       string `json:"window,omitempty"`
+	Contains     string `json:"contains,omitempty"`
+	Role         string `json:"role,omitempty"`
+	Exact        bool   `json:"exact,omitempty"`
+	ElementIndex *int   `json:"element_index,omitempty"`
+	Depth        int    `json:"depth,omitempty"`
+	AppRoot      bool   `json:"app_root,omitempty"`
+	XOffset      *int   `json:"x_offset,omitempty"`
+	YOffset      *int   `json:"y_offset,omitempty"`
 }
 
 func registerAXClick(s *mcp.Server) {
@@ -639,6 +688,7 @@ func registerAXClick(s *mcp.Server) {
 		Name: "ax_click",
 		Description: "Click an element in an app found by normalized text lookup across title, description, value, and identifier. " +
 			"Set window to scope the search to a specific window title substring. " +
+			"Set element_index to click an indexed node from ax_tree using the same window/app_root/depth scope. " +
 			"Set exact=true to require an exact text match (prevents 'Settings' from matching 'Services Settings'). " +
 			"Provide x_offset and y_offset to click at a specific point relative to the element's top-left corner. " +
 			"Use the window parameter to avoid matching system menu items when targeting in-window elements.",
@@ -648,6 +698,30 @@ func registerAXClick(s *mcp.Server) {
 			return nil, nil, err
 		}
 		defer app.Close()
+
+		if args.ElementIndex != nil {
+			root, scope, err := resolveSnapshotRoot(app, args.Window, args.AppRoot)
+			if err != nil {
+				return nil, nil, err
+			}
+			snapshot, err := resolveAXTreeIndex(root, axTreeDepth(args.Depth, 4), *args.ElementIndex)
+			if err != nil {
+				return nil, nil, fmt.Errorf("resolve %s: %w", scope, err)
+			}
+			clickSummary, err := clickResolvedSnapshot(snapshot, args.XOffset, args.YOffset)
+			if err != nil {
+				return nil, nil, fmt.Errorf("click %s: %w", formatSnapshot(snapshot), err)
+			}
+			var buf bytes.Buffer
+			fmt.Fprintf(&buf, "%s\nselected element_index=%d in %s", clickSummary, *args.ElementIndex, scope)
+			if note := postActionStateNote(snapshot); note != "" {
+				fmt.Fprintf(&buf, "\n%s", note)
+			}
+			return textResult(buf.String()), nil, nil
+		}
+		if args.Contains == "" && args.Role == "" {
+			return nil, nil, fmt.Errorf("provide element_index or at least one of contains or role")
+		}
 
 		root, _, err := resolveSearchRoot(app, args.Window)
 		if err != nil {
@@ -694,22 +768,29 @@ func registerAXClick(s *mcp.Server) {
 			return nil, nil, fmt.Errorf("click target disappeared: %s", formatMatch(match))
 		}
 
-		if args.XOffset != nil && args.YOffset != nil {
-			if err := clickLocalPoint(target, *args.XOffset, *args.YOffset); err != nil {
+		if (args.XOffset == nil) != (args.YOffset == nil) {
+			return nil, nil, fmt.Errorf("click offsets require both x_offset and y_offset")
+		}
+		if args.XOffset != nil {
+			clickSummary, err := clickResolvedSnapshot(resolution.target, args.XOffset, args.YOffset)
+			if err != nil {
 				return nil, nil, fmt.Errorf("click_at %s: %w", formatSnapshot(resolution.target), err)
 			}
 			var buf bytes.Buffer
-			fmt.Fprintf(&buf, "clicked %s at offset %d,%d", formatSnapshot(resolution.target), *args.XOffset, *args.YOffset)
+			buf.WriteString(clickSummary)
 			if note := selectionReason(result); note != "" {
 				fmt.Fprintf(&buf, "\n%s", note)
 			}
 			if resolution.reason != "" {
 				fmt.Fprintf(&buf, "\n%s", resolution.reason)
 			}
+			if note := postActionStateNote(resolution.target); note != "" {
+				fmt.Fprintf(&buf, "\n%s", note)
+			}
 			return textResult(buf.String()), nil, nil
 		}
 
-		clickSummary, err := performDefaultClick(resolution.target)
+		clickSummary, err := clickResolvedSnapshot(resolution.target, nil, nil)
 		if err != nil {
 			if !match.snapshot.record.actionable && len(resolution.actionableDescendants) > 1 {
 				var b strings.Builder
@@ -730,8 +811,27 @@ func registerAXClick(s *mcp.Server) {
 		if resolution.reason != "" {
 			fmt.Fprintf(&buf, "\n%s", resolution.reason)
 		}
+		if note := postActionStateNote(resolution.target); note != "" {
+			fmt.Fprintf(&buf, "\n%s", note)
+		}
 		return textResult(buf.String()), nil, nil
 	})
+}
+
+func clickResolvedSnapshot(snapshot elementSnapshot, xOffset, yOffset *int) (string, error) {
+	if snapshot.element == nil {
+		return "", fmt.Errorf("target disappeared")
+	}
+	if (xOffset == nil) != (yOffset == nil) {
+		return "", fmt.Errorf("click offsets require both x_offset and y_offset")
+	}
+	if xOffset != nil {
+		if err := clickLocalPoint(snapshot.element, *xOffset, *yOffset); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("clicked %s at offset %d,%d", formatSnapshot(snapshot), *xOffset, *yOffset), nil
+	}
+	return performDefaultClick(snapshot)
 }
 
 // ── ax_type ───────────────────────────────────────────────────────────────────
