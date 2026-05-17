@@ -534,37 +534,14 @@ func (c *Controller) ensureWindow() {
 	win.SetSharingType(c.overlaySharingType())
 
 	container := appkit.NewViewWithFrame(frame)
-	fog := appkit.NewVisualEffectViewWithFrame(windowFrame())
-	fog.SetState(appkit.NSVisualEffectStateActive)
-	fog.SetBlendingMode(appkit.NSVisualEffectBlendingModeBehindWindow)
-	fog.SetMaterial(appkit.NSVisualEffectMaterialHUDWindow)
-	fog.SetEmphasized(false)
-	fog.SetAlphaValue(0)
-	fog.SetWantsLayer(true)
-	fogMask := quartzcore.NewCAShapeLayer()
-	fogMask.SetFrame(windowFrame())
-	fogMask.SetContentsScale(c.layerContentsScale())
-	fogMask.SetAllowsEdgeAntialiasing(true)
-	fogMask.SetFillColor(cgColor(1, 1, 1, 1))
-	fogMask.SetStrokeColor(0)
-	fogMask.SetLineWidth(0)
-	if fogLayer := fog.Layer(); fogLayer.ID != 0 {
-		fogLayer.SetFrame(windowFrame())
-		fogLayer.SetMasksToBounds(false)
-		fogLayer.SetMask(fogMask)
-	}
-
 	overlay := appkit.NewViewWithFrame(frame)
 	overlay.SetWantsLayer(true)
 	overlay.Layer().SetFrame(windowFrame())
-	container.AddSubview(fog)
-	container.AddSubviewPositionedRelativeTo(overlay, appkit.NSWindowAbove, fog)
+	container.AddSubview(overlay)
 	win.SetContentView(container)
 	root := overlay.Layer()
 
 	c.win = win
-	c.fog = fog
-	c.fogMask = fogMask
 	c.installLayerTree(root)
 	win.SetAlphaValue(0)
 	c.startObservers()
