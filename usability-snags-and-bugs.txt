@@ -1,0 +1,13 @@
+2026-05-19 gputrace/Xcode parity pass
+
+- `axmcp screenshot --help` tries the direct screenshot path with app name
+  `--help` before printing help. It eventually prints usage, but the preamble
+  is noisy and looks like a failed screenshot command.
+- Xcode performance windows can report an empty or "untitled" window title in
+  `ax_snapshot` even when `ax_list_windows` previously showed the trace title.
+  This makes saved evidence harder to tie back to the target trace.
+- AX snapshots were useful for static evidence, but selecting Xcode performance
+  tabs and rows was more reliable through Computer Use element indexes. The
+  AX tree exposes many duplicate unlabeled buttons for the tab strip and
+  toolbar, so it is hard to target "Timeline", "Shaders", or "Counters" from
+  AXMCP alone without coordinates.
