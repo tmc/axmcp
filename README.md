@@ -2,7 +2,7 @@
 
 **Drive macOS apps the way a human does — through the Accessibility API, from an MCP client.**
 
-`axmcp` is a macOS automation toolkit built around four MCP servers and matching CLIs. It lets an LLM (or a shell script) inspect and operate native apps, Xcode projects, iOS simulators, and iPhone Mirroring with the same primitives Apple's own assistive technologies use.
+`axmcp` is a macOS automation toolkit built around MCP servers, direct CLIs, and an Accessibility-backed Chrome DevTools Protocol endpoint. It lets an LLM (or a shell script) inspect and operate native apps, Xcode projects, iOS simulators, browser DevTools clients, and iPhone Mirroring with the same primitives Apple's own assistive technologies use.
 
 | Server | What it drives | Shape |
 | --- | --- | --- |
@@ -10,19 +10,21 @@
 | `cmd/xcmcp` | Xcode, simulators, physical devices, previews, App Store Connect | Toolset-gated, ~40 tools on demand |
 | `cmd/computer-use-mcp` | Codex Computer Use contract on top of axmcp primitives | Exactly the 9-tool spec, session-stateful |
 | `cmd/iphonemirror-mcp` | Apple's iPhone Mirroring app through OCR, focus, and synthetic input | iOS remote-control surface |
+| `cmd/axcdp` | macOS Accessibility exposed through a CDP remote-debugging endpoint | AX-backed CDP subset, plus optional browser-CDP proxy |
 
-If you want an LLM to click through a real app: `axmcp`. If you want it to build, test, boot a simulator, or add an Xcode target via the File > New UI: `xcmcp`. If you need a drop-in for the Codex Computer Use tool contract: `computer-use-mcp`. If you need to drive a mirrored iPhone whose UI is opaque to macOS Accessibility: `iphonemirror-mcp`.
+If you want an LLM to click through a real app: `axmcp`. If you want it to build, test, boot a simulator, or add an Xcode target via the File > New UI: `xcmcp`. If you need a drop-in for the Codex Computer Use tool contract: `computer-use-mcp`. If you need a CDP-shaped endpoint for native macOS UI: `axcdp`. If you need to drive a mirrored iPhone whose UI is opaque to macOS Accessibility: `iphonemirror-mcp`.
 
 ## Why this exists
 
 - **Accessibility-first, not screenshot-first.** Pointer actions target AX elements by role and title, so an LLM can say "click the Build button" and get the actual button — not the pixel that looked right a moment ago.
 - **OCR and screenshots are the fallback, not the plan.** `ax_ocr`, `ax_ocr_diff`, and `ax_ocr_click` exist for Electron apps, custom canvases, and partially inaccessible UI. They ride on top of the AX flow, not around it.
 - **Xcode, fully drivable.** See the Xcode automation section below — from `xcodebuild` wrappers and simulator control all the way up to driving the File > New > Target wizard through the live UI when `xcodebuild` can't do the job.
-- **One repo, four audiences.** The primitive surface (`axmcp`) is for open exploration; the Codex contract (`computer-use-mcp`) is for drop-in replacement; the Xcode surface (`xcmcp`) is the IDE-adjacent tool belt; the iPhone Mirroring surface (`iphonemirror-mcp`) is for opaque iOS UI. They share one set of internal packages so behavior stays consistent.
+- **One repo, several automation surfaces.** The primitive surface (`axmcp`) is for open exploration; the Codex contract (`computer-use-mcp`) is for drop-in replacement; the Xcode surface (`xcmcp`) is the IDE-adjacent tool belt; the CDP surface (`axcdp`) is for DevTools-shaped native UI inspection; the iPhone Mirroring surface (`iphonemirror-mcp`) is for opaque iOS UI. They share one set of internal packages so behavior stays consistent.
 
 ## What's new in v0.2.x
 
 - **Off-Space window detection.** `ax_list_windows` reports `"off_space": true` for windows that live on a Space other than the user's active Space. The field is omitted when false, so existing callers see no wire-shape change. Resolution goes through `internal/spacedetect`, which dlsyms three private SkyLight symbols (`SLSMainConnectionID`, `SLSGetActiveSpace`, `SLSCopySpacesForWindows`) and returns `ErrSkyLightUnavailable` when the framework isn't loadable. Cross-Space migration is out of scope: it requires a private WindowServer entitlement Apple does not grant outside its own processes.
+- **Accessibility-backed CDP.** `cmd/axcdp` serves a Chrome DevTools Protocol-shaped endpoint on `:9221` for real macOS Accessibility targets. It exposes a supported AX-backed subset, real screenshots and screencast frames, and explicit unsupported-method failures instead of fabricating browser internals. Pass `-browser-cdp` to compose real browser targets from an existing DevTools endpoint.
 - **Hygiene-verify CI gate.** `.github/workflows/hygiene-verify.yml` runs on every push to `main` and every PR. Six gates: structured AI-trailer scan via `git interpret-trailers --parse`, subject length ≤72, lowercase-imperative subject, `go mod tidy` clean, build/vet (ceiling 8) /test, and tracked-scratch / leaked-path scan. Documented in `design/hygiene-verify.md`.
 - **Roadmap.** Near-term and out-of-scope items live in `ROADMAP.md`. Anything not listed there is not committed work.
 
@@ -56,7 +58,8 @@ Or turn toolsets on and off dynamically inside a session via `list_toolsets` and
 - macOS with Xcode installed.
 - Command Line Tools available through `xcrun`.
 - Go 1.26 or newer to build from source.
-- Accessibility permission for commands that drive the UI: `axmcp`, `ax`, `xcmcp`, `xc`, `computer-use-mcp`, `iphonemirror-mcp`.
+- Accessibility permission for commands that drive the UI: `axmcp`, `ax`, `xcmcp`, `xc`, `computer-use-mcp`, `iphonemirror-mcp`, and `axcdp`.
+- Screen Recording permission for screenshot/OCR/CDP screenshot paths, including `axmcp`, `computer-use-mcp`, `iphonemirror-mcp`, and `axcdp`.
 - A booted simulator or connected device for simulator and device workflows.
 
 ## Setup
@@ -68,7 +71,7 @@ Follow these steps in order. Every command is safe to run unattended.
 From a clone of this repo:
 
 ```sh
-go install ./cmd/axmcp ./cmd/xcmcp ./cmd/computer-use-mcp ./cmd/iphonemirror-mcp ./cmd/ax ./cmd/xc ./cmd/ascript ./cmd/ascriptmcp
+go install ./cmd/axmcp ./cmd/xcmcp ./cmd/computer-use-mcp ./cmd/iphonemirror-mcp ./cmd/axcdp ./cmd/ax ./cmd/xc ./cmd/ascript ./cmd/ascriptmcp
 ```
 
 Or directly from the module path without cloning:
@@ -78,6 +81,7 @@ go install github.com/tmc/axmcp/cmd/axmcp@latest
 go install github.com/tmc/axmcp/cmd/xcmcp@latest
 go install github.com/tmc/axmcp/cmd/computer-use-mcp@latest
 go install github.com/tmc/axmcp/cmd/iphonemirror-mcp@latest
+go install github.com/tmc/axmcp/cmd/axcdp@latest
 go install github.com/tmc/axmcp/cmd/ax@latest
 go install github.com/tmc/axmcp/cmd/xc@latest
 ```
@@ -93,7 +97,7 @@ export PATH="$(go env GOPATH)/bin:$PATH"
 Add that line to your shell rc if you want it permanent. Verify:
 
 ```sh
-command -v axmcp xcmcp computer-use-mcp iphonemirror-mcp xc ax
+command -v axmcp xcmcp computer-use-mcp iphonemirror-mcp axcdp xc ax
 ```
 
 Six absolute paths should print. If any are missing, step 1 failed for that binary.
@@ -105,6 +109,7 @@ echo "AXMCP=$(command -v axmcp)"
 echo "XCMCP=$(command -v xcmcp)"
 echo "COMPUTER_USE_MCP=$(command -v computer-use-mcp)"
 echo "IPHONEMIRROR_MCP=$(command -v iphonemirror-mcp)"
+echo "AXCDP=$(command -v axcdp)"
 ```
 
 You will paste these exact paths into your MCP client config in step 5.
@@ -113,7 +118,7 @@ You will paste these exact paths into your MCP client config in step 5.
 
 macOS refuses every pointer, keystroke, and AX tree call until the calling binary is explicitly approved in **System Settings → Privacy & Security → Accessibility**.
 
-The first time any of `axmcp`, `xcmcp`, `ax`, `xc`, `computer-use-mcp`, or `iphonemirror-mcp` issues an AX call, macOS refuses and adds the binary as an unchecked row in that pane. Open it and toggle each entry on.
+The first time any of `axmcp`, `xcmcp`, `ax`, `xc`, `computer-use-mcp`, `iphonemirror-mcp`, or `axcdp` issues an AX call, macOS refuses and adds the binary as an unchecked row in that pane. Open it and toggle each entry on. Screenshot and OCR paths may also add a Screen Recording row for the same app identity.
 
 If an action later no-ops silently or returns "not permitted," the entry was probably turned off again by a software update — re-check the toggle.
 
@@ -255,6 +260,23 @@ It is tools-only — no MCP resources, no resource templates. The tool surface i
 `iphonemirror-mcp` drives Apple's iPhone Mirroring app. The mirrored iPhone screen is opaque to the macOS Accessibility tree, so the server captures the window, runs Vision OCR, and routes taps, swipes, typing, focus, waits, and drag gestures through the host app.
 
 Use it when an MCP client needs an iOS remote-control surface from the Mac side. It requires Screen Recording and Accessibility permission for the built binary.
+
+### `axcdp`
+
+`axcdp` exposes macOS Accessibility through a Chrome DevTools Protocol remote-debugging endpoint. It is not an MCP server. By default, an interactive run listens on `:9221` and reports AX-backed targets through `/json/list`, `/json/protocol`, and `/json/coverage`.
+
+Use a built binary for live serving so macOS sees the stable `dev.tmc.axcdp` TCC identity:
+
+```sh
+go install ./cmd/axcdp
+axcdp
+```
+
+For browser-backed targets, start a real browser DevTools endpoint and pass it through:
+
+```sh
+axcdp -browser-cdp http://127.0.0.1:9222
+```
 
 ### `xcmcp`
 

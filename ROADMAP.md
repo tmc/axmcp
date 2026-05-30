@@ -6,14 +6,18 @@ work — see "Out of scope" for the boundaries.
 
 ## Current state
 
-v0.2.x ships three MCP servers — `cmd/axmcp`, `cmd/xcmcp`,
-`cmd/computer-use-mcp` — built on shared internal packages. The
-Accessibility surface walks live AX trees, posts pointer and keyboard
-events, captures and OCRs screen regions, and drives windows with
-explicit raise / move / drag actions. The Codex Computer Use server
-wraps the same primitives in the 9-tool contract with per-session app
-state. The Xcode surface drives `xcodebuild`, simulators, devices, App
-Store Connect, and the File > New > Target wizard. As of v0.2.x +
+v0.2.x ships four MCP servers — `cmd/axmcp`, `cmd/xcmcp`,
+`cmd/computer-use-mcp`, and `cmd/iphonemirror-mcp` — plus the
+`cmd/axcdp` Chrome DevTools Protocol endpoint, all built on shared
+internal packages. The Accessibility surface walks live AX trees, posts
+pointer and keyboard events, captures and OCRs screen regions, and
+drives windows with explicit raise / move / drag actions. The Codex
+Computer Use server wraps the same primitives in the 9-tool contract
+with per-session app state. The Xcode surface drives `xcodebuild`,
+simulators, devices, App Store Connect, and the File > New > Target
+wizard. The CDP surface exposes a supported AX-backed subset, real
+screenshots and screencast frames, explicit unsupported-method failures,
+and an optional proxy to real browser DevTools targets. As of v0.2.x +
 two follow-up PRs, off-Space windows are detected via a private
 SkyLight binding (`internal/spacedetect`) and surfaced as `off_space:
 true` on `ax_list_windows` results. The hygiene-verify GitHub Actions
@@ -53,11 +57,6 @@ leakage). Ghost cursor rendering for click and drag actions lives in
 - `internal/ghostcursor` split: separate the input-event side from the
   overlay rendering side so the cursor animation can be reused outside
   the click/drag paths without dragging the input dependencies.
-- `doc.go` refresh: the package doc still does not mention
-  `internal/spacedetect`, the `off_space` field on `ax_list_windows`,
-  or the hygiene-verify workflow. README already covers all three in
-  its "What's new in v0.2.x" section; doc.go needs to catch up so the
-  godoc surface matches.
 - Out-of-tree contradiction sweep: anything claimed in README but not
   reachable in code (or vice versa) gets either the doc removed or the
   feature added; nothing left half-described.
