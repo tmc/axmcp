@@ -7,7 +7,8 @@ to the browser; they are not invented from AX data.
 The proxy is enabled with:
 
 ```sh
-go run ./cmd/axcdp -browser-cdp http://127.0.0.1:9222
+go build -o ~/go/bin/axcdp ./cmd/axcdp
+~/go/bin/axcdp -browser-cdp http://127.0.0.1:9222
 ```
 
 ## Backed by the browser

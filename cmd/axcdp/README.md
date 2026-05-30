@@ -49,7 +49,7 @@ To compose real browser-CDP targets with AX targets, pass a browser DevTools
 endpoint:
 
 ```sh
-go run ./cmd/axcdp -browser-cdp http://127.0.0.1:9222
+~/go/bin/axcdp -browser-cdp http://127.0.0.1:9222
 ```
 
 Browser targets from that endpoint are added to `/json/list` with proxied
