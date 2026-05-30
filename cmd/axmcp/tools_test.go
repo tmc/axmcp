@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -47,6 +49,34 @@ func TestCheckedStateFromValue(t *testing.T) {
 		case tt.wantChecked != nil && *gotChecked != *tt.wantChecked:
 			t.Fatalf("checkedStateFromValue(%q, %q) checked = %v, want %v", tt.role, tt.value, *gotChecked, *tt.wantChecked)
 		}
+	}
+}
+
+func TestFindInstalledApplicationPathInDirs(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"Calculator.app", "TextEdit.app"} {
+		if err := os.Mkdir(filepath.Join(dir, name), 0755); err != nil {
+			t.Fatalf("Mkdir(%q): %v", name, err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+		want  string
+	}{
+		{name: "exact app suffix", query: "Calculator.app", want: filepath.Join(dir, "Calculator.app")},
+		{name: "case insensitive exact", query: "calculator", want: filepath.Join(dir, "Calculator.app")},
+		{name: "substring", query: "calc", want: filepath.Join(dir, "Calculator.app")},
+		{name: "missing", query: "safari", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := findInstalledApplicationPathInDirs(tt.query, []string{dir})
+			if got != tt.want {
+				t.Fatalf("findInstalledApplicationPathInDirs(%q) = %q, want %q", tt.query, got, tt.want)
+			}
+		})
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -154,6 +155,11 @@ func directWindowScreenshotArgs(args []string) (app string, out string, ok bool)
 			}
 			out = trimmed[i+1]
 			i++
+		case strings.HasPrefix(trimmed[i], "--out="):
+			out = strings.TrimPrefix(trimmed[i], "--out=")
+			if out == "" {
+				return "", "", false
+			}
 		case "":
 		default:
 			if strings.HasPrefix(trimmed[i], "--contains=") || strings.HasPrefix(trimmed[i], "--role=") {
@@ -167,6 +173,14 @@ func directWindowScreenshotArgs(args []string) (app string, out string, ok bool)
 func tryDirectWindowScreenshot(args []string) bool {
 	app, out, ok := directWindowScreenshotArgs(args)
 	if !ok {
+		return false
+	}
+	if macgoRelaunchChild() && !macgoDevSourceChild() {
+		diagf("axmcp: deferring direct screenshot fast path for %q until macgo re-entry\n", app)
+		return false
+	}
+	if !macgoRelaunchChild() {
+		diagf("axmcp: using app-backed screenshot flow for %q\n", app)
 		return false
 	}
 	if !screenRecordingTrusted() {
@@ -184,6 +198,17 @@ func tryDirectWindowScreenshot(args []string) bool {
 		os.Exit(1)
 	}
 	return true
+}
+
+func macgoRelaunchChild() bool {
+	return os.Getenv("MACGO_STDOUT_PIPE") != "" ||
+		os.Getenv("MACGO_STDERR_PIPE") != "" ||
+		os.Getenv("MACGO_STDIN_PIPE") != "" ||
+		os.Getenv("MACGO_CONTROL_PIPE") != ""
+}
+
+func macgoDevSourceChild() bool {
+	return os.Getenv("MACGO_NO_RELAUNCH") != ""
 }
 
 func ensureAccessibilityPermission(ctx context.Context) error {
@@ -205,6 +230,60 @@ func ensureAccessibilityPermission(ctx context.Context) error {
 	return waitForPermission("Accessibility", permissionWaitTimeout, permissionPollInterval, ui.IsTrusted)
 }
 
+func removeMismatchedBundle(appName string, wantDevMode, wantSigned bool) {
+	if appName == "" || os.Getenv("MACGO_NO_RELAUNCH") != "" || os.Getenv("MACGO_STDOUT_PIPE") != "" ||
+		os.Getenv("MACGO_STDERR_PIPE") != "" || os.Getenv("MACGO_STDIN_PIPE") != "" || os.Getenv("MACGO_CONTROL_PIPE") != "" {
+		return
+	}
+	exe, err := os.Executable()
+	if err == nil && strings.Contains(exe, ".app/Contents/MacOS/") {
+		return
+	}
+	base := os.TempDir()
+	if goPath := os.Getenv("GOPATH"); goPath != "" {
+		base = filepath.Join(goPath, "bin")
+	} else if home, err := os.UserHomeDir(); err == nil {
+		goBin := filepath.Join(home, "go", "bin")
+		if _, err := os.Stat(goBin); err == nil {
+			base = goBin
+		}
+	}
+	bundle := filepath.Join(base, appName+".app")
+	devTarget := filepath.Join(bundle, "Contents", "Resources", ".dev_target")
+	_, statErr := os.Stat(devTarget)
+	hasDevTarget := statErr == nil
+	remove := hasDevTarget != wantDevMode
+	if !remove && wantDevMode && hasDevTarget && devModeBundleExecutableStale(appName, bundle, exe) {
+		remove = true
+	}
+	if !remove && wantSigned {
+		out, err := exec.Command("/usr/bin/codesign", "-dv", bundle).CombinedOutput()
+		if err == nil && strings.Contains(string(out), "Signature=adhoc") {
+			remove = true
+		}
+	}
+	if !remove {
+		return
+	}
+	if err := os.RemoveAll(bundle); err != nil {
+		diagf("axmcp: failed to remove stale bundle %s: %v\n", bundle, err)
+		return
+	}
+	diagf("axmcp: removed stale bundle %s\n", bundle)
+}
+
+func devModeBundleExecutableStale(appName, bundle, execPath string) bool {
+	src, err := os.Stat(execPath)
+	if err != nil {
+		return false
+	}
+	dst, err := os.Stat(filepath.Join(bundle, "Contents", "MacOS", appName))
+	if err != nil {
+		return true
+	}
+	return dst.ModTime().Before(src.ModTime())
+}
+
 func main() {
 	installAtexitHandler()
 	runtime.LockOSThread()
@@ -222,17 +301,19 @@ func main() {
 
 	cfg := macgo.NewConfig().
 		WithAppName("axmcp").
-		WithPermissions(macgo.Accessibility).
+		WithPermissions(macgo.Accessibility, macgo.ScreenRecording).
 		WithUsageDescription("NSAccessibilityUsageDescription", "axmcp uses Accessibility to inspect and interact with user interface elements.").
 		WithUsageDescription("NSAppleEventsUsageDescription", "axmcp may coordinate with other macOS apps while driving UI automation.").
 		WithUsageDescription("NSScreenCaptureUsageDescription", "axmcp needs to capture screenshots of specific UI elements and windows.").
 		WithInfo("NSSupportsAutomaticTermination", false).
-		WithUIMode(macgo.UIModeAccessory)
+		WithUIMode(macgo.UIModeAccessory).
+		WithDevMode()
 	if verbose {
 		cfg = cfg.WithDebug()
 	}
 	cfg.BundleID = "dev.tmc.axmcp"
 	cfg = macsigning.Configure(cfg)
+	removeMismatchedBundle("axmcp", true, cfg.CodeSignIdentity != "")
 	ui.ConfigureIdentity("axmcp", cfg.BundleID)
 	permissions.ConfigureIdentity("axmcp", cfg.BundleID)
 
@@ -320,6 +401,9 @@ func main() {
 			procInfo.SetAutomaticTerminationSupportEnabled(false)
 			procInfo.DisableAutomaticTermination("axmcp cli")
 			diagf("axmcp: auto-termination disabled\n")
+			if err := ensureAccessibilityPermission(context.Background()); err != nil {
+				failPermission(err)
+			}
 			diagf("axmcp: running CLI\n")
 			runCLI()
 			// runCLI calls os.Exit on completion, so this goroutine won't return

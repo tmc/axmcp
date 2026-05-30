@@ -104,7 +104,6 @@ func runCLI() {
 	)
 
 	if err := root.Execute(); err != nil {
-		ui.WaitForWindows()
 		os.Exit(1)
 	}
 	waitForCLIVisualFeedback()

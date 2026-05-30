@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -81,15 +82,111 @@ func openApp(arg string) (*axuiautomation.Application, error) {
 	// Fallback: scan CGWindowList for a window title containing the query.
 	// This handles Electron apps whose process name differs from the app name.
 	pid, found := findPIDByWindowTitle(arg)
-	if !found {
-		return nil, err
+	if found {
+		slog.Debug("openApp: resolved via window title", "query", arg, "pid", pid)
+		app = axuiautomation.NewApplicationFromPID(pid)
+		if app == nil {
+			return nil, fmt.Errorf("cannot connect to PID %d (found via window title %q)", pid, arg)
+		}
+		return app, nil
 	}
-	slog.Debug("openApp: resolved via window title", "query", arg, "pid", pid)
-	app = axuiautomation.NewApplicationFromPID(pid)
-	if app == nil {
-		return nil, fmt.Errorf("cannot connect to PID %d (found via window title %q)", pid, arg)
+
+	if errors.Is(err, axuiautomation.ErrNotRunning) {
+		if launchErr := launchApp(arg); launchErr == nil {
+			app, waitErr := waitForApp(arg, 5*time.Second)
+			if waitErr == nil {
+				return app, nil
+			}
+			return nil, waitErr
+		}
 	}
-	return app, nil
+	return nil, err
+}
+
+func launchApp(arg string) error {
+	arg = strings.TrimSpace(arg)
+	if arg == "" {
+		return fmt.Errorf("app is required")
+	}
+	if strings.Contains(arg, ".") {
+		if err := exec.Command("open", "-b", arg).Run(); err == nil {
+			return nil
+		}
+	}
+	if path := findInstalledApplicationPath(arg); path != "" {
+		return exec.Command("open", path).Run()
+	}
+	if err := exec.Command("open", "-a", arg).Run(); err != nil {
+		return fmt.Errorf("launch %q: %w", arg, err)
+	}
+	return nil
+}
+
+func waitForApp(arg string, timeout time.Duration) (*axuiautomation.Application, error) {
+	deadline := time.Now().Add(timeout)
+	var last error
+	for {
+		app, err := axuiautomation.NewApplication(arg)
+		if err == nil {
+			setAXTimeout(app)
+			axuiautomation.SpinRunLoop(200 * time.Millisecond)
+			return app, nil
+		}
+		last = err
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if pid, found := findPIDByWindowTitle(arg); found {
+		app := axuiautomation.NewApplicationFromPID(pid)
+		if app != nil {
+			setAXTimeout(app)
+			axuiautomation.SpinRunLoop(200 * time.Millisecond)
+			return app, nil
+		}
+	}
+	return nil, fmt.Errorf("wait for %q: %w", arg, last)
+}
+
+func findInstalledApplicationPath(query string) string {
+	return findInstalledApplicationPathInDirs(query, []string{
+		"/System/Applications",
+		"/System/Applications/Utilities",
+		"/Applications",
+		"/Applications/Utilities",
+	})
+}
+
+func findInstalledApplicationPathInDirs(query string, dirs []string) string {
+	query = strings.TrimSpace(strings.TrimSuffix(query, ".app"))
+	if query == "" {
+		return ""
+	}
+	lower := strings.ToLower(query)
+	var contains string
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if !entry.IsDir() || !strings.HasSuffix(name, ".app") {
+				continue
+			}
+			base := strings.TrimSuffix(name, ".app")
+			baseLower := strings.ToLower(base)
+			path := filepath.Join(dir, name)
+			if baseLower == lower {
+				return path
+			}
+			if contains == "" && strings.Contains(baseLower, lower) {
+				contains = path
+			}
+		}
+	}
+	return contains
 }
 
 // findPIDByWindowTitle scans CGWindowList for a window whose title contains the
@@ -1096,7 +1193,7 @@ Set padding to expand the capture rect around a targeted element by N pixels on 
 				scope = &ocrRedactionScope{root: el}
 			}
 		} else {
-			// Full window screenshot: try SCK/CGWindowList first (no AX IPC needed,
+			// Full window screenshot: use CGWindowList first (no AX IPC needed,
 			// avoids hanging on apps with unresponsive accessibility implementations).
 			var err error
 			png, err = captureWindowByTitle(args.App, args.Window)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,82 @@ func TestTryDirectWindowScreenshotSkipsWithoutScreenPermission(t *testing.T) {
 
 	if got := tryDirectWindowScreenshot([]string{"screenshot", "Codex", "-o", "/tmp/out.png"}); got {
 		t.Fatal("tryDirectWindowScreenshot returned true, want false when Screen Recording is missing")
+	}
+}
+
+func TestTryDirectWindowScreenshotSkipsBeforeRelaunch(t *testing.T) {
+	oldTrusted := screenRecordingTrusted
+	screenRecordingTrusted = func() bool { return true }
+	defer func() { screenRecordingTrusted = oldTrusted }()
+
+	if got := tryDirectWindowScreenshot([]string{"screenshot", "Codex", "-o", "/tmp/out.png"}); got {
+		t.Fatal("tryDirectWindowScreenshot returned true, want false before macgo relaunch")
+	}
+}
+
+func TestTryDirectWindowScreenshotSkipsBeforeMacgoReentry(t *testing.T) {
+	t.Setenv("MACGO_CONTROL_PIPE", "/tmp/control")
+	oldTrusted := screenRecordingTrusted
+	screenRecordingTrusted = func() bool { return true }
+	defer func() { screenRecordingTrusted = oldTrusted }()
+
+	if got := tryDirectWindowScreenshot([]string{"screenshot", "Codex", "-o", "/tmp/out.png"}); got {
+		t.Fatal("tryDirectWindowScreenshot returned true, want false before macgo re-entry")
+	}
+}
+
+func TestTryDirectWindowScreenshotSkipsInMacgoChildWithoutScreenPermission(t *testing.T) {
+	t.Setenv("MACGO_CONTROL_PIPE", "/tmp/control")
+	t.Setenv("MACGO_NO_RELAUNCH", "1")
+	oldTrusted := screenRecordingTrusted
+	screenRecordingTrusted = func() bool { return false }
+	defer func() { screenRecordingTrusted = oldTrusted }()
+
+	if got := tryDirectWindowScreenshot([]string{"screenshot", "Codex", "-o", "/tmp/out.png"}); got {
+		t.Fatal("tryDirectWindowScreenshot returned true, want false in macgo child without Screen Recording")
+	}
+}
+
+func TestDirectWindowScreenshotArgs(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantApp string
+		wantOut string
+		wantOK  bool
+	}{
+		{
+			name:    "out separated",
+			args:    []string{"screenshot", "Finder", "--out", "/tmp/finder.png"},
+			wantApp: "Finder",
+			wantOut: "/tmp/finder.png",
+			wantOK:  true,
+		},
+		{
+			name:    "out equals",
+			args:    []string{"screenshot", "Finder", "--out=/tmp/finder.png"},
+			wantApp: "Finder",
+			wantOut: "/tmp/finder.png",
+			wantOK:  true,
+		},
+		{
+			name:   "empty out equals",
+			args:   []string{"screenshot", "Finder", "--out="},
+			wantOK: false,
+		},
+		{
+			name:   "element screenshot not direct",
+			args:   []string{"screenshot", "Finder", "--contains=OK"},
+			wantOK: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotApp, gotOut, gotOK := directWindowScreenshotArgs(tt.args)
+			if gotApp != tt.wantApp || gotOut != tt.wantOut || gotOK != tt.wantOK {
+				t.Fatalf("directWindowScreenshotArgs(%q) = %q, %q, %v; want %q, %q, %v", tt.args, gotApp, gotOut, gotOK, tt.wantApp, tt.wantOut, tt.wantOK)
+			}
+		})
 	}
 }
 
@@ -33,6 +110,47 @@ func TestStdinLooksLikeTransport(t *testing.T) {
 		if got := stdinModeLooksLikeTransport(tt.mode); got != tt.want {
 			t.Fatalf("%s: transport check = %v, want %v", tt.name, got, tt.want)
 		}
+	}
+}
+
+func TestDevModeBundleExecutableStale(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "axmcp")
+	bundle := filepath.Join(dir, "axmcp.app")
+	dst := filepath.Join(bundle, "Contents", "MacOS", "axmcp")
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, []byte("binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, []byte("binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := os.Chtimes(src, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(dst, now.Add(-time.Hour), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if !devModeBundleExecutableStale("axmcp", bundle, src) {
+		t.Fatal("devModeBundleExecutableStale returned false, want true for older bundle executable")
+	}
+	if err := os.Chtimes(dst, now.Add(time.Hour), now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if devModeBundleExecutableStale("axmcp", bundle, src) {
+		t.Fatal("devModeBundleExecutableStale returned true, want false for newer matching executable")
+	}
+	if err := os.WriteFile(dst, []byte("signed binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(dst, now.Add(time.Hour), now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if devModeBundleExecutableStale("axmcp", bundle, src) {
+		t.Fatal("devModeBundleExecutableStale returned true, want false for newer signed executable")
 	}
 }
 

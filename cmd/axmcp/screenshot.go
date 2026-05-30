@@ -238,13 +238,11 @@ func captureWindow(win windowInfo) ([]byte, error) {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if png, err := captureWindowSCK(ctx, win.WindowID); err == nil {
-		return png, nil
-	} else {
-		diagf("captureWindow: SCK failed: %v\n", err)
-		appendErr("ScreenCaptureKit", err)
+	if !ui.IsScreenRecordingTrusted() {
+		diagf("captureWindow: requesting Screen Recording permission before capture\n")
+		if !ui.WaitForScreenRecording(30 * time.Second) {
+			return nil, fmt.Errorf("screenshot failed: Screen Recording is still not granted — enable axmcp.app in System Settings > Privacy & Security and retry")
+		}
 	}
 
 	if png, err := captureWindowCG(win); err == nil {
@@ -254,18 +252,10 @@ func captureWindow(win windowInfo) ([]byte, error) {
 		appendErr("CGWindowListCreateImage", err)
 	}
 
-	if !ui.IsScreenRecordingTrusted() {
-		if !ui.WaitForScreenRecording(30 * time.Second) {
-			return nil, fmt.Errorf("screenshot failed: Screen Recording is still not granted — enable axmcp.app in System Settings > Privacy & Security and retry")
-		}
-		if png, err := captureWindowCG(win); err == nil {
-			return png, nil
-		} else {
-			diagf("captureWindow: CG retry after permission gate failed: %v\n", err)
-			appendErr("CGWindowListCreateImage after permission", err)
-		}
-	}
-
+	// Do not fall back to ScreenCaptureKit here. On current macOS builds the
+	// SCK window path can abort the process while AppKit is running the CLI
+	// event loop. Window captures use CGWindowListCreateImage; full-display
+	// captures remain the explicit SCK path.
 	if len(errs) == 0 {
 		return nil, fmt.Errorf("capture window %q (id=%d): failed", win.Title, win.WindowID)
 	}
@@ -275,17 +265,14 @@ func captureWindow(win windowInfo) ([]byte, error) {
 func captureWindowLegacy(win windowInfo) ([]byte, error) {
 	diagf("captureWindowLegacy: title=%q owner=%q id=%d\n", win.Title, win.OwnerName, win.WindowID)
 
-	if png, err := captureWindowCG(win); err == nil {
-		return png, nil
-	} else if !ui.IsScreenRecordingTrusted() {
+	if !ui.IsScreenRecordingTrusted() {
+		diagf("captureWindowLegacy: requesting Screen Recording permission before capture\n")
 		if !ui.WaitForScreenRecording(30 * time.Second) {
 			return nil, fmt.Errorf("screenshot failed: Screen Recording is still not granted — enable axmcp.app in System Settings > Privacy & Security and retry")
 		}
-		png, retryErr := captureWindowCG(win)
-		if retryErr == nil {
-			return png, nil
-		}
-		return nil, fmt.Errorf("capture window %q (id=%d): CGWindowListCreateImage: %v; after permission: %w", win.Title, win.WindowID, err, retryErr)
+	}
+	if png, err := captureWindowCG(win); err == nil {
+		return png, nil
 	} else {
 		return nil, fmt.Errorf("capture window %q (id=%d): CGWindowListCreateImage: %w", win.Title, win.WindowID, err)
 	}
@@ -575,7 +562,7 @@ func cgImageToPNG(img coregraphics.CGImageRef) ([]byte, error) {
 		return nil, fmt.Errorf("failed to create NSBitmapImageRep")
 	}
 	data := rep.RepresentationUsingTypeProperties(appkit.NSBitmapImageFileTypePNG, nil)
-	if data == nil {
+	if data.GetID() == 0 {
 		return nil, fmt.Errorf("failed to create PNG representation")
 	}
 	length := data.Length()
