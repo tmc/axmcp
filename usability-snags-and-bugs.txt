@@ -11,3 +11,20 @@
   AX tree exposes many duplicate unlabeled buttons for the tab strip and
   toolbar, so it is hard to target "Timeline", "Shaders", or "Counters" from
   AXMCP alone without coordinates.
+- Brave local-file verification for generated `current.html` exposed the page
+  mostly as nested generic `AXGroup` nodes. OCR could see text such as "GPU
+  Timeline Viewer", "Occupancy", and "Instruction Throughput", but the AX tree
+  did not expose useful page controls or text nodes, and the OCR payload was
+  very large and truncated. This makes AX-only assertions against local HTML
+  brittle unless the page adds accessible names or the tool can expose DOM text.
+
+2026-05-20 gputrace MLX metal_debug trace
+
+- A Metal debug MLX trace can contain readable embedded source sidecars, but
+  `gputrace shader-source` does not index those in-bundle source files. For
+  example, `source_debug_qwen2_modelir_tokens_8_to_9...gputrace` contains
+  text sidecars with `#line 1 "mlx/backend/metal/kernels/bf16.h"` and
+  `using namespace metal`, while `gputrace shader-source ... affine_qmv...`
+  still reports `source file for shader ... not found`. This leaves source
+  connected in the capture bundle, but not yet connected through the CLI or
+  pprof source-line view.
