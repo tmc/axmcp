@@ -5,9 +5,10 @@ remote-debugging endpoint.
 
 The server is intentionally an AX-backed CDP subset. It advertises only
 methods backed by macOS Accessibility, screen capture, native overlay/input, or
-harmless DevTools setup controls. Browser-only features such as navigation,
-network response bodies, JavaScript object execution, storage, IndexedDB, and
-Chrome's internal page DOM are not synthesized.
+harmless DevTools setup controls. Browser-only features such as arbitrary page
+navigation, reload, network response bodies, browser JavaScript object
+execution, storage, IndexedDB, and Chrome's internal page DOM are not
+synthesized.
 
 DevTools inspection uses a DOM-shaped tree derived from real AX elements. That
 tree is simulated only as a protocol shape; `Page.captureScreenshot` and
@@ -75,8 +76,9 @@ AX does not provide a single per-app viewport or separate Node runtimes for
 apps.
 
 `/json/activate/<id>` activates an app target when AX can map the target to a
-process. `/json/new` and `/json/close/<id>` return `501 Not Implemented`
-because AX cannot create or close browser targets.
+process. On AX-only servers, `/json/new` and `/json/close/<id>` return
+`501 Not Implemented` because AX cannot create or close browser targets. With
+`-browser-cdp`, those HTTP endpoints are proxied to the real browser backend.
 
 `/json/coverage` is the source of truth for the advertised surface. Each entry
 names the CDP method, whether it is advertised, and the backing mechanism. It
@@ -100,8 +102,9 @@ go run ./cmd/axcdp -verify-browser-cdp http://127.0.0.1:9221
 
 The live verifier checks discovery, protocol coverage, HTTP compatibility
 endpoints, WebSocket command execution, Schema metadata, AX pass-through,
-live screenshot capture, live screencast frames, AX hit testing, highlight
-commands, and unsupported-method behavior. It also checks the root
+live screenshot capture, limited AX-target `Page.navigate`, live screencast
+frames, AX hit testing, highlight commands, and unsupported-method behavior. It
+also checks the root
 Node-compatible target and verifies that apps are not duplicated as fake Node
 targets. Every method listed in `/json/coverage` as unsupported is sent over
 WebSocket and must return JSON-RPC method-not-found (`-32601`).
@@ -142,5 +145,5 @@ GOWORK=off go run ./cmd/cdp -remote-host 127.0.0.1 -remote-port 9221 -tab <targe
 GOWORK=off go run ./cmd/cdp -remote-host 127.0.0.1 -remote-port 9221 -tab <browser-target-id> -command 'Page.navigate {"url":"https://example.com"}' -format json -timeout 10
 ```
 
-Unsupported methods should return JSON-RPC method-not-found (`-32601`) instead
-of fake data.
+Unsupported AX-only methods should return JSON-RPC method-not-found (`-32601`)
+instead of fake data.

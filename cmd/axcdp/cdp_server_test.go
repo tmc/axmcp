@@ -836,11 +836,41 @@ func TestCDPAuditListsUnsupportedMethods(t *testing.T) {
 		t.Fatalf("read AUDIT.md: %v", err)
 	}
 	audit := string(data)
+	got := auditUnsupportedMethods(audit)
+	want := make(map[string]bool)
 	for _, item := range cdpUnsupportedMethods() {
+		want[item.Method] = true
 		if !strings.Contains(audit, "`"+item.Method+"`") {
 			t.Fatalf("AUDIT.md does not list unsupported method %s", item.Method)
 		}
 	}
+	for method := range got {
+		if !want[method] {
+			t.Fatalf("AUDIT.md lists stale unsupported method %s", method)
+		}
+	}
+}
+
+func auditUnsupportedMethods(audit string) map[string]bool {
+	out := make(map[string]bool)
+	inList := false
+	for _, line := range strings.Split(audit, "\n") {
+		if strings.TrimSpace(line) == "The explicit unsupported method list is:" {
+			inList = true
+			continue
+		}
+		if !inList {
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			break
+		}
+		if strings.HasPrefix(trimmed, "- `") && strings.HasSuffix(trimmed, "`") {
+			out[strings.TrimSuffix(strings.TrimPrefix(trimmed, "- `"), "`")] = true
+		}
+	}
+	return out
 }
 
 func TestCDPCoverageEndpoint(t *testing.T) {

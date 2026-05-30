@@ -821,9 +821,10 @@ func cdpCoverageEntries() []cdpCoverageEntry {
 	for _, method := range []string{"Target.setAutoAttach", "Target.setAttachToFrames", "Target.setRemoteLocations"} {
 		add(method, "setup-control", "compat", "accepted as harmless DevTools setup state", true)
 	}
-	for _, method := range []string{"Page.getFrameTree", "Page.getResourceTree", "Page.getLayoutMetrics", "Page.getNavigationHistory", "Page.navigate", "Page.bringToFront"} {
+	for _, method := range []string{"Page.getFrameTree", "Page.getResourceTree", "Page.getLayoutMetrics", "Page.getNavigationHistory", "Page.bringToFront"} {
 		add(method, "supported", "AX metadata", "reports the synthetic AX document frame for the selected target", true)
 	}
+	add("Page.navigate", "supported", "AX target registry", "retargets only axcdp preview URLs for AX app/window targets; arbitrary browser navigation is unsupported", true)
 	for _, method := range []string{"Page.captureScreenshot", "Page.startScreencast"} {
 		add(method, "supported", "screencapture", "captures real screen pixels for the AX viewport", true)
 	}
