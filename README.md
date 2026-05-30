@@ -4,7 +4,7 @@
 
 `axmcp` is a macOS automation toolkit built around MCP servers, direct CLIs, and an Accessibility-backed Chrome DevTools Protocol endpoint. It lets an LLM (or a shell script) inspect and operate native apps, Xcode projects, iOS simulators, browser DevTools clients, and iPhone Mirroring with the same primitives Apple's own assistive technologies use.
 
-| Server | What it drives | Shape |
+| Surface | What it drives | Shape |
 | --- | --- | --- |
 | `cmd/axmcp` | Any running macOS app via AX tree, OCR, pointer, keyboard, windows | Open primitive surface |
 | `cmd/xcmcp` | Xcode, simulators, physical devices, previews, App Store Connect | Toolset-gated, ~40 tools on demand |
@@ -100,7 +100,7 @@ Add that line to your shell rc if you want it permanent. Verify:
 command -v axmcp xcmcp computer-use-mcp iphonemirror-mcp axcdp xc ax
 ```
 
-Six absolute paths should print. If any are missing, step 1 failed for that binary.
+Seven absolute paths should print. If any are missing, step 1 failed for that binary.
 
 ### 3. Note the absolute binary paths for your MCP client
 
@@ -176,7 +176,7 @@ Exposes exactly `list_apps`, `get_app_state`, `click`, `perform_secondary_action
 
 ## MCP client configuration
 
-All four servers speak MCP over stdio. In every config below, replace `/Users/you/go/bin/...` with the absolute paths you printed in setup step 3.
+The four MCP servers speak MCP over stdio. In every config below, replace `/Users/you/go/bin/...` with the absolute paths you printed in setup step 3.
 
 ### Claude Code
 
