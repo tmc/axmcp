@@ -55,3 +55,32 @@ func TestEventKind(t *testing.T) {
 		}
 	}
 }
+
+func TestEventMask(t *testing.T) {
+	mask := eventMask(
+		coregraphics.KCGEventKeyDown,
+		coregraphics.KCGEventLeftMouseDown,
+		coregraphics.KCGEventScrollWheel,
+	)
+	tests := []struct {
+		name string
+		typ  coregraphics.CGEventType
+		want bool
+	}{
+		{name: "key", typ: coregraphics.KCGEventKeyDown, want: true},
+		{name: "mouse", typ: coregraphics.KCGEventLeftMouseDown, want: true},
+		{name: "scroll", typ: coregraphics.KCGEventScrollWheel, want: true},
+		{name: "key up", typ: coregraphics.KCGEventKeyUp, want: false},
+	}
+	for _, tt := range tests {
+		got := mask&(1<<uint(tt.typ)) != 0
+		if got != tt.want {
+			t.Fatalf("%s: mask contains %s = %v, want %v", tt.name, tt.typ, got, tt.want)
+		}
+	}
+}
+
+func TestCallbackSignature(t *testing.T) {
+	m := New(Config{Enabled: true})
+	var _ coregraphics.CGEventTapCallBack = m.callback
+}

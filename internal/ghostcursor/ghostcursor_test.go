@@ -8,6 +8,7 @@ import (
 
 	"github.com/tmc/apple/appkit"
 	"github.com/tmc/apple/coregraphics"
+	"github.com/tmc/apple/kernel"
 )
 
 func TestWindowCollectionBehaviorAvoidsConflictingFlags(t *testing.T) {
@@ -25,6 +26,28 @@ func TestCircleFrameCentersSize(t *testing.T) {
 	}
 	if got.Size.Width != 10 || got.Size.Height != 10 {
 		t.Fatalf("circleFrame size = (%v,%v), want (10,10)", got.Size.Width, got.Size.Height)
+	}
+}
+
+func TestInterventionControllerRegistryRoundTrip(t *testing.T) {
+	c := &Controller{}
+	id := registerInterventionController(c)
+	if id == 0 {
+		t.Fatal("registerInterventionController returned zero id")
+	}
+	defer unregisterInterventionController(id)
+	if got := interventionController(kernel.Pointer(id)); got != c {
+		t.Fatalf("interventionController returned %p, want %p", got, c)
+	}
+	unregisterInterventionController(id)
+	if got := interventionController(kernel.Pointer(id)); got != nil {
+		t.Fatalf("interventionController after unregister returned %p, want nil", got)
+	}
+}
+
+func TestInterventionControllerNilUserInfo(t *testing.T) {
+	if got := interventionController(0); got != nil {
+		t.Fatalf("interventionController(nil) = %p, want nil", got)
 	}
 }
 
