@@ -1,7 +1,7 @@
 // Package axmcp documents the axmcp module.
 //
-// axmcp is a macOS automation toolkit built around four MCP servers and
-// matching CLIs:
+// axmcp is a macOS automation toolkit built around MCP servers, direct CLIs,
+// and a Chrome DevTools Protocol endpoint:
 //
 //   - cmd/axmcp, an open Accessibility surface for any running macOS app
 //   - cmd/xcmcp, for Xcode, simulators, devices, previews, and App Store
@@ -10,6 +10,8 @@
 //     Computer Use tool contract on top of the same primitives
 //   - cmd/iphonemirror-mcp, an OCR and input surface for Apple's iPhone
 //     Mirroring app
+//   - cmd/axcdp, a CDP remote-debugging endpoint backed by macOS
+//     Accessibility, screen capture, and native overlays
 //
 // The module is command-first. Internal packages are shared implementation
 // libraries, not a public import surface.
@@ -25,6 +27,8 @@
 //     Computer Use contract with per-session application state
 //   - cmd/iphonemirror-mcp, a stdio MCP server for controlling iPhone
 //     Mirroring through OCR, focus, and synthetic input
+//   - cmd/axcdp, a Chrome DevTools Protocol endpoint for native macOS UI
+//     inspection; it is not an MCP server
 //   - cmd/xc, a direct CLI built on the same packages
 //   - cmd/ax, a direct CLI for the macOS Accessibility API
 //   - cmd/ascript and cmd/ascriptmcp, tools for scriptable macOS applications
