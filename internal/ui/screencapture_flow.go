@@ -71,7 +71,7 @@ func screenCaptureWindowStateFor(requested, promptVisible, settingsVisible bool,
 		return screenCaptureWindowState{
 			phase:          screenCaptureWindowPhaseSettings,
 			requestTitle:   "Open Settings",
-			bodyText:       "Enable axmcp.app in System Settings, then return here.",
+			bodyText:       fmt.Sprintf("Enable %s in System Settings, then return here.", screenCaptureAppDisplayName()),
 			waitText:       screenCaptureElapsedText("Waiting for the permission change", elapsed),
 			showSpinner:    true,
 			showWait:       true,
@@ -92,7 +92,7 @@ func screenCaptureWindowStateFor(requested, promptVisible, settingsVisible bool,
 		return screenCaptureWindowState{
 			phase:          screenCaptureWindowPhaseSettings,
 			requestTitle:   "Open Settings",
-			bodyText:       "If no prompt appeared, enable axmcp.app in System Settings.",
+			bodyText:       fmt.Sprintf("If no prompt appeared, enable %s in System Settings.", screenCaptureAppDisplayName()),
 			waitText:       screenCaptureElapsedText("Waiting for the permission change", elapsed),
 			showSpinner:    true,
 			showWait:       true,
@@ -100,6 +100,17 @@ func screenCaptureWindowStateFor(requested, promptVisible, settingsVisible bool,
 			showReset:      elapsed >= screenCaptureResetDelay,
 		}
 	}
+}
+
+func screenCaptureAppDisplayName() string {
+	name := strings.TrimSpace(uiExecName())
+	if name == "" {
+		name = "this app"
+	}
+	if strings.HasSuffix(strings.ToLower(name), ".app") {
+		return name
+	}
+	return name + ".app"
 }
 
 func screenCaptureElapsedText(prefix string, elapsed time.Duration) string {

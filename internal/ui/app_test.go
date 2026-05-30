@@ -69,6 +69,35 @@ func TestIsTrustedPrefersImmediateAXSignal(t *testing.T) {
 	}
 }
 
+func TestWaitForScreenRecordingRequestsPrompt(t *testing.T) {
+	oldScreen := screenRecordingAvailable
+	oldRequest := requestScreenCapturePrompt
+	origScreen := permissionInProgress("ScreenCapture")
+	defer func() {
+		screenRecordingAvailable = oldScreen
+		requestScreenCapturePrompt = oldRequest
+		setPermissionInProgress("ScreenCapture", origScreen)
+	}()
+
+	checks := 0
+	screenRecordingAvailable = func() bool {
+		checks++
+		return checks >= 3
+	}
+	requests := 0
+	requestScreenCapturePrompt = func() {
+		requests++
+	}
+	setPermissionInProgress("ScreenCapture", true)
+
+	if !WaitForScreenRecording(time.Second) {
+		t.Fatal("WaitForScreenRecording returned false, want true")
+	}
+	if requests != 1 {
+		t.Fatalf("screen capture requests = %d, want 1", requests)
+	}
+}
+
 func TestConfigureIdentityOverridesFallbacks(t *testing.T) {
 	resetIdentityForTest(t)
 	t.Cleanup(func() {

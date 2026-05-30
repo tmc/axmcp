@@ -123,7 +123,12 @@ func (e *Element) Attributes() Attributes {
 func (e *Element) Screenshot() ([]byte, error) {
 	frame := e.getFrame()
 	if frame.Size.Width == 0 || frame.Size.Height == 0 {
-		return nil, fmt.Errorf("element has empty frame (likely missing Accessibility permissions for %s.app or parent process)", uiExecName())
+		return nil, fmt.Errorf("element has empty frame (likely missing Accessibility permissions for %s or parent process)", screenCaptureAppDisplayName())
+	}
+	if !IsScreenRecordingTrusted() {
+		if !WaitForScreenRecording(30 * time.Second) {
+			return nil, fmt.Errorf("screen recording permission not granted for %s", screenCaptureAppDisplayName())
+		}
 	}
 
 	// screencapture -R x,y,w,h -t png <file>
@@ -382,7 +387,10 @@ func isScreenRecordingAvailable() bool {
 	return coregraphics.CGPreflightScreenCaptureAccess()
 }
 
-var screenRecordingAvailable = isScreenRecordingAvailable
+var (
+	screenRecordingAvailable   = isScreenRecordingAvailable
+	requestScreenCapturePrompt = requestScreenCaptureAsync
+)
 
 func screenCaptureTerminateGuardActive() bool {
 	return permissionInProgress("ScreenCapture")
@@ -393,7 +401,7 @@ func ScreenCaptureTerminateGuardActive() bool {
 }
 
 func requestScreenCapture() {
-	fmt.Fprintln(os.Stderr, "axmcp: requesting screen capture access")
+	fmt.Fprintf(os.Stderr, "%s: requesting screen capture access\n", uiExecName())
 	coregraphics.CGRequestScreenCaptureAccess()
 }
 
@@ -410,7 +418,7 @@ func requestScreenCaptureAsync() {
 }
 
 func resetAndRerequestScreenCapture() {
-	fmt.Fprintln(os.Stderr, "axmcp: re-requesting screen capture — resetting TCC")
+	fmt.Fprintf(os.Stderr, "%s: re-requesting screen capture; resetting TCC\n", uiExecName())
 	resetTCC("ScreenCapture")
 	coregraphics.CGRequestScreenCaptureAccess()
 	go exec.Command("open", uiPrivacySettingsURL("ScreenCapture")).Run()
@@ -436,6 +444,7 @@ func WaitForScreenRecording(timeout time.Duration) bool {
 	if screenRecordingAvailable() {
 		return true
 	}
+	requestScreenCapturePrompt()
 	go CheckScreenCapture()
 	deadline := time.Now().Add(timeout)
 	for {
@@ -468,7 +477,7 @@ func CheckScreenCapture() {
 		requestFunc: requestScreenCaptureAsync,
 		resetFunc:   resetAndRerequestScreenCapture,
 		successText: "Screen Recording permission granted.",
-		timeoutText: "Permission may require restart. Re-run axmcp to try again.",
+		timeoutText: fmt.Sprintf("Permission may require restart. Re-run %s to try again.", uiExecName()),
 	})
 }
 

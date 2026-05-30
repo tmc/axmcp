@@ -211,6 +211,20 @@ func ResetAndRetry(r Requirement) error {
 	return nil
 }
 
+func ResetIdentityState() {
+	state.Lock()
+	appName := state.appName
+	bundleID := state.bundleID
+	state.identityLoaded = false
+	state.identityChange = false
+	state.identityDetail = ""
+	state.Unlock()
+
+	if current, err := currentIdentityRecord(appName, bundleID); err == nil {
+		_ = os.Remove(identityRecordPath(current.BundleID))
+	}
+}
+
 func OpenSystemSettings(r Requirement) error {
 	service := serviceName(r)
 	if service == "" {

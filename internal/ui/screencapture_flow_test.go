@@ -54,6 +54,10 @@ func TestScreenCaptureWindowStateForVisiblePrompt(t *testing.T) {
 }
 
 func TestScreenCaptureWindowStateForSettingsGuidance(t *testing.T) {
+	resetIdentityForTest(t)
+	t.Cleanup(func() { resetIdentityForTest(t) })
+	ConfigureIdentity("axcdp", "dev.tmc.axcdp")
+
 	state := screenCaptureWindowStateFor(true, false, false, 6*time.Second)
 	if state.phase != screenCaptureWindowPhaseSettings {
 		t.Fatalf("phase = %v, want settings", state.phase)
@@ -61,7 +65,7 @@ func TestScreenCaptureWindowStateForSettingsGuidance(t *testing.T) {
 	if got := state.requestTitle; got != "Open Settings" {
 		t.Fatalf("requestTitle = %q, want Open Settings", got)
 	}
-	if got := state.bodyText; got != "If no prompt appeared, enable axmcp.app in System Settings." {
+	if got := state.bodyText; got != "If no prompt appeared, enable axcdp.app in System Settings." {
 		t.Fatalf("bodyText = %q", got)
 	}
 	if !state.requestEnabled {
@@ -73,9 +77,16 @@ func TestScreenCaptureWindowStateForSettingsGuidance(t *testing.T) {
 }
 
 func TestScreenCaptureWindowStateShowsResetAfterDelay(t *testing.T) {
+	resetIdentityForTest(t)
+	t.Cleanup(func() { resetIdentityForTest(t) })
+	ConfigureIdentity("axcdp", "dev.tmc.axcdp")
+
 	state := screenCaptureWindowStateFor(true, false, true, 12*time.Second)
 	if state.phase != screenCaptureWindowPhaseSettings {
 		t.Fatalf("phase = %v, want settings", state.phase)
+	}
+	if got := state.bodyText; got != "Enable axcdp.app in System Settings, then return here." {
+		t.Fatalf("bodyText = %q", got)
 	}
 	if !state.showReset {
 		t.Fatal("showReset = false, want true after prolonged wait")
