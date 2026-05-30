@@ -1,9 +1,10 @@
 # axcdp completion audit
 
 This audit maps the requested CDP behavior to the artifacts that implement or
-explicitly refuse it. `axcdp` is complete for the AX-backed contract below; it
-is not a full browser backend. See `BROWSER_BACKEND.md` for the path to literal
-full browser-CDP coverage.
+explicitly refuse it. `axcdp` has a bounded AX-backed contract below; it is not
+a full browser backend. When `-browser-cdp` is configured, browser-only target
+traffic is proxied to a real browser DevTools endpoint rather than synthesized
+from AX data.
 
 ## Contract
 
@@ -22,7 +23,7 @@ on real macOS coordinates.
 | Requirement | Evidence |
 | --- | --- |
 | Default remote debugging port is first in Chrome/Brave discovery. | `cmd/axcdp/main.go` defaults TTY server mode to `:9221`. |
-| The live AX server has a stable TCC identity. | `startMacApp` configures macgo as `axcdp` with bundle id `dev.tmc.axcdp`, Accessibility and Screen Recording permissions, ad-hoc local app signing, UI/permission identity assignment, and explicit TCC requests before serving. Live serving uses a built binary, not transient `go run` paths. |
+| The live AX server has a stable TCC identity. | `startMacApp` configures macgo as `axcdp` with bundle id `dev.tmc.axcdp`, Accessibility and Screen Recording permissions, signing selected by `internal/macsigning`, UI/permission identity assignment, and explicit TCC requests before serving. Live serving should use a built binary, not transient `go run` paths. |
 | `/json/version` is accepted by Chrome DevTools without a remote-newer warning. | `cmd/axcdp/cdp_server.go` returns protocol `1.3` and stable Chrome 120 metadata. |
 | `/json/list` exposes inspectable AX targets. | `handleList` returns one root page target, one root Node-compatible target, and one page target per visible macOS window. It does not advertise app-level page rows in the general inspect list because an app is not a single screencast viewport. |
 | macOS apps are not duplicated as fake Node targets. | `handleList` only adds the root Node-compatible target; `verifyCDPEndpoint` rejects app URLs with type `node`. |
@@ -78,14 +79,25 @@ as appropriate.
 
 ## Gates
 
-Run these before treating the AX-backed CDP contract as healthy:
+Run these before treating the AX-backed CDP contract as healthy. The live
+verifiers require an already-running `axcdp` endpoint with Accessibility and
+Screen Recording permission granted:
 
 ```sh
 go test ./cmd/axcdp
 go run ./cmd/axcdp -verify-cdp http://127.0.0.1:9221
-go run ./cmd/axcdp -verify-browser-cdp http://127.0.0.1:<combined-port>
-go test ./...
+go run ./cmd/axcdp -verify-target http://127.0.0.1:9221 -target <target-title-or-id>
 ```
+
+Run the browser verifier only against a combined server started with
+`-browser-cdp`:
+
+```sh
+go run ./cmd/axcdp -verify-browser-cdp http://127.0.0.1:<combined-port>
+```
+
+`go test ./...` is a broader repository gate, not a substitute for the live
+CDP/TCC checks above.
 
 Optional sibling CLI checks:
 
