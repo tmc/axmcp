@@ -23,6 +23,23 @@ func TestConfigureSetsIdentifier(t *testing.T) {
 	}
 }
 
+func TestConfigureDefaultsAdHocWhenNoDeveloperID(t *testing.T) {
+	cfg := macgo.NewConfig()
+	cfg.BundleID = "dev.tmc.axmcp"
+
+	originalFindDeveloperID := findDeveloperID
+	findDeveloperID = func() string { return "" }
+	defer func() { findDeveloperID = originalFindDeveloperID }()
+
+	Configure(cfg)
+	if got := cfg.CodeSignIdentity; got != "" {
+		t.Fatalf("CodeSignIdentity = %q, want empty for ad-hoc default", got)
+	}
+	if !cfg.AdHocSign {
+		t.Fatal("AdHocSign = false, want true by default")
+	}
+}
+
 func TestConfigurePrefersDeveloperID(t *testing.T) {
 	cfg := macgo.NewConfig()
 	cfg.BundleID = "dev.tmc.axmcp"
@@ -54,5 +71,32 @@ func TestConfigureRespectsExistingMode(t *testing.T) {
 	}
 	if !cfg.AdHocSign {
 		t.Fatal("AdHocSign = false, want caller-selected mode preserved")
+	}
+}
+
+func TestConfigureRespectsExplicitIdentity(t *testing.T) {
+	cfg := macgo.NewConfig().WithCodeSigning("Developer ID Application: Example (TEAMID1234)")
+	cfg.BundleID = "dev.tmc.axmcp"
+
+	Configure(cfg)
+	if got := cfg.CodeSignIdentity; got != "Developer ID Application: Example (TEAMID1234)" {
+		t.Fatalf("CodeSignIdentity = %q, want explicit identity", got)
+	}
+	if cfg.AdHocSign {
+		t.Fatal("AdHocSign = true, want false when caller selected a signing identity")
+	}
+}
+
+func TestConfigureAppliesEnvironmentIdentity(t *testing.T) {
+	t.Setenv("MACGO_CODE_SIGN_IDENTITY", "Apple Development: Example (TEAMID1234)")
+	cfg := macgo.NewConfig()
+	cfg.BundleID = "dev.tmc.axmcp"
+
+	Configure(cfg)
+	if got := cfg.CodeSignIdentity; got != "Apple Development: Example (TEAMID1234)" {
+		t.Fatalf("CodeSignIdentity = %q, want environment identity", got)
+	}
+	if cfg.AdHocSign {
+		t.Fatal("AdHocSign = true, want false when environment selected a signing identity")
 	}
 }

@@ -13,8 +13,8 @@ var findDeveloperID = codesign.FindDeveloperID
 //
 // If the caller or environment already selected a signing mode, Configure
 // leaves it alone. Otherwise it prefers a Developer ID Application certificate,
-// which is LaunchServices-safe for app bundles, and falls back to ad-hoc
-// signing when no such identity is available.
+// which gives TCC a stable code requirement, and falls back to ad-hoc signing
+// when no such identity is available.
 func Configure(cfg *macgo.Config) *macgo.Config {
 	if cfg == nil {
 		return nil
@@ -22,7 +22,8 @@ func Configure(cfg *macgo.Config) *macgo.Config {
 	if cfg.BundleID != "" && cfg.CodeSigningIdentifier == "" {
 		cfg.CodeSigningIdentifier = cfg.BundleID
 	}
-	if hasSigningOverrideEnv() || cfg.CodeSignIdentity != "" || cfg.AutoSign || cfg.AdHocSign {
+	applySigningEnv(cfg)
+	if cfg.CodeSignIdentity != "" || cfg.AutoSign || cfg.AdHocSign {
 		return cfg
 	}
 	if identity := findDeveloperID(); identity != "" {
@@ -31,11 +32,14 @@ func Configure(cfg *macgo.Config) *macgo.Config {
 	return cfg.WithAdHocSign()
 }
 
-func hasSigningOverrideEnv() bool {
-	const (
-		codeSignIdentity = "MACGO_CODE_SIGN_IDENTITY"
-		autoSign         = "MACGO_AUTO_SIGN"
-		adHocSign        = "MACGO_AD_HOC_SIGN"
-	)
-	return os.Getenv(codeSignIdentity) != "" || os.Getenv(autoSign) != "" || os.Getenv(adHocSign) != ""
+func applySigningEnv(cfg *macgo.Config) {
+	if cfg.CodeSignIdentity == "" {
+		cfg.CodeSignIdentity = os.Getenv("MACGO_CODE_SIGN_IDENTITY")
+	}
+	if os.Getenv("MACGO_AUTO_SIGN") == "1" {
+		cfg.AutoSign = true
+	}
+	if os.Getenv("MACGO_AD_HOC_SIGN") == "1" {
+		cfg.AdHocSign = true
+	}
 }
