@@ -400,7 +400,7 @@ func pngImageFromMask(mask cursorMask, red, green, blue, alpha float64, rasterSc
 	if err := png.Encode(&buf, img); err != nil {
 		return appkit.NSImage{}, fmt.Errorf("encode cursor image: %w", err)
 	}
-	nsimg := appkit.NewImageWithData(foundation.NewMutableDataWithBytesLength(buf.Bytes()))
+	nsimg := appkit.NewImageWithData(foundation.NewMutableDataWithBytesLength(buf.Bytes()).NSData)
 	nsimg.SetSize(corefoundation.CGSize{Width: float64(mask.width), Height: float64(mask.height)})
 	return nsimg, nil
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/coregraphics"
+	"github.com/tmc/apple/kernel"
 )
 
 const (
@@ -33,7 +34,7 @@ func (c *Controller) startInterventionMonitor() {
 		coregraphics.KCGHeadInsertEventTap,
 		eventTapOptionListenOnly,
 		mouseInterventionMask(),
-		ghostCursorInterventionCallback,
+		coregraphics.CGEventTapCallBack(ghostCursorInterventionCallback),
 		unsafe.Pointer(id),
 	)
 	if tap == 0 {
@@ -94,7 +95,7 @@ func mouseInterventionMask() coregraphics.CGEventMask {
 	return mask
 }
 
-func ghostCursorInterventionCallback(_ uintptr, typ coregraphics.CGEventType, event uintptr, userInfo unsafe.Pointer) uintptr {
+func ghostCursorInterventionCallback(_ uintptr, typ coregraphics.CGEventType, event uintptr, userInfo kernel.Pointer) uintptr {
 	switch typ {
 	case coregraphics.KCGEventTapDisabledByTimeout, coregraphics.KCGEventTapDisabledByUserInput:
 		if c := interventionController(userInfo); c != nil && c.interventionTap != 0 {
@@ -135,7 +136,7 @@ func unregisterInterventionController(id uintptr) {
 	interventionRegistry.Unlock()
 }
 
-func interventionController(userInfo unsafe.Pointer) *Controller {
+func interventionController(userInfo kernel.Pointer) *Controller {
 	id := uintptr(userInfo)
 	if id == 0 {
 		return nil

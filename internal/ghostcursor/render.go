@@ -131,7 +131,7 @@ func cgImageToPNG(img coregraphics.CGImageRef) ([]byte, error) {
 		return nil, fmt.Errorf("create bitmap image rep")
 	}
 	data := rep.RepresentationUsingTypeProperties(appkit.NSBitmapImageFileTypePNG, nil)
-	if data == nil || data.Length() == 0 {
+	if data.GetID() == 0 || data.Length() == 0 {
 		return nil, fmt.Errorf("create png representation")
 	}
 	raw := unsafe.Slice((*byte)(data.Bytes()), data.Length())

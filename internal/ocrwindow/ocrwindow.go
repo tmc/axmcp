@@ -48,6 +48,27 @@ func FindWindow(appIdentifier string) (Window, error) {
 	return freshWindowBounds(wins[0], appIdentifier)
 }
 
+// ListWindows returns the on-screen windows whose owning process matches
+// appIdentifier.
+func ListWindows(appIdentifier string) ([]Window, error) {
+	return listAppWindows(appIdentifier, coregraphics.KCGWindowListOptionOnScreenOnly)
+}
+
+// FindWindowID returns the on-screen window with the given Core Graphics
+// window id whose owning process matches appIdentifier.
+func FindWindowID(appIdentifier string, id uint32) (Window, error) {
+	wins, err := ListWindows(appIdentifier)
+	if err != nil {
+		return Window{}, err
+	}
+	for _, win := range wins {
+		if win.ID == id {
+			return win, nil
+		}
+	}
+	return Window{}, fmt.Errorf("window %d not found for %q", id, appIdentifier)
+}
+
 // Capture returns a PNG-encoded screenshot of the given window, plus the
 // pixel dimensions of the encoded image (which may exceed the logical
 // window size on Retina displays).
@@ -268,6 +289,9 @@ func withBounds(win, bounds Window) Window {
 }
 
 func ownerMatches(w Window, id string) bool {
+	if pid, err := strconv.ParseInt(strings.TrimSpace(id), 10, 64); err == nil {
+		return w.OwnerPID == pid
+	}
 	id = strings.ToLower(id)
 	owner := strings.ToLower(w.OwnerName)
 	return strings.Contains(owner, id) || strings.Contains(id, owner)
@@ -345,7 +369,7 @@ func encodePNG(img coregraphics.CGImageRef) ([]byte, error) {
 		return nil, fmt.Errorf("NewBitmapImageRepWithCGImage failed")
 	}
 	data := rep.RepresentationUsingTypeProperties(appkit.NSBitmapImageFileTypePNG, nil)
-	if data == nil {
+	if data.GetID() == 0 {
 		return nil, fmt.Errorf("RepresentationUsingTypeProperties failed")
 	}
 	length := data.Length()

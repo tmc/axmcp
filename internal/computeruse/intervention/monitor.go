@@ -6,10 +6,10 @@ import (
 	"os"
 	"sync"
 	"time"
-	"unsafe"
 
 	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/coregraphics"
+	"github.com/tmc/apple/kernel"
 )
 
 const defaultQuietPeriod = 750 * time.Millisecond
@@ -73,9 +73,9 @@ func (m *Monitor) Start() error {
 	tap := coregraphics.CGEventTapCreate(
 		coregraphics.KCGSessionEventTap,
 		coregraphics.KCGHeadInsertEventTap,
-		coregraphics.CGEventTapOptions(1), // kCGEventTapOptionListenOnly
+		coregraphics.KCGEventTapOptionListenOnly,
 		mask,
-		m.callback,
+		coregraphics.CGEventTapCallBack(m.callback),
 		nil,
 	)
 	if tap == 0 {
@@ -167,7 +167,7 @@ func (m *Monitor) isEnabled() bool {
 	return m.enabled
 }
 
-func (m *Monitor) callback(_ uintptr, typ coregraphics.CGEventType, event uintptr, _ unsafe.Pointer) uintptr {
+func (m *Monitor) callback(_ uintptr, typ coregraphics.CGEventType, event uintptr, _ kernel.Pointer) uintptr {
 	if typ == coregraphics.KCGEventTapDisabledByTimeout || typ == coregraphics.KCGEventTapDisabledByUserInput {
 		m.mu.Lock()
 		tap := m.tap
