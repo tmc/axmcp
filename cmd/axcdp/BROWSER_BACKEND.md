@@ -35,11 +35,9 @@ The combined server routes by target kind:
   then WebSocket messages for those targets are proxied to the browser.
 - Browser-backed `Target.createTarget` and `Target.closeTarget` proxy to the
   browser endpoint and return combined-server target IDs.
-- Mixed targets should advertise only the domains actually backed for that
-  target. Do not globally advertise browser domains for AX-only targets.
-- `/json/coverage` should include a per-target or per-backend section so tests
-  can prove whether a method is AX-backed, browser-backed, setup-only, or
-  unsupported.
+- `/json/coverage` documents the AX-backed command surface. Browser-backed
+  methods must be proven with the browser verifier and sibling CDP CLI checks
+  against a combined server.
 
 ## Verification gates
 
