@@ -51,7 +51,9 @@ func startTestServer(t *testing.T, args ...string) *testServer {
 		t.Fatalf("build xcmcp: %v", err)
 	}
 
+	args = append([]string{"-wait-for-xcode=0s"}, args...)
 	cmd := exec.Command(bin, args...)
+	cmd.Env = append(os.Environ(), "XCMCP_NO_MACGO=1")
 	cmd.Stderr = os.Stderr
 
 	stdin, err := cmd.StdinPipe()

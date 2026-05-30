@@ -8,14 +8,19 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/tmc/apple/appkit"
-	"github.com/tmc/macgo"
+	"github.com/tmc/axmcp/internal/macsigning"
 	"github.com/tmc/axmcp/internal/resources"
 	"github.com/tmc/axmcp/internal/ui"
+	"github.com/tmc/axmcp/internal/ui/permissions"
+	"github.com/tmc/macgo"
 )
 
 // Define flags at package level so they can be registered before macgo.Start.
@@ -39,6 +44,7 @@ var (
 	xcodeToolsPrefix     = flag.String("xcode-tools-prefix", "", "Optional prefix for proxied Xcode tool names")
 	xcodeOnly            = flag.Bool("xcode-only", false, "Only register Xcode bridge tools, skip all native xcmcp tools")
 	subscribeBuildErrors = flag.Bool("subscribe-build-errors", false, "Expose Xcode build errors as a subscribable resource")
+	requestPermissions   = flag.Bool("request-permissions", false, "Request xcmcp Accessibility and Screen Recording permissions, then exit")
 )
 
 func main() {
@@ -59,15 +65,24 @@ func main() {
 	// Initialize macgo for TCC identity
 	cfg := macgo.NewConfig().
 		WithAppName("xcmcp").
-		WithPermissions(macgo.Accessibility).
-		WithAdHocSign()
+		WithPermissions(macgo.Accessibility, macgo.ScreenRecording).
+		WithUsageDescription("NSAccessibilityUsageDescription", "xcmcp uses Accessibility to inspect and interact with macOS UI elements.").
+		WithUsageDescription("NSScreenCaptureUsageDescription", "xcmcp uses Screen Recording to capture UI screenshots for MCP tools.").
+		WithUIMode(macgo.UIModeAccessory).
+		WithDevMode()
 	cfg.BundleID = "dev.tmc.xcmcp"
+	cfg = macsigning.Configure(cfg)
+	cfg.ForceDirectExecution = os.Getenv("XCMCP_FORCE_DIRECT") == "1"
+	removeAdHocBundle("xcmcp", cfg.CodeSignIdentity != "" || cfg.AutoSign, cfg.DevMode)
 	ui.ConfigureIdentity("xcmcp", cfg.BundleID)
-	// ForceDirectExecution removed to allow Macgo to manage the App Bundle for TCC
+	permissions.ConfigureIdentity("xcmcp", cfg.BundleID)
 
-	if err := macgo.Start(cfg); err != nil {
-		log.Fatalf("macgo start failed: %v", err)
+	if os.Getenv("XCMCP_NO_MACGO") != "1" {
+		if err := macgo.Start(cfg); err != nil {
+			log.Fatalf("macgo start failed: %v", err)
+		}
 	}
+	restoreMacgoDevModeStdin()
 	initFileLog()
 
 	// Initialize AppKit to satisfy LaunchServices
@@ -90,6 +105,27 @@ func main() {
 		*enableResources = true
 		*enableASC = true
 		*enableXcode = true
+	}
+
+	needsUIPermissions := *requestPermissions || *enableAll || *enableUI
+	var permissionReady <-chan error
+	if needsUIPermissions {
+		ch := make(chan error, 1)
+		permissionReady = ch
+		go func() {
+			ch <- ensureUIPermissions()
+		}()
+	}
+	if *requestPermissions {
+		go func() {
+			if err := <-permissionReady; err != nil {
+				log.Printf("permission onboarding failed: %v", err)
+				os.Exit(1)
+			}
+			os.Exit(0)
+		}()
+		app.Run()
+		return
 	}
 
 	// Create server options based on flags
@@ -175,13 +211,21 @@ func main() {
 	log.Println("Starting xcmcp server...")
 
 	// Create transport
-	transport := &mcp.StdioTransport{}
+	var transport mcp.Transport = &mcp.StdioTransport{}
+	if os.Getenv("XCMCP_TRACE_RPC") == "1" {
+		transport = &mcp.LoggingTransport{
+			Transport: transport,
+			Writer:    os.Stderr,
+		}
+	}
 
-	// Run server in goroutine to allow main thread to handle RunLoop.
-	// When --wait-for-xcode is set, delay accepting connections until
-	// the bridge tools have been discovered so the initial tools/list
-	// response includes all Xcode tools.
-	go func() {
+	runServer := func() {
+		if permissionReady != nil {
+			if err := <-permissionReady; err != nil {
+				log.Printf("permission onboarding failed: %v", err)
+				os.Exit(1)
+			}
+		}
 		if *waitForXcode > 0 {
 			log.Printf("Waiting up to %v for Xcode bridge tools...", *waitForXcode)
 			done := make(chan struct{})
@@ -198,14 +242,123 @@ func main() {
 		}
 		ui.WaitForWindows()
 		os.Exit(0)
-	}()
-	//
+	}
 
-	// Check Accessibility Trust
-	ui.CheckTrust()
+	if os.Getenv("XCMCP_NO_MACGO") == "1" {
+		runServer()
+		return
+	}
+
+	// Run server in goroutine to allow main thread to handle RunLoop.
+	// When --wait-for-xcode is set, delay accepting connections until
+	// the bridge tools have been discovered so the initial tools/list
+	// response includes all Xcode tools.
+	go runServer()
 
 	// Run the RunLoop — must be on the main thread and must start promptly
 	// so that AppKit can pump events (including the Xcode permission dialog).
 	app.Run()
 	_ = 42
+}
+
+func ensureUIPermissions() error {
+	reqs := []permissions.Requirement{
+		permissions.ReqAccessibility,
+		permissions.ReqScreenRecording,
+	}
+	missing := make([]permissions.Requirement, 0, len(reqs))
+	for _, req := range reqs {
+		status := permissions.Check(req)
+		slog.Info("checked permission", "permission", permissionName(req), "status", permissionStatusName(status))
+		if status != permissions.StatusGranted {
+			missing = append(missing, req)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	if err := permissions.OnboardingWindow(context.Background(), missing...); err != nil && err != context.Canceled {
+		return err
+	}
+	for _, req := range reqs {
+		status := permissions.Check(req)
+		slog.Info("checked permission", "permission", permissionName(req), "status", permissionStatusName(status))
+		if status != permissions.StatusGranted {
+			return fmt.Errorf("%s permission not granted", permissionName(req))
+		}
+	}
+	return nil
+}
+
+func permissionName(req permissions.Requirement) string {
+	switch req {
+	case permissions.ReqAccessibility:
+		return "Accessibility"
+	case permissions.ReqScreenRecording:
+		return "Screen Recording"
+	default:
+		return "unknown"
+	}
+}
+
+func permissionStatusName(status permissions.Status) string {
+	switch status {
+	case permissions.StatusGranted:
+		return "granted"
+	case permissions.StatusDenied:
+		return "denied"
+	case permissions.StatusMissing:
+		return "missing"
+	case permissions.StatusStale:
+		return "stale"
+	case permissions.StatusInProgress:
+		return "in_progress"
+	default:
+		return "unknown"
+	}
+}
+
+func restoreMacgoDevModeStdin() {
+	if os.Getenv("MACGO_NO_RELAUNCH") != "1" {
+		return
+	}
+	stdinPipe := os.Getenv("MACGO_STDIN_PIPE")
+	if stdinPipe == "" {
+		return
+	}
+	f, err := os.OpenFile(stdinPipe, os.O_RDONLY, 0)
+	if err != nil {
+		slog.Warn("restore macgo dev-mode stdin failed", "pipe", stdinPipe, "err", err)
+		return
+	}
+	os.Stdin = f
+}
+
+func removeAdHocBundle(appName string, wantSigned, devMode bool) {
+	if appName == "" || !wantSigned || os.Getenv("MACGO_NO_RELAUNCH") != "" {
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil || strings.Contains(exe, ".app/Contents/MacOS/") {
+		return
+	}
+	bundle := filepath.Join(filepath.Dir(exe), appName+".app")
+	devTarget := filepath.Join(bundle, "Contents", "Resources", ".dev_target")
+	_, statErr := os.Stat(devTarget)
+	remove := !devMode && statErr == nil
+	out, err := exec.Command("/usr/bin/codesign", "-dv", bundle).CombinedOutput()
+	remove = remove || err == nil && strings.Contains(string(out), "Signature=adhoc")
+	if !remove {
+		plist := filepath.Join(bundle, "Contents", "Info.plist")
+		bg, bgErr := exec.Command("/usr/bin/defaults", "read", plist, "LSBackgroundOnly").Output()
+		remove = bgErr == nil && strings.TrimSpace(string(bg)) == "1"
+	}
+	if !remove {
+		return
+	}
+	if err := os.RemoveAll(bundle); err != nil {
+		slog.Warn("remove stale app bundle failed", "bundle", bundle, "err", err)
+		return
+	}
+	slog.Info("removed stale app bundle", "bundle", bundle)
 }

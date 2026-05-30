@@ -277,6 +277,15 @@ func registerUITools(s *mcp.Server) {
 				}
 			} else {
 				el = app.Element()
+				if frameEmpty(el) {
+					windows := el.Windows()
+					for _, w := range windows {
+						if !frameEmpty(w) {
+							el = w
+							break
+						}
+					}
+				}
 			}
 		} else if id != "" {
 			el = ui.ElementByID(id)
@@ -316,4 +325,12 @@ func registerUITools(s *mcp.Server) {
 			},
 		}, map[string]string{"message": "Screenshot taken", "path": filename}, nil
 	}))
+}
+
+func frameEmpty(el *ui.Element) bool {
+	if el == nil {
+		return true
+	}
+	frame := el.Frame()
+	return frame.Size.Width == 0 || frame.Size.Height == 0
 }
