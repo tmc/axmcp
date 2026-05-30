@@ -146,6 +146,13 @@ func directWindowScreenshotArgs(args []string) (app string, out string, ok bool)
 	}
 	app = trimmed[1]
 	for i := 2; i < len(trimmed); i++ {
+		if strings.HasPrefix(trimmed[i], "--out=") {
+			out = strings.TrimPrefix(trimmed[i], "--out=")
+			if out == "" {
+				return "", "", false
+			}
+			continue
+		}
 		switch trimmed[i] {
 		case "--contains", "--role":
 			return "", "", false
@@ -155,11 +162,6 @@ func directWindowScreenshotArgs(args []string) (app string, out string, ok bool)
 			}
 			out = trimmed[i+1]
 			i++
-		case strings.HasPrefix(trimmed[i], "--out="):
-			out = strings.TrimPrefix(trimmed[i], "--out=")
-			if out == "" {
-				return "", "", false
-			}
 		case "":
 		default:
 			if strings.HasPrefix(trimmed[i], "--contains=") || strings.HasPrefix(trimmed[i], "--role=") {
