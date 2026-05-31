@@ -355,6 +355,8 @@ ascript script /Applications/Finder.app activate
 - `xcmcp://apps/{bundle_id}/tree`
 - `xcmcp://apps/{bundle_id}/logs`
 
+`xcmcp://project` discovers projects from the client's file roots when the client provides them; otherwise it uses the server process's current working directory.
+
 ## Internal layout
 
 This module is command-first. Reusable helpers live under `internal/` and are not intended as a public import surface.
