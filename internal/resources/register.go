@@ -131,12 +131,8 @@ func registerAppResources(s *mcp.Server) {
 		MIMEType:    "text/plain",
 		Annotations: assistantAnnotations(0.8),
 	}, func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
-		// Parse bundle_id from URI.
-		// Go SDK might not provide auto-parsing yet, need manual extraction or usage of "variables"?
-		// The req.URI contains the actual URI.
-		// Simple string manipulation for now.
-		// Expected: xcmcp://apps/com.example.app/tree
-		// Length of prefix "xcmcp://apps/" is 13. Suffix "/tree" is 5.
+		// Expected: xcmcp://apps/com.example.app/tree.
+		// Prefix "xcmcp://apps/" is 13 bytes; suffix "/tree" is 5.
 		uri := req.Params.URI
 		if len(uri) < 18 {
 			return nil, fmt.Errorf("invalid URI format")
