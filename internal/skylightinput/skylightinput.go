@@ -257,9 +257,6 @@ func ActivateWithoutRaise(targetPID int32, targetWindowID uint32) error {
 	if err := validatePID(targetPID); err != nil {
 		return err
 	}
-	if targetWindowID == 0 {
-		return fmt.Errorf("window id is zero")
-	}
 	resolve()
 	if resolveErr != nil {
 		return resolveErr

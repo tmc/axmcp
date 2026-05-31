@@ -32,11 +32,6 @@ func TestPublicAPIsRejectInvalidInputsBeforeResolve(t *testing.T) {
 			want: "pid must be positive",
 		},
 		{
-			name: "activate window",
-			run:  func() error { return ActivateWithoutRaise(1, 0) },
-			want: "window id is zero",
-		},
-		{
 			name: "mouse pid",
 			run:  func() error { return MouseClick(0, Point{}, Point{}, 0, 1) },
 			want: "pid must be positive",
