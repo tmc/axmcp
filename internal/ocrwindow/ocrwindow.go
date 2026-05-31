@@ -1,3 +1,5 @@
+//go:build darwin
+
 // Package ocrwindow captures a macOS application window and runs Apple Vision
 // OCR on the result. It is a small, self-contained subset of the helpers in
 // cmd/axmcp; the goal is a stable internal surface that other commands
