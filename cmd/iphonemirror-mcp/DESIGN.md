@@ -26,10 +26,11 @@ the queue of follow-up work after v0.1.7.
   banner makes this loud (v0.1.5+); each input tool returns a clear error
   if the grant is missing (v0.1.5+).
 - Between read calls (e.g. ax_screenshot) iPhone Mirroring may lose
-  AppKit-frontmost. `focusIPhoneMirroring(pid, windowID)` (yabai/cua
-  recipe via `skylightinput.ActivateWithoutRaise`) re-activates without
-  raising the window or following the user across Spaces. Wired into
-  every input tool (v0.1.6+).
+  AppKit-frontmost. `focusIPhoneMirroring(pid, windowID)` uses
+  `skylightinput.ActivateWithoutRaise` to re-activate without raising
+  the window or following the user across Spaces. The helper can focus
+  by pid when a window id is not available. Wired into every input tool
+  (v0.1.6+).
 - Keystrokes sent via `CGEventPostToPid` reach iOS as native HID keyboard
   events; iOS apps that implement `UIKeyCommand` (Photos, Maps, Safari,
   Freeform) respond as if the user pressed the key.

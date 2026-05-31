@@ -18,7 +18,8 @@
 //     or SLPSSetFrontProcessWithOptions raises the window AND on multi-Space
 //     setups follows the user across Spaces. The yabai pattern of two
 //     SLPSPostEventRecordTo calls (defocus prev, focus target) flips the
-//     AppKit-active state without raising or Space-following.
+//     AppKit-active state without raising or Space-following. The focus target
+//     can be resolved from a window id when available or from the pid alone.
 //
 // Recipe lifted from trycua's cua-driver, documented at
 // https://github.com/trycua/cua/blob/main/blog/inside-macos-window-internals.md
@@ -26,7 +27,7 @@
 // {SkyLightEventPost,FocusWithoutRaise,MouseInput}.swift.
 //
 // Status: this package speaks to private Apple SPIs that are not in any
-// public header and are not API-stable. Symbols are resolved lazily; if any
-// SPI is missing on the running OS, the corresponding helper returns
-// ErrUnavailable and callers should fall back to a public CGEvent path.
+// public header and are not API-stable. Symbols are resolved lazily; if the
+// SPIs required for a helper are missing on the running OS, that helper
+// returns ErrUnavailable and callers should fall back to a public CGEvent path.
 package skylightinput
