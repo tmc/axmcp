@@ -31,6 +31,29 @@ func TestBackendClickPointUsesXDoToolWindowLocalCoordinates(t *testing.T) {
 	}
 }
 
+func TestBackendClickPointUsesForegroundHID(t *testing.T) {
+	runner := &recordingRunner{}
+	backend := Backend{run: runner.run}
+
+	err := backend.ClickPoint(context.Background(), linuxInputSnapshot(), computeruse.Point{X: 75, Y: 50}, computeruse.ClickOptions{
+		Button:        "right",
+		ClickCount:    2,
+		ForegroundHID: true,
+	})
+	if err != nil {
+		t.Fatalf("ClickPoint: %v", err)
+	}
+	want := [][]string{
+		{"xdotool", "windowactivate", "--sync", "0x03e00007"},
+		{"xdotool", "mousemove", "160", "120"},
+		{"xdotool", "click", "3"},
+		{"xdotool", "click", "3"},
+	}
+	if !reflect.DeepEqual(runner.commands, want) {
+		t.Fatalf("commands = %#v, want %#v", runner.commands, want)
+	}
+}
+
 func TestBackendDragKeyAndTypeUseXDoToolWindow(t *testing.T) {
 	runner := &recordingRunner{}
 	backend := Backend{run: runner.run}
@@ -184,6 +207,25 @@ func TestBackendClickElementFallsBackWhenATSPIUnavailable(t *testing.T) {
 	}
 	if !reflect.DeepEqual(runner.commands, wantCommands) {
 		t.Fatalf("commands = %#v, want %#v", runner.commands, wantCommands)
+	}
+}
+
+func TestBackendClickElementUsesForegroundHIDFallback(t *testing.T) {
+	runner := &recordingRunner{}
+	backend := Backend{run: runner.run}
+
+	if err := backend.ClickElement(context.Background(), linuxInputSnapshot(), 1, computeruse.ClickOptions{
+		ForegroundHID: true,
+	}); err != nil {
+		t.Fatalf("ClickElement: %v", err)
+	}
+	want := [][]string{
+		{"xdotool", "windowactivate", "--sync", "0x03e00007"},
+		{"xdotool", "mousemove", "55", "70"},
+		{"xdotool", "click", "1"},
+	}
+	if !reflect.DeepEqual(runner.commands, want) {
+		t.Fatalf("commands = %#v, want %#v", runner.commands, want)
 	}
 }
 

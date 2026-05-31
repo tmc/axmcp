@@ -408,6 +408,24 @@ func (b Backend) clickWindowLocal(ctx context.Context, s *Snapshot, local coords
 	if err != nil {
 		return err
 	}
+	if opts.ForegroundHID {
+		screen, err := coords.WindowLocalToScreen(s.state.Window, local)
+		if err != nil {
+			return err
+		}
+		if err := b.runXDoTool(ctx, s.window, "windowactivate", "--sync", s.window.ID); err != nil {
+			return err
+		}
+		if err := b.runXDoTool(ctx, s.window, "mousemove", strconv.Itoa(screen.X), strconv.Itoa(screen.Y)); err != nil {
+			return err
+		}
+		for range normalizeClickCount(opts.ClickCount) {
+			if err := b.runXDoTool(ctx, s.window, "click", button); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	if err := b.runXDoTool(ctx, s.window, "mousemove", "--window", s.window.ID, strconv.Itoa(local.X), strconv.Itoa(local.Y)); err != nil {
 		return err
 	}
