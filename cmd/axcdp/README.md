@@ -12,8 +12,8 @@ synthesized.
 
 DevTools inspection uses a DOM-shaped tree derived from real AX elements. That
 tree is simulated only as a protocol shape; `Page.captureScreenshot` and
-`Page.startScreencast` return real screen pixels, and highlight commands draw a
-native overlay on the real macOS view bounds.
+`Page.startScreencast` use screen capture, and highlight commands draw a native
+overlay on the real macOS view bounds.
 
 Window screenshots and screencast frames are captured with
 `CGWindowListCreateImage`, so the relevant macOS TCC grant is Screen Recording
