@@ -48,6 +48,7 @@ type AutomationNode struct {
 	Settable         bool
 	SecondaryActions []string
 	Children         []AutomationNode
+	release          func()
 }
 
 // Backend builds app state from top-level Win32 windows.
@@ -104,7 +105,7 @@ func (b Backend) BuildState(ctx context.Context, req computeruse.StateRequest) (
 		App:    appInfo(win),
 		Window: windowInfo(win),
 	}
-	tree, nodes, elements, err := b.buildTree(ctx, win)
+	tree, nodes, elements, releases, err := b.buildTree(ctx, win)
 	if err != nil {
 		return nil, err
 	}
@@ -114,16 +115,18 @@ func (b Backend) BuildState(ctx context.Context, req computeruse.StateRequest) (
 	}
 	pngData, err := b.captureScreenshot(ctx, win)
 	if err != nil {
+		releaseAll(releases)
 		return nil, err
 	}
 	pngData, cfg, err := computeruse.NormalizeScreenshotPNG(pngData, computeruse.MaxScreenshotLongSide)
 	if err != nil {
+		releaseAll(releases)
 		return nil, err
 	}
 	state.ScreenshotPNGBase64 = base64.StdEncoding.EncodeToString(pngData)
 	state.Window.ScreenshotWidth = cfg.Width
 	state.Window.ScreenshotHeight = cfg.Height
-	return &Snapshot{state: state, window: win, nodes: nodes, elements: elements}, nil
+	return &Snapshot{state: state, window: win, nodes: nodes, elements: elements, releases: releases}, nil
 }
 
 func (b Backend) listWindows(ctx context.Context) ([]Window, error) {
@@ -140,19 +143,20 @@ func (b Backend) captureScreenshot(ctx context.Context, win Window) ([]byte, err
 	return captureWindowPNG(ctx, win)
 }
 
-func (b Backend) buildTree(ctx context.Context, win Window) ([]computeruse.ElementNode, map[int]computeruse.ElementNode, map[int]NativeElement, error) {
+func (b Backend) buildTree(ctx context.Context, win Window) ([]computeruse.ElementNode, map[int]computeruse.ElementNode, map[int]NativeElement, []func(), error) {
 	root, err := b.automationTree(ctx, win)
 	if err != nil {
-		if b.automation != nil || ctx.Err() != nil || !errors.Is(err, computeruse.ErrPlatformUnsupported) {
-			return nil, nil, nil, fmt.Errorf("read UI Automation tree: %w", err)
+		if b.automation != nil || ctx.Err() != nil ||
+			(!errors.Is(err, computeruse.ErrPlatformUnsupported) && !errors.Is(err, errAutomationUnavailable)) {
+			return nil, nil, nil, nil, fmt.Errorf("read UI Automation tree: %w", err)
 		}
 		root = fallbackAutomationRoot(win)
 	}
 	if root.isEmpty() {
 		root = fallbackAutomationRoot(win)
 	}
-	tree, nodes, elements := flattenAutomationTree(win, root)
-	return tree, nodes, elements, nil
+	tree, nodes, elements, releases := flattenAutomationTree(win, root)
+	return tree, nodes, elements, releases, nil
 }
 
 func (b Backend) automationTree(ctx context.Context, win Window) (AutomationNode, error) {
@@ -193,6 +197,8 @@ type Snapshot struct {
 	window   Window
 	nodes    map[int]computeruse.ElementNode
 	elements map[int]NativeElement
+	releases []func()
+	closed   bool
 }
 
 func (s *Snapshot) State() computeruse.AppState {
@@ -214,17 +220,23 @@ func (s *Snapshot) NativeElement(index int) (NativeElement, computeruse.ElementN
 }
 
 func (s *Snapshot) Close() error {
+	if s == nil || s.closed {
+		return nil
+	}
+	s.closed = true
+	releaseAll(s.releases)
+	s.releases = nil
 	return nil
 }
 
-func readAutomationTree(ctx context.Context, win Window) (AutomationNode, error) {
-	if err := ctx.Err(); err != nil {
-		return AutomationNode{}, err
+var errAutomationUnavailable = errors.New("UI Automation unavailable")
+
+func releaseAll(releases []func()) {
+	for _, release := range releases {
+		if release != nil {
+			release()
+		}
 	}
-	if win.Handle == 0 {
-		return AutomationNode{}, fmt.Errorf("missing window handle")
-	}
-	return AutomationNode{}, computeruse.PlatformUnsupported("read UI Automation tree")
 }
 
 func fallbackAutomationRoot(win Window) AutomationNode {
@@ -247,7 +259,7 @@ func (n AutomationNode) isEmpty() bool {
 		len(n.Children) == 0
 }
 
-func flattenAutomationTree(win Window, root AutomationNode) ([]computeruse.ElementNode, map[int]computeruse.ElementNode, map[int]NativeElement) {
+func flattenAutomationTree(win Window, root AutomationNode) ([]computeruse.ElementNode, map[int]computeruse.ElementNode, map[int]NativeElement, []func()) {
 	type queueItem struct {
 		parent int
 		node   AutomationNode
@@ -256,6 +268,7 @@ func flattenAutomationTree(win Window, root AutomationNode) ([]computeruse.Eleme
 	tree := make([]computeruse.ElementNode, 0, 128)
 	nodes := make(map[int]computeruse.ElementNode)
 	elements := make(map[int]NativeElement)
+	var releases []func()
 
 	for len(queue) > 0 {
 		item := queue[0]
@@ -265,11 +278,14 @@ func flattenAutomationTree(win Window, root AutomationNode) ([]computeruse.Eleme
 		tree = append(tree, node)
 		nodes[index] = node
 		elements[index] = nativeElement(win, item.node)
+		if item.node.release != nil {
+			releases = append(releases, item.node.release)
+		}
 		for _, child := range item.node.Children {
 			queue = append(queue, queueItem{parent: index, node: child})
 		}
 	}
-	return tree, nodes, elements
+	return tree, nodes, elements, releases
 }
 
 func elementNode(win Window, src AutomationNode, parent, index int) computeruse.ElementNode {

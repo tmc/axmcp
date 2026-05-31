@@ -107,11 +107,13 @@ through tool responses. `internal/computeruse/winstate` is the first Windows
 state slice: it uses Win32 top-level windows for app resolution, a PNG
 screenshot captured with PrintWindow and a GDI BitBlt fallback, and a retained
 snapshot tree model that maps native Windows handles to stable
-`element_index` values with window-local geometry. Production builds still use
-the root window fallback until the live UIA reader lands; tests can inject a
-tree to lock the indexing and geometry contract. The Windows command now
-serves that state through the normal MCP `list_apps` and `get_app_state`
-tools. `internal/computeruse/linuxstate` mirrors that boundary
+`element_index` values with window-local geometry. Windows builds now read a
+bounded UI Automation control-view subtree through COM, retain UIA element
+handles only inside the snapshot lifetime, and fall back to the root window
+node when UIA is unavailable. Tests can still inject a tree to lock the
+indexing and geometry contract. The Windows command now serves that state
+through the normal MCP `list_apps` and `get_app_state` tools.
+`internal/computeruse/linuxstate` mirrors that boundary
 for X11: it resolves apps from `wmctrl -lpG` output, captures a PNG screenshot
 with ImageMagick `import`, and returns a root window node while AT-SPI and
 Wayland-specific state remain future work. It also routes pixel clicks, drags,
@@ -126,11 +128,11 @@ The Linux command serves that state through the same MCP tools.
 The next code milestones should keep the current `cmd/computer-use-mcp`
 contract and replace the unsupported stubs behind it.
 
-1. Expand the Windows state backend. Replace the current injected-tree/live
-   fallback boundary with a real UI Automation reader, then add an MSAA
-   fallback for apps whose UIA providers hang or lose role fidelity. Preserve
-   axmcp's `state_id` refresh contract instead of exposing reusable raw
-   element handles to callers.
+1. Expand the Windows state backend. Add UIA cache requests and provider
+   timeout handling to the live control-view reader, then add an MSAA fallback
+   for apps whose UIA providers hang or lose role fidelity. Preserve axmcp's
+   `state_id` refresh contract instead of exposing reusable raw element
+   handles to callers.
 2. Expand Windows screenshot and coordinate handling. Add WGC for
    DirectComposition/XAML hosts, DWM frame cropping, and explicit occlusion
    warnings when only BitBlt is available. Preserve the existing 1568 px

@@ -209,6 +209,74 @@ func TestBackendBuildStateReportsInjectedAutomationError(t *testing.T) {
 	}
 }
 
+func TestSnapshotCloseReleasesAutomationTree(t *testing.T) {
+	var releases int
+	backend := Backend{
+		windows:    fakeWindows,
+		screenshot: fakeScreenshot(320, 200),
+		automation: func(_ context.Context, win Window) (AutomationNode, error) {
+			return AutomationNode{
+				Native:  NativeElement{WindowHandle: win.Handle, AutomationHandle: 10},
+				Role:    "Window",
+				Title:   win.Title,
+				Rect:    win.Rect,
+				Enabled: true,
+				release: func() { releases++ },
+				Children: []AutomationNode{{
+					Native:  NativeElement{WindowHandle: win.Handle, AutomationHandle: 11},
+					Role:    "Button",
+					Title:   "Seven",
+					Rect:    Rect{X: 20, Y: 40, Width: 50, Height: 20},
+					Enabled: true,
+					release: func() { releases++ },
+				}},
+			}, nil
+		},
+	}
+	snapshot, err := backend.BuildState(context.Background(), computeruse.StateRequest{App: "calc.exe"})
+	if err != nil {
+		t.Fatalf("BuildState: %v", err)
+	}
+	if releases != 0 {
+		t.Fatalf("releases before Close = %d, want 0", releases)
+	}
+	if err := snapshot.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := snapshot.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+	if releases != 2 {
+		t.Fatalf("releases = %d, want 2", releases)
+	}
+}
+
+func TestBackendBuildStateReleasesAutomationTreeOnScreenshotError(t *testing.T) {
+	var released bool
+	backend := Backend{
+		windows: fakeWindows,
+		screenshot: func(context.Context, Window) ([]byte, error) {
+			return nil, errFakeScreenshot
+		},
+		automation: func(_ context.Context, win Window) (AutomationNode, error) {
+			return AutomationNode{
+				Native:  NativeElement{WindowHandle: win.Handle, AutomationHandle: 10},
+				Role:    "Window",
+				Title:   win.Title,
+				Rect:    win.Rect,
+				Enabled: true,
+				release: func() { released = true },
+			}, nil
+		},
+	}
+	if _, err := backend.BuildState(context.Background(), computeruse.StateRequest{App: "calc.exe"}); !errors.Is(err, errFakeScreenshot) {
+		t.Fatalf("BuildState error = %v, want %v", err, errFakeScreenshot)
+	}
+	if !released {
+		t.Fatalf("automation tree was not released")
+	}
+}
+
 func fakeWindows(context.Context) ([]Window, error) {
 	return []Window{
 		{
@@ -242,6 +310,7 @@ func (fakeInstructions) Instructions(app computeruse.AppInfo) string {
 }
 
 var errFakeAutomation = errors.New("fake automation tree")
+var errFakeScreenshot = errors.New("fake screenshot")
 
 func fakeScreenshot(width, height int) func(context.Context, Window) ([]byte, error) {
 	return func(context.Context, Window) ([]byte, error) {
