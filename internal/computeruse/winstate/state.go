@@ -2,6 +2,7 @@ package winstate
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"sort"
 	"strconv"
@@ -29,7 +30,8 @@ type Window struct {
 
 // Backend builds app state from top-level Win32 windows.
 type Backend struct {
-	windows func(context.Context) ([]Window, error)
+	windows    func(context.Context) ([]Window, error)
+	screenshot func(context.Context, Window) ([]byte, error)
 }
 
 var _ computeruse.StateBackend = Backend{}
@@ -92,6 +94,17 @@ func (b Backend) BuildState(ctx context.Context, req computeruse.StateRequest) (
 	if req.Instructions != nil {
 		state.Instructions = req.Instructions.Instructions(state.App)
 	}
+	pngData, err := b.captureScreenshot(ctx, win)
+	if err != nil {
+		return nil, err
+	}
+	pngData, cfg, err := computeruse.NormalizeScreenshotPNG(pngData, computeruse.MaxScreenshotLongSide)
+	if err != nil {
+		return nil, err
+	}
+	state.ScreenshotPNGBase64 = base64.StdEncoding.EncodeToString(pngData)
+	state.Window.ScreenshotWidth = cfg.Width
+	state.Window.ScreenshotHeight = cfg.Height
 	return &Snapshot{state: state, window: win}, nil
 }
 
@@ -100,6 +113,13 @@ func (b Backend) listWindows(ctx context.Context) ([]Window, error) {
 		return b.windows(ctx)
 	}
 	return enumerateWindows(ctx)
+}
+
+func (b Backend) captureScreenshot(ctx context.Context, win Window) ([]byte, error) {
+	if b.screenshot != nil {
+		return b.screenshot(ctx, win)
+	}
+	return captureWindowPNG(ctx, win)
 }
 
 func (b Backend) resolveWindow(ctx context.Context, selector string) (Window, error) {

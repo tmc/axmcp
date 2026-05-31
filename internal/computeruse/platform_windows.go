@@ -13,7 +13,7 @@ func PlatformStatus() PlatformReport {
 		{Name: "win32_window_enumeration", Available: true, Message: "compiled Win32 top-level window enumeration backend"},
 		{Name: "app_state", Message: "UI Automation tree backend is not implemented"},
 		{Name: "input", Message: "background Win32 or foreground SendInput backend is not implemented"},
-		{Name: "screenshot", Message: "Windows Graphics Capture or GDI screenshot backend is not implemented"},
+		{Name: "screenshot", Available: true, Message: "state screenshots use PrintWindow with a GDI BitBlt fallback; WGC is not implemented"},
 		{Name: "intervention", Message: "Windows physical-intervention monitor is not implemented"},
 	}
 	if os.Getenv("SESSIONNAME") == "" {
@@ -25,6 +25,6 @@ func PlatformStatus() PlatformReport {
 		OS:           runtime.GOOS,
 		Backend:      "windows-unsupported",
 		Capabilities: caps,
-		Message:      "Windows native desktop automation is partially scaffolded; UIA, screenshots, and input are not implemented",
+		Message:      "Windows native desktop automation is partially scaffolded; UIA and input are not implemented",
 	}
 }

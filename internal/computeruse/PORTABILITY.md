@@ -58,12 +58,13 @@ packages, so the package set can compile without pulling in the Apple
 dependency chain. `cmd/computer-use-mcp` starts as an MCP server on Windows and
 Linux with state tools wired to platform window metadata. Windows uses
 `internal/computeruse/winstate` to enumerate visible Win32 windows and build a
-minimal window-metadata snapshot; UI Automation trees are still missing. Linux
-uses `internal/computeruse/linuxstate` for X11 window metadata through
-`wmctrl -lpG`; AT-SPI trees, screenshots, input, and Wayland support are still
-missing. Action tools remain registered but return explicit unsupported errors
-until input backends land. Non-Darwin servers expose `mcp://platform/status`
-so clients can inspect the compiled backend and prerequisite probes.
+minimal window-metadata snapshot with a PrintWindow/GDI screenshot; UI
+Automation trees are still missing. Linux uses `internal/computeruse/linuxstate`
+for X11 window metadata through `wmctrl -lpG`; AT-SPI trees, screenshots,
+input, and Wayland support are still missing. Action tools remain registered
+but return explicit unsupported errors until input backends land. Non-Darwin
+servers expose `mcp://platform/status` so clients can inspect the compiled
+backend and prerequisite probes.
 
 ## Implementation Slice
 
@@ -98,8 +99,9 @@ and SkyLight paths. Windows and Linux backends should implement the same
 interface instead of exposing UIA, MSAA, AT-SPI, X11, WGC, or portal handles
 through tool responses. `internal/computeruse/winstate` is the first Windows
 state slice: it uses Win32 top-level windows for app resolution and a root
-window node, leaving UIA/MSAA element trees for the next state slice. The
-Windows command now serves that state through the normal MCP `list_apps` and
+window node plus a PNG screenshot captured with PrintWindow and a GDI BitBlt
+fallback, leaving UIA/MSAA element trees for the next state slice. The Windows
+command now serves that state through the normal MCP `list_apps` and
 `get_app_state` tools. `internal/computeruse/linuxstate` mirrors that boundary
 for X11: it resolves apps from `wmctrl -lpG` output and returns a root window
 node while AT-SPI and Wayland-specific state remain future work. The Linux
@@ -114,12 +116,10 @@ contract and replace the unsupported stubs behind it.
    UI Automation for the tree, and add an MSAA fallback for apps whose UIA
    providers hang or lose role fidelity. Preserve axmcp's `state_id` refresh
    contract instead of exposing reusable raw element handles to callers.
-2. Add Windows screenshot and coordinate handling. Mirror TryCUA's target:
-   WGC for DirectComposition/XAML hosts, PrintWindow for normal windows,
-   screen-region BitBlt only as a fallback with an occlusion warning, and DWM
-   frame cropping so returned image pixels map to the same origin used by pixel
-   actions. Preserve the existing 1568 px long-side cap and returned-dimension
-   coordinate contract.
+2. Expand Windows screenshot and coordinate handling. Add WGC for
+   DirectComposition/XAML hosts, DWM frame cropping, and explicit occlusion
+   warnings when only BitBlt is available. Preserve the existing 1568 px
+   long-side cap and returned-dimension coordinate contract.
 3. Add Windows input dispatch. Prefer element-index UIA patterns
    (`Invoke`, `Value`, `Toggle`, `SelectionItem`, `ExpandCollapse`) for
    background actions. For pixel actions, hit-test UIA first, then PostMessage

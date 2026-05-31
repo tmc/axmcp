@@ -1,7 +1,11 @@
 package winstate
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"image"
+	"image/png"
 	"reflect"
 	"testing"
 
@@ -49,7 +53,7 @@ func TestBackendResolveAppMatchesPIDNameAndTitle(t *testing.T) {
 }
 
 func TestBackendBuildStateReturnsWindowSnapshot(t *testing.T) {
-	backend := Backend{windows: fakeWindows}
+	backend := Backend{windows: fakeWindows, screenshot: fakeScreenshot(320, 200)}
 	snapshot, err := backend.BuildState(context.Background(), computeruse.StateRequest{
 		App:          "calc.exe",
 		Instructions: fakeInstructions{},
@@ -66,11 +70,40 @@ func TestBackendBuildStateReturnsWindowSnapshot(t *testing.T) {
 	if state.Window.Title != "Calculator" || state.Window.Width != 300 || state.Window.Height != 200 {
 		t.Fatalf("state.Window = %#v, want Calculator 300x200", state.Window)
 	}
+	if state.Window.ScreenshotWidth != 320 || state.Window.ScreenshotHeight != 200 {
+		t.Fatalf("screenshot size = %dx%d, want 320x200", state.Window.ScreenshotWidth, state.Window.ScreenshotHeight)
+	}
+	if _, err := base64.StdEncoding.DecodeString(state.ScreenshotPNGBase64); err != nil {
+		t.Fatalf("ScreenshotPNGBase64 is not base64 PNG: %v", err)
+	}
 	if len(state.Tree) != 1 || state.Tree[0].Role != "Window" || state.Tree[0].Title != "Calculator" {
 		t.Fatalf("state.Tree = %#v, want root window node", state.Tree)
 	}
 	if state.Instructions != "use calc.exe" {
 		t.Fatalf("Instructions = %q, want app instructions", state.Instructions)
+	}
+}
+
+func TestBackendBuildStateCapsScreenshotLongSide(t *testing.T) {
+	backend := Backend{windows: fakeWindows, screenshot: fakeScreenshot(3136, 1960)}
+	snapshot, err := backend.BuildState(context.Background(), computeruse.StateRequest{App: "calc.exe"})
+	if err != nil {
+		t.Fatalf("BuildState: %v", err)
+	}
+	state := snapshot.State()
+	if state.Window.ScreenshotWidth != 1568 || state.Window.ScreenshotHeight != 980 {
+		t.Fatalf("screenshot size = %dx%d, want 1568x980", state.Window.ScreenshotWidth, state.Window.ScreenshotHeight)
+	}
+	data, err := base64.StdEncoding.DecodeString(state.ScreenshotPNGBase64)
+	if err != nil {
+		t.Fatalf("DecodeString: %v", err)
+	}
+	cfg, err := png.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("DecodeConfig: %v", err)
+	}
+	if cfg.Width != 1568 || cfg.Height != 980 {
+		t.Fatalf("encoded screenshot = %dx%d, want 1568x980", cfg.Width, cfg.Height)
 	}
 }
 
@@ -104,4 +137,19 @@ type fakeInstructions struct{}
 
 func (fakeInstructions) Instructions(app computeruse.AppInfo) string {
 	return "use " + app.Name
+}
+
+func fakeScreenshot(width, height int) func(context.Context, Window) ([]byte, error) {
+	return func(context.Context, Window) ([]byte, error) {
+		return testPNG(width, height)
+	}
+}
+
+func testPNG(width, height int) ([]byte, error) {
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }

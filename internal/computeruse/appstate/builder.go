@@ -3,12 +3,10 @@
 package appstate
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
 	"image"
-	"image/png"
 	"math"
 	"os"
 	"os/exec"
@@ -23,11 +21,10 @@ import (
 	"github.com/tmc/axmcp/internal/computeruse"
 	"github.com/tmc/axmcp/internal/ghostcursor"
 	"github.com/tmc/axmcp/internal/macosapp"
-	xdraw "golang.org/x/image/draw"
 )
 
 const axTimeout = 5
-const maxScreenshotLongSide = 1568
+const maxScreenshotLongSide = computeruse.MaxScreenshotLongSide
 
 var axSetMessagingTimeout func(element uintptr, timeoutInSeconds float32) int32
 var axCopyActionNames func(element uintptr, names *uintptr) int32
@@ -243,32 +240,11 @@ func buildState(app computeruse.AppInfo, window *axuiautomation.Element, instruc
 }
 
 func scaleScreenshotPNG(pngData []byte, maxLongSide int) ([]byte, image.Config, error) {
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(pngData))
-	if err != nil {
-		return nil, image.Config{}, fmt.Errorf("decode screenshot: %w", err)
-	}
-	if maxLongSide <= 0 || cfg.Width <= maxLongSide && cfg.Height <= maxLongSide {
-		return pngData, cfg, nil
-	}
-	img, err := png.Decode(bytes.NewReader(pngData))
-	if err != nil {
-		return nil, image.Config{}, fmt.Errorf("decode screenshot: %w", err)
-	}
-	width, height := scaledSize(cfg.Width, cfg.Height, maxLongSide)
-	dst := image.NewRGBA(image.Rect(0, 0, width, height))
-	xdraw.CatmullRom.Scale(dst, dst.Bounds(), img, img.Bounds(), xdraw.Over, nil)
-	var out bytes.Buffer
-	if err := png.Encode(&out, dst); err != nil {
-		return nil, image.Config{}, fmt.Errorf("encode screenshot: %w", err)
-	}
-	return out.Bytes(), image.Config{ColorModel: dst.ColorModel(), Width: width, Height: height}, nil
+	return computeruse.NormalizeScreenshotPNG(pngData, maxLongSide)
 }
 
 func scaledSize(width, height, maxLongSide int) (int, int) {
-	if width >= height {
-		return maxLongSide, max(1, int(math.Round(float64(height)*float64(maxLongSide)/float64(width))))
-	}
-	return max(1, int(math.Round(float64(width)*float64(maxLongSide)/float64(height)))), maxLongSide
+	return computeruse.ScaledSize(width, height, maxLongSide)
 }
 
 func snapshotNode(el *axuiautomation.Element, parentIndex, index int, windowFrame axuiautomation.Rect) computeruse.ElementNode {
