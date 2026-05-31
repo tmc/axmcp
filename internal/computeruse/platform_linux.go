@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 )
 
 // PlatformStatus reports the compiled native automation backend.
@@ -52,10 +53,20 @@ func PlatformStatus() PlatformReport {
 	} else {
 		caps = append(caps, PlatformCapability{Name: "wayland", Available: true, Message: "WAYLAND_DISPLAY is set"})
 	}
-	if os.Getenv("DBUS_SESSION_BUS_ADDRESS") == "" {
+	dbus := os.Getenv("DBUS_SESSION_BUS_ADDRESS")
+	noATBridge := strings.TrimSpace(os.Getenv("NO_AT_BRIDGE"))
+	if dbus == "" {
 		caps = append(caps, PlatformCapability{Name: "dbus", Message: "DBUS_SESSION_BUS_ADDRESS is not set"})
 	} else {
 		caps = append(caps, PlatformCapability{Name: "dbus", Available: true, Message: "DBUS session bus is set"})
+	}
+	switch {
+	case dbus == "":
+		caps = append(caps, PlatformCapability{Name: "atspi", Message: "DBUS_SESSION_BUS_ADDRESS is not set"})
+	case noATBridge == "1" || strings.EqualFold(noATBridge, "true"):
+		caps = append(caps, PlatformCapability{Name: "atspi", Message: "NO_AT_BRIDGE disables the AT-SPI bridge"})
+	default:
+		caps = append(caps, PlatformCapability{Name: "atspi", Available: true, Message: "DBUS session bus is set and AT-SPI bridge is not disabled"})
 	}
 	return PlatformReport{
 		OS:           runtime.GOOS,

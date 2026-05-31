@@ -90,9 +90,10 @@ subsystem at a time.
 that are present or missing. Windows and Linux expose that report through
 `mcp://platform/status`. Windows reports the `windows-win32-partial` backend;
 Linux reports the `linux-x11-partial` backend plus `DISPLAY`, `wmctrl`,
-ImageMagick `import`, and `xdotool` availability because the current X11
-backend shells out for window enumeration, screenshots, and root-window input.
-State backends still surface missing prerequisites through `list_apps` and
+ImageMagick `import`, `xdotool`, DBus, and AT-SPI bridge availability because
+the current X11 backend shells out for window enumeration, screenshots, and
+root-window input while the next element-tree slice depends on AT-SPI. State
+backends still surface missing prerequisites through `list_apps` and
 `get_app_state` errors instead of silently returning empty state.
 
 `computeruse.Backend` is the package-level contract for native
