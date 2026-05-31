@@ -13,16 +13,6 @@ import (
 // Schemes returns available schemes via xcodebuild -list.
 // It populates p.Schemes and returns it.
 func (p *Project) GetSchemes(ctx context.Context) ([]string, error) {
-	// If already populated, return them?
-	// Or always refresh? Let's refresh.
-
-	// The original code had a block for `args := []string{"-list", "-json"}`
-	// and then comments about `xcodebuild -list -json` not always being supported.
-	// It then explicitly chose text parsing.
-	// The provided diff snippet for GetSchemes seems to remove the initial `args` construction
-	// and directly uses `cmd.Args` later, which aligns with the text parsing approach.
-	// I will keep the text parsing approach as it was the final decision in the original comments.
-
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
@@ -57,14 +47,22 @@ func parseSchemes(output string) []string {
 			continue
 		}
 		if inSchemesSection {
-			// Stop if we hit another section (though Schemes is usually last or followed by nothing distinct)
-			// But let's assume lines after "Schemes:" are schemes until end or empty block?
-			// Actually, xcodebuild -list output has "Information about project ...:" then "Targets:", "Build Configurations:", "Schemes:".
-			// Schemes is usually the last one.
+			if isXcodebuildListSection(line) {
+				break
+			}
 			schemes = append(schemes, line)
 		}
 	}
 	return schemes
+}
+
+func isXcodebuildListSection(line string) bool {
+	switch line {
+	case "Targets:", "Build Configurations:", "Schemes:":
+		return true
+	default:
+		return strings.HasPrefix(line, "Information about ") && strings.HasSuffix(line, ":")
+	}
 }
 
 type buildSettingEntry struct {
@@ -89,8 +87,6 @@ func (p *Project) BuildSettings(ctx context.Context, scheme, config string) (map
 	}
 
 	cmd := exec.CommandContext(ctx, "xcodebuild", args...)
-	// Note: -showBuildSettings often prints to stdout, but errors/noise can be mixed.
-	// -json makes it cleaner but sometimes it's wrapped in array.
 
 	out, err := cmd.Output()
 	if err != nil {
@@ -109,6 +105,5 @@ func (p *Project) BuildSettings(ctx context.Context, scheme, config string) (map
 		return nil, fmt.Errorf("no build settings returned")
 	}
 
-	// For now, return the settings of the first entry (often the main target)
 	return entries[0].BuildSettings, nil
 }

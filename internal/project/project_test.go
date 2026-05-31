@@ -66,7 +66,14 @@ func TestDiscoverSkipsBundleContentsAndIgnoredDirs(t *testing.T) {
 }
 
 func TestParseSchemes(t *testing.T) {
-	output := `
+	tests := []struct {
+		name   string
+		output string
+		want   []string
+	}{
+		{
+			name: "normal output",
+			output: `
 Information about project "TestProject":
     Targets:
         TestProject
@@ -79,22 +86,36 @@ Information about project "TestProject":
     Schemes:
         TestScheme
         AnotherScheme
-`
-	want := []string{"TestScheme", "AnotherScheme"}
-	got := parseSchemes(output)
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("parseSchemes() = %v, want %v", got, want)
-	}
-}
-
-func TestParseSchemesEmpty(t *testing.T) {
-	output := `
+`,
+			want: []string{"TestScheme", "AnotherScheme"},
+		},
+		{
+			name: "no schemes",
+			output: `
 Information about project "Empty":
     Schemes:
-`
-	var want []string
-	got := parseSchemes(output)
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("parseSchemes() = %v, want %v", got, want)
+`,
+		},
+		{
+			name: "following section",
+			output: `
+Information about project "Odd":
+    Schemes:
+        App
+        AppTests
+
+    Targets:
+        App
+`,
+			want: []string{"App", "AppTests"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseSchemes(tt.output)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("parseSchemes() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
