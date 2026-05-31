@@ -220,7 +220,7 @@ func appNameForAutomation() string {
 func privacyPaneURL(req Requirement) (string, error) {
 	service := serviceName(req)
 	if service == "" {
-		return "", fmt.Errorf("unsupported requirement")
+		return "", unsupportedRequirementError(req)
 	}
 	return ui.PrivacySettingsURL(service), nil
 }

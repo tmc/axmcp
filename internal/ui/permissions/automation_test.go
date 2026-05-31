@@ -2,6 +2,7 @@ package permissions
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -91,5 +92,26 @@ func TestIsNotFoundAllowsWrappedError(t *testing.T) {
 	}
 	if isNotFound(fmt.Errorf("other error")) {
 		t.Fatal("isNotFound returned true for unrelated error")
+	}
+}
+
+func TestUnsupportedRequirementErrorsNameValue(t *testing.T) {
+	req := Requirement(99)
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "privacy pane", err: func() error { _, err := privacyPaneURL(req); return err }()},
+		{name: "open settings", err: OpenSystemSettings(req)},
+		{name: "reset retry", err: ResetAndRetry(req)},
+	}
+	for _, tt := range tests {
+		if tt.err == nil {
+			t.Fatalf("%s: error = nil, want unsupported requirement", tt.name)
+		}
+		got := tt.err.Error()
+		if !strings.Contains(got, "unsupported requirement 99") || !strings.Contains(got, "Unknown") {
+			t.Fatalf("%s: error = %q, want requirement value and name", tt.name, got)
+		}
 	}
 }

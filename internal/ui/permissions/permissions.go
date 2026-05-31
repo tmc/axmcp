@@ -214,7 +214,7 @@ func Watch(ctx context.Context, r Requirement, ch chan<- Event) {
 func ResetAndRetry(r Requirement) error {
 	service := serviceName(r)
 	if service == "" {
-		return fmt.Errorf("unsupported requirement")
+		return unsupportedRequirementError(r)
 	}
 	ui.ResetTCC(service)
 	if r == ReqScreenRecording {
@@ -249,7 +249,7 @@ func ResetIdentityState() {
 func OpenSystemSettings(r Requirement) error {
 	service := serviceName(r)
 	if service == "" {
-		return fmt.Errorf("unsupported requirement")
+		return unsupportedRequirementError(r)
 	}
 	return exec.Command("open", ui.PrivacySettingsURL(service)).Run()
 }
@@ -538,6 +538,10 @@ func serviceName(r Requirement) string {
 	default:
 		return ""
 	}
+}
+
+func unsupportedRequirementError(r Requirement) error {
+	return fmt.Errorf("unsupported requirement %d (%s)", r, requirementTitle(r))
 }
 
 func requirementTitle(r Requirement) string {
