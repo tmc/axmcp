@@ -10,9 +10,11 @@ import (
 )
 
 type fakeSnapshot struct {
-	state  computeruse.AppState
-	nodes  map[int]computeruse.ElementNode
-	closed bool
+	state    computeruse.AppState
+	nodes    map[int]computeruse.ElementNode
+	closeErr error
+	closed   bool
+	closes   int
 }
 
 func (f *fakeSnapshot) State() computeruse.AppState {
@@ -29,7 +31,8 @@ func (f *fakeSnapshot) Resolve(index int) (*axuiautomation.Element, computeruse.
 
 func (f *fakeSnapshot) Close() error {
 	f.closed = true
-	return nil
+	f.closes++
+	return f.closeErr
 }
 
 func TestBindReplacesPriorState(t *testing.T) {
@@ -85,6 +88,86 @@ func TestResolveUsesCurrentSnapshot(t *testing.T) {
 	}
 	if node.Title != "Play" {
 		t.Fatalf("Resolve title = %q, want Play", node.Title)
+	}
+}
+
+func TestCloseClosesSnapshotsAndRemovesState(t *testing.T) {
+	store := NewStore()
+	firstErr := fmt.Errorf("close first")
+	first := &fakeSnapshot{
+		state: computeruse.AppState{
+			App: computeruse.AppInfo{BundleID: "com.example.first"},
+		},
+		closeErr: firstErr,
+	}
+	second := &fakeSnapshot{
+		state: computeruse.AppState{
+			App: computeruse.AppInfo{BundleID: "com.example.second"},
+		},
+	}
+	firstState, err := store.Bind(first)
+	if err != nil {
+		t.Fatalf("Bind(first): %v", err)
+	}
+	secondState, err := store.Bind(second)
+	if err != nil {
+		t.Fatalf("Bind(second): %v", err)
+	}
+
+	if err := store.Close(); err != firstErr {
+		t.Fatalf("Close error = %v, want %v", err, firstErr)
+	}
+	if !first.closed || first.closes != 1 {
+		t.Fatalf("first close state = closed %v closes %d, want closed once", first.closed, first.closes)
+	}
+	if !second.closed || second.closes != 1 {
+		t.Fatalf("second close state = closed %v closes %d, want closed once", second.closed, second.closes)
+	}
+	if _, ok := store.Get(firstState.StateID); ok {
+		t.Fatalf("first state still present after Close")
+	}
+	if _, ok := store.Get(secondState.StateID); ok {
+		t.Fatalf("second state still present after Close")
+	}
+	if _, ok := store.GetForApp("com.example.first"); ok {
+		t.Fatalf("first session still present after Close")
+	}
+	if _, ok := store.GetForApp("com.example.second"); ok {
+		t.Fatalf("second session still present after Close")
+	}
+}
+
+func TestInvalidateSessionClosesAndRemovesState(t *testing.T) {
+	store := NewStore()
+	closeErr := fmt.Errorf("close session")
+	snapshot := &fakeSnapshot{
+		state: computeruse.AppState{
+			App: computeruse.AppInfo{BundleID: "com.example.app"},
+		},
+		closeErr: closeErr,
+	}
+	state, err := store.Bind(snapshot)
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+
+	if err := store.InvalidateSession(state.SessionID); err != closeErr {
+		t.Fatalf("InvalidateSession error = %v, want %v", err, closeErr)
+	}
+	if !snapshot.closed || snapshot.closes != 1 {
+		t.Fatalf("close state = closed %v closes %d, want closed once", snapshot.closed, snapshot.closes)
+	}
+	if _, ok := store.Get(state.StateID); ok {
+		t.Fatalf("state still present after InvalidateSession")
+	}
+	if _, ok := store.GetForApp("com.example.app"); ok {
+		t.Fatalf("session still present after InvalidateSession")
+	}
+	if err := store.InvalidateSession(state.SessionID); err != nil {
+		t.Fatalf("InvalidateSession missing session error = %v, want nil", err)
+	}
+	if snapshot.closes != 1 {
+		t.Fatalf("snapshot closed %d times, want once", snapshot.closes)
 	}
 }
 
