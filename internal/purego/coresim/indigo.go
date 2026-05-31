@@ -64,6 +64,13 @@ func (d SimDevice) ConnectToHID() (*SimDeviceLegacyClient, error) {
 }
 
 func (c *SimDeviceLegacyClient) SendMessage(msg []byte) error {
+	if c == nil || c.id == 0 {
+		return fmt.Errorf("HID client is nil")
+	}
+	if len(msg) == 0 {
+		return fmt.Errorf("HID message is empty")
+	}
+
 	queue := objc.Send[objc.ID](objc.ID(objc.GetClass("OS_dispatch_queue")), objc.Sel("mainQueue"))
 
 	done := make(chan error, 1)
