@@ -361,11 +361,20 @@ func (b Backend) ClickElement(ctx context.Context, snapshot computeruse.Snapshot
 		if err != nil {
 			return err
 		}
-		action, err := clickElementAction(node, opts)
+		action, ok, err := clickElementAction(node, opts)
 		if err != nil {
 			return err
 		}
-		return b.runAccessibilityAction(ctx, accessibilityAction{Native: native, Name: action})
+		if ok {
+			err := b.runAccessibilityAction(ctx, accessibilityAction{Native: native, Name: action})
+			if err == nil {
+				return nil
+			}
+			if !errors.Is(err, computeruse.ErrPlatformUnsupported) {
+				return err
+			}
+		}
+		return b.clickElementByGeometry(ctx, s, node, opts)
 	}
 	point := computeruse.Point{
 		X: s.state.Window.ScreenshotWidth / 2,
@@ -383,6 +392,18 @@ func (b Backend) ClickPoint(ctx context.Context, snapshot computeruse.Snapshot, 
 	if err != nil {
 		return err
 	}
+	return b.clickWindowLocal(ctx, s, local, opts)
+}
+
+func (b Backend) clickElementByGeometry(ctx context.Context, s *Snapshot, node computeruse.ElementNode, opts computeruse.ClickOptions) error {
+	if node.Width <= 0 || node.Height <= 0 {
+		return fmt.Errorf("element has empty bounds")
+	}
+	local := coords.Point{X: node.X + node.Width/2, Y: node.Y + node.Height/2}
+	return b.clickWindowLocal(ctx, s, local, opts)
+}
+
+func (b Backend) clickWindowLocal(ctx context.Context, s *Snapshot, local coords.Point, opts computeruse.ClickOptions) error {
 	button, err := xdotoolButton(opts.Button)
 	if err != nil {
 		return err
@@ -592,22 +613,22 @@ func normalizeClickCount(clickCount int) int {
 	return clickCount
 }
 
-func clickElementAction(node computeruse.ElementNode, opts computeruse.ClickOptions) (string, error) {
+func clickElementAction(node computeruse.ElementNode, opts computeruse.ClickOptions) (string, bool, error) {
 	if _, err := xdotoolButton(opts.Button); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if normalizeClickCount(opts.ClickCount) != 1 {
-		return "", computeruse.PlatformUnsupported("multi-click element with AT-SPI")
+		return "", false, nil
 	}
 	if button := strings.TrimSpace(opts.Button); button != "" && !strings.EqualFold(button, "left") {
-		return "", computeruse.PlatformUnsupported("non-left element click with AT-SPI")
+		return "", false, nil
 	}
 	for _, action := range node.SecondaryActions {
 		if atspiActionIsClick(action) {
-			return strings.TrimSpace(action), nil
+			return strings.TrimSpace(action), true, nil
 		}
 	}
-	return "", computeruse.PlatformUnsupported("click element with AT-SPI")
+	return "", false, nil
 }
 
 func atspiActionIsClick(action string) bool {

@@ -139,6 +139,54 @@ func TestBackendClickElementUsesATSPIAction(t *testing.T) {
 	}
 }
 
+func TestBackendClickElementFallsBackToXDoToolGeometry(t *testing.T) {
+	runner := &recordingRunner{}
+	backend := Backend{run: runner.run}
+
+	if err := backend.ClickElement(context.Background(), linuxInputSnapshot(), 1, computeruse.ClickOptions{
+		Button:     "right",
+		ClickCount: 2,
+	}); err != nil {
+		t.Fatalf("ClickElement: %v", err)
+	}
+	want := [][]string{
+		{"xdotool", "mousemove", "--window", "0x03e00007", "45", "50"},
+		{"xdotool", "click", "--window", "0x03e00007", "3"},
+		{"xdotool", "click", "--window", "0x03e00007", "3"},
+	}
+	if !reflect.DeepEqual(runner.commands, want) {
+		t.Fatalf("commands = %#v, want %#v", runner.commands, want)
+	}
+}
+
+func TestBackendClickElementFallsBackWhenATSPIUnavailable(t *testing.T) {
+	runner := &recordingRunner{}
+	rec := &recordingAccessibilityActions{err: computeruse.PlatformUnsupported("perform AT-SPI action")}
+	backend := Backend{run: runner.run, atspiAction: rec.run}
+
+	if err := backend.ClickElement(context.Background(), linuxATSPISnapshot(), 1, computeruse.ClickOptions{}); err != nil {
+		t.Fatalf("ClickElement: %v", err)
+	}
+	wantActions := []accessibilityAction{{
+		Native: NativeElement{
+			WindowID:   "0x03e00007",
+			BusName:    ":1.10",
+			ObjectPath: "/org/a11y/atspi/accessible/button",
+		},
+		Name: "click",
+	}}
+	if !reflect.DeepEqual(rec.actions, wantActions) {
+		t.Fatalf("actions = %#v, want %#v", rec.actions, wantActions)
+	}
+	wantCommands := [][]string{
+		{"xdotool", "mousemove", "--window", "0x03e00007", "45", "50"},
+		{"xdotool", "click", "--window", "0x03e00007", "1"},
+	}
+	if !reflect.DeepEqual(runner.commands, wantCommands) {
+		t.Fatalf("commands = %#v, want %#v", runner.commands, wantCommands)
+	}
+}
+
 func TestBackendPerformSecondaryActionUsesATSPIAction(t *testing.T) {
 	rec := &recordingAccessibilityActions{}
 	backend := Backend{atspiAction: rec.run}
@@ -181,11 +229,7 @@ func TestBackendSetValueUsesATSPIValue(t *testing.T) {
 
 func TestBackendElementActionsRequireATSPI(t *testing.T) {
 	backend := Backend{run: (&recordingRunner{}).run}
-	err := backend.ClickElement(context.Background(), linuxInputSnapshot(), 1, computeruse.ClickOptions{})
-	if !errors.Is(err, computeruse.ErrPlatformUnsupported) {
-		t.Fatalf("ClickElement error = %v, want ErrPlatformUnsupported", err)
-	}
-	err = backend.PerformSecondaryAction(context.Background(), linuxInputSnapshot(), 1, "click")
+	err := backend.PerformSecondaryAction(context.Background(), linuxInputSnapshot(), 1, "click")
 	if !errors.Is(err, computeruse.ErrPlatformUnsupported) {
 		t.Fatalf("PerformSecondaryAction error = %v, want ErrPlatformUnsupported", err)
 	}
@@ -206,11 +250,12 @@ func (r *recordingRunner) run(_ context.Context, name string, args ...string) ([
 
 type recordingAccessibilityActions struct {
 	actions []accessibilityAction
+	err     error
 }
 
 func (r *recordingAccessibilityActions) run(_ context.Context, action accessibilityAction) error {
 	r.actions = append(r.actions, action)
-	return nil
+	return r.err
 }
 
 type recordingAccessibilityValues struct {
