@@ -95,6 +95,44 @@ func TestSwiftUIPreviewPromptPathCompletionUsesRoots(t *testing.T) {
 	}
 }
 
+func TestSessionRootHelpersUseClientRoots(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "A")
+	second := filepath.Join(dir, "B")
+	if err := os.Mkdir(first, 0o755); err != nil {
+		t.Fatalf("Mkdir(%q): %v", first, err)
+	}
+	if err := os.Mkdir(second, 0o755); err != nil {
+		t.Fatalf("Mkdir(%q): %v", second, err)
+	}
+
+	server := newRootProbeTestServer(t)
+	cs := connectProtocolFeatureClient(t, server, second, first)
+	defer cs.Close()
+
+	got := callRootProbe(t, cs)
+	if got.Root != first {
+		t.Fatalf("root = %q, want first sorted root %q", got.Root, first)
+	}
+	if len(got.Roots) != 2 || got.Roots[0] != first || got.Roots[1] != second {
+		t.Fatalf("roots = %#v, want [%q %q]", got.Roots, first, second)
+	}
+}
+
+func TestSessionRootHelpersUseFallbackWithoutClientRoots(t *testing.T) {
+	server := newRootProbeTestServer(t)
+	cs := connectProtocolFeatureClient(t, server)
+	defer cs.Close()
+
+	got := callRootProbe(t, cs)
+	if got.Root != "fallback-root" {
+		t.Fatalf("root = %q, want fallback-root", got.Root)
+	}
+	if len(got.Roots) != 0 {
+		t.Fatalf("roots = %#v, want none", got.Roots)
+	}
+}
+
 func newProtocolFeatureTestServer(t *testing.T) *mcp.Server {
 	t.Helper()
 
@@ -106,6 +144,49 @@ func newProtocolFeatureTestServer(t *testing.T) *mcp.Server {
 	registerSwiftUIPreviewFeatures(server)
 	resources.Register(server, &resources.Context{ProjectRoot: "."})
 	return server
+}
+
+func newRootProbeTestServer(t *testing.T) *mcp.Server {
+	t.Helper()
+
+	server := mcp.NewServer(&mcp.Implementation{Name: "xcmcp", Version: "test"}, nil)
+	mcp.AddTool(server, &mcp.Tool{Name: "root_probe"}, func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, struct {
+		Root  string   `json:"root"`
+		Roots []string `json:"roots"`
+	}, error) {
+		return &mcp.CallToolResult{}, struct {
+			Root  string   `json:"root"`
+			Roots []string `json:"roots"`
+		}{
+			Root:  sessionProjectRoot(ctx, req.Session, "fallback-root"),
+			Roots: sessionFileRoots(ctx, req.Session),
+		}, nil
+	})
+	return server
+}
+
+func callRootProbe(t *testing.T, cs *mcp.ClientSession) struct {
+	Root  string   `json:"root"`
+	Roots []string `json:"roots"`
+} {
+	t.Helper()
+
+	result, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "root_probe"})
+	if err != nil {
+		t.Fatalf("CallTool(root_probe): %v", err)
+	}
+	var out struct {
+		Root  string   `json:"root"`
+		Roots []string `json:"roots"`
+	}
+	data, err := json.Marshal(result.StructuredContent)
+	if err != nil {
+		t.Fatalf("Marshal StructuredContent: %v", err)
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("Unmarshal StructuredContent: %v", err)
+	}
+	return out
 }
 
 func connectProtocolFeatureClient(t *testing.T, server *mcp.Server, roots ...string) *mcp.ClientSession {
