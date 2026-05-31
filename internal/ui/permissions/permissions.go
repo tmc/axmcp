@@ -24,27 +24,38 @@ const requestSettlingTime = 3 * time.Second
 type Requirement int
 
 const (
+	// ReqAccessibility is the macOS Accessibility permission.
 	ReqAccessibility Requirement = iota
+	// ReqScreenRecording is the macOS Screen Recording permission.
 	ReqScreenRecording
 )
 
+// Status describes the current state of a permission requirement.
 type Status int
 
 const (
+	// StatusUnknown means the permission has not been checked yet.
 	StatusUnknown Status = iota
+	// StatusGranted means the permission is currently available.
 	StatusGranted
+	// StatusDenied means a recent request did not grant the permission.
 	StatusDenied
+	// StatusMissing means the permission has not been granted or requested.
 	StatusMissing
+	// StatusStale means the recorded app identity no longer matches.
 	StatusStale
+	// StatusInProgress means a permission request flow is active.
 	StatusInProgress
 )
 
+// Event reports a permission status transition from Watch.
 type Event struct {
 	Requirement Requirement
 	Status      Status
 	Detail      string
 }
 
+// Snapshot summarizes the current permission and identity state.
 type Snapshot struct {
 	AppName         string `json:"app_name,omitempty"`
 	BundleID        string `json:"bundle_id,omitempty"`
@@ -94,6 +105,8 @@ func init() {
 	state.lastAttempt = make(map[Requirement]time.Time)
 }
 
+// ConfigureIdentity sets the app name and bundle identifier used for
+// permission prompts, TCC lookups, and identity freshness checks.
 func ConfigureIdentity(appName, bundleID string) {
 	state.Lock()
 	defer state.Unlock()
@@ -105,6 +118,7 @@ func ConfigureIdentity(appName, bundleID string) {
 	}
 }
 
+// Check reports the current status of r without opening System Settings.
 func Check(r Requirement) Status {
 	loadIdentityState()
 	state.RLock()
@@ -128,6 +142,7 @@ func Check(r Requirement) Status {
 	return StatusMissing
 }
 
+// Request asks macOS for r and waits briefly for the resulting state.
 func Request(ctx context.Context, r Requirement) (Status, error) {
 	markAttempt(r)
 	setInProgress(r, true)
@@ -170,6 +185,7 @@ func Request(ctx context.Context, r Requirement) (Status, error) {
 	}
 }
 
+// Watch sends an Event whenever r changes status until ctx is canceled.
 func Watch(ctx context.Context, r Requirement, ch chan<- Event) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -193,6 +209,8 @@ func Watch(ctx context.Context, r Requirement, ch chan<- Event) {
 	}
 }
 
+// ResetAndRetry resets the TCC service for r, requests it again, and waits for
+// the immediate result.
 func ResetAndRetry(r Requirement) error {
 	service := serviceName(r)
 	if service == "" {
@@ -211,6 +229,8 @@ func ResetAndRetry(r Requirement) error {
 	return nil
 }
 
+// ResetIdentityState forgets the saved permission identity record for the
+// configured app.
 func ResetIdentityState() {
 	state.Lock()
 	appName := state.appName
@@ -225,6 +245,7 @@ func ResetIdentityState() {
 	}
 }
 
+// OpenSystemSettings opens the Privacy & Security pane for r.
 func OpenSystemSettings(r Requirement) error {
 	service := serviceName(r)
 	if service == "" {
@@ -233,6 +254,8 @@ func OpenSystemSettings(r Requirement) error {
 	return exec.Command("open", ui.PrivacySettingsURL(service)).Run()
 }
 
+// CurrentSnapshot returns a serializable summary for reqs. With no reqs, it
+// includes Accessibility and Screen Recording.
 func CurrentSnapshot(reqs ...Requirement) Snapshot {
 	loadIdentityState()
 	if len(reqs) == 0 {
@@ -257,6 +280,8 @@ func CurrentSnapshot(reqs ...Requirement) Snapshot {
 	return s
 }
 
+// OnboardingWindow shows the permission onboarding window until all reqs are
+// granted or ctx is canceled.
 func OnboardingWindow(ctx context.Context, reqs ...Requirement) error {
 	if len(reqs) == 0 {
 		reqs = []Requirement{ReqAccessibility, ReqScreenRecording}

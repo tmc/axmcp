@@ -15,6 +15,7 @@ func TestPermissionItemName(t *testing.T) {
 	}{
 		{name: "title", title: "axcdp", desc: "ignored", identifier: "ignored", want: "axcdp"},
 		{name: "description", desc: "axcdp", identifier: "ignored", want: "axcdp"},
+		{name: "trim title", title: " axcdp\x00ignored ", desc: "ignored", identifier: "ignored", want: "axcdp"},
 		{name: "toggle identifier", identifier: "axcdp.app_Toggle", want: "axcdp.app"},
 		{name: "plain identifier", identifier: "axcdp", want: "axcdp"},
 		{name: "null suffix", identifier: "axcdp.app_Toggle\x00junk", want: "axcdp.app"},
@@ -57,8 +58,12 @@ func TestMatchesPermissionApp(t *testing.T) {
 		want   bool
 	}{
 		{name: "name", item: "axcdp.app", needle: "axcdp", want: true},
+		{name: "app needle", item: "axcdp", needle: "axcdp.app", want: true},
 		{name: "title", title: "axcdp", needle: "axcdp", want: true},
 		{name: "description", desc: "AXCDP Helper", needle: "axcdp", want: true},
+		{name: "dotted helper", desc: "AXCDP.Helper", needle: "axcdp", want: true},
+		{name: "substring guard", item: "Terminal", needle: "term", want: false},
+		{name: "suffix guard", item: "my-axcdp", needle: "axcdp", want: false},
 		{name: "missing", item: "Terminal", title: "Terminal", desc: "", needle: "axcdp", want: false},
 		{name: "empty needle", item: "Terminal", title: "Terminal", desc: "", needle: "", want: false},
 		{name: "space needle", item: "Terminal", title: "Terminal", desc: "", needle: "  ", want: false},
@@ -69,6 +74,12 @@ func TestMatchesPermissionApp(t *testing.T) {
 				t.Fatalf("matchesPermissionApp = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestNormalizePermissionText(t *testing.T) {
+	if got := normalizePermissionText(" AXCDP.app\x00ignored "); got != "axcdp.app" {
+		t.Fatalf("normalizePermissionText = %q, want axcdp.app", got)
 	}
 }
 

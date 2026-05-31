@@ -20,14 +20,26 @@ const (
 )
 
 type AutomationOptions struct {
-	AppName       string
+	// AppName is the display name to match in macOS permission prompts and
+	// System Settings. If empty, Automate uses the configured process identity.
+	AppName string
+	// DismissAction is the prompt button title to press. If empty, Automate
+	// uses "Allow".
 	DismissAction string
-	Timeout       time.Duration
-	AutoPrompt    bool
-	Remove        bool
-	Reenable      bool
+	// Timeout bounds AX polling. If empty, Automate uses a short default.
+	Timeout time.Duration
+	// AutoPrompt dismisses a visible macOS permission prompt through AX.
+	AutoPrompt bool
+	// Remove removes AppName from the selected permission lists.
+	Remove bool
+	// Reenable toggles AppName off and on in the selected permission lists.
+	Reenable bool
 }
 
+// Automate drives macOS permission UI for reqs using Accessibility.
+// It can dismiss visible prompts and can remove or re-enable an app in System
+// Settings. It does not reset TCC directly; callers that need reset behavior
+// should use ResetAndRetry.
 func Automate(ctx context.Context, opts AutomationOptions, reqs ...Requirement) error {
 	if opts.Timeout <= 0 {
 		opts.Timeout = defaultAutomationTimeout
@@ -73,6 +85,9 @@ func Automate(ctx context.Context, opts AutomationOptions, reqs ...Requirement) 
 	return nil
 }
 
+// DismissPrompt looks for a permission prompt mentioning appName and presses
+// buttonName. It returns false with a nil error if ctx expires before a prompt
+// is found.
 func DismissPrompt(ctx context.Context, appName, buttonName string) (bool, error) {
 	appNeedle := strings.ToLower(strings.TrimSpace(appName))
 	buttonNeedle := strings.ToLower(strings.TrimSpace(buttonName))
@@ -115,6 +130,9 @@ func DismissPrompt(ctx context.Context, appName, buttonName string) (bool, error
 	}
 }
 
+// ReenableApp toggles appName off and back on for req in System Settings.
+// Missing apps are treated like an initially-disabled entry; the final enable
+// attempt returns permissionAppNotFoundError if the app is still absent.
 func ReenableApp(ctx context.Context, req Requirement, appName string) error {
 	if err := SetAppPermission(ctx, req, appName, false); err != nil && !isNotFound(err) {
 		return err
@@ -122,6 +140,7 @@ func ReenableApp(ctx context.Context, req Requirement, appName string) error {
 	return SetAppPermission(ctx, req, appName, true)
 }
 
+// SetAppPermission sets appName's permission toggle for req in System Settings.
 func SetAppPermission(ctx context.Context, req Requirement, appName string, enable bool) error {
 	appName = strings.TrimSpace(appName)
 	if appName == "" {
@@ -149,6 +168,8 @@ func SetAppPermission(ctx context.Context, req Requirement, appName string, enab
 	return nil
 }
 
+// RemoveApp removes appName from the permission list for req in System
+// Settings.
 func RemoveApp(ctx context.Context, req Requirement, appName string) error {
 	appName = strings.TrimSpace(appName)
 	if appName == "" {
@@ -252,13 +273,13 @@ func findAppRow(ctx context.Context, appName, paneURL string) (axuiautomation.AX
 		title := axString(el, "AXTitle")
 		desc := axString(el, "AXDescription")
 		value := axString(el, "AXValue")
-		if matchesPermissionApp(title, title, desc, needle) || strings.Contains(strings.ToLower(value), needle) {
+		if matchesPermissionApp(title, title, desc, needle) || matchesPermissionApp(value, "", "", needle) {
 			row = cfRetainAX(el)
 			return true
 		}
 		for _, child := range axChildren(el) {
 			if matchesPermissionApp(axString(child, "AXTitle"), axString(child, "AXTitle"), axString(child, "AXDescription"), needle) ||
-				strings.Contains(strings.ToLower(axString(child, "AXValue")), needle) {
+				matchesPermissionApp(axString(child, "AXValue"), "", "", needle) {
 				row = cfRetainAX(el)
 				return true
 			}
@@ -355,7 +376,7 @@ func findPromptButton(root axuiautomation.AXUIElementRef, appName, buttonName st
 		desc := strings.ToLower(axString(el, "AXDescription"))
 		value := strings.ToLower(axString(el, "AXValue"))
 		if role == "AXWindow" || role == "AXSheet" || role == "AXDialog" ||
-			strings.Contains(title, appName) || strings.Contains(desc, appName) || strings.Contains(value, appName) ||
+			matchesPermissionApp(title, desc, value, appName) ||
 			strings.Contains(title, "screen recording") || strings.Contains(desc, "screen recording") ||
 			strings.Contains(title, "would like to record") || strings.Contains(desc, "would like to record") ||
 			strings.Contains(title, "private window picker") || strings.Contains(desc, "private window picker") {
@@ -393,12 +414,12 @@ func walkAX(root axuiautomation.AXUIElementRef, max int, visit func(axuiautomati
 
 func permissionItemName(title, desc, identifier string) string {
 	if strings.TrimSpace(title) != "" {
-		return title
+		return cleanAXString(title)
 	}
 	if strings.TrimSpace(desc) != "" {
-		return desc
+		return cleanAXString(desc)
 	}
-	identifier = strings.Split(identifier, "\x00")[0]
+	identifier = cleanAXString(identifier)
 	if strings.Contains(identifier, "_Toggle") {
 		return strings.Split(identifier, "_Toggle")[0]
 	}
@@ -406,13 +427,34 @@ func permissionItemName(title, desc, identifier string) string {
 }
 
 func matchesPermissionApp(name, title, desc, needle string) bool {
-	needle = strings.TrimSpace(strings.ToLower(needle))
+	needle = normalizePermissionText(needle)
 	if needle == "" {
 		return false
 	}
-	return strings.Contains(strings.ToLower(name), needle) ||
-		strings.Contains(strings.ToLower(title), needle) ||
-		strings.Contains(strings.ToLower(desc), needle)
+	return permissionTextMatches(name, needle) ||
+		permissionTextMatches(title, needle) ||
+		permissionTextMatches(desc, needle)
+}
+
+func permissionTextMatches(s, needle string) bool {
+	s = normalizePermissionText(s)
+	if s == "" {
+		return false
+	}
+	needleApp := strings.TrimSuffix(needle, ".app")
+	sApp := strings.TrimSuffix(s, ".app")
+	return s == needle ||
+		sApp == needleApp ||
+		strings.HasPrefix(sApp, needleApp+" ") ||
+		strings.HasPrefix(sApp, needleApp+".")
+}
+
+func normalizePermissionText(s string) string {
+	return strings.ToLower(cleanAXString(s))
+}
+
+func cleanAXString(s string) string {
+	return strings.TrimSpace(strings.Split(s, "\x00")[0])
 }
 
 func isToggleRole(role string) bool {
