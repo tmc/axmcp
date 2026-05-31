@@ -58,13 +58,16 @@ packages, so the package set can compile without pulling in the Apple
 dependency chain. `cmd/computer-use-mcp` starts as an MCP server on Windows and
 Linux with state tools wired to platform window metadata. Windows uses
 `internal/computeruse/winstate` to enumerate visible Win32 windows and build a
-minimal window-metadata snapshot with a PrintWindow/GDI screenshot; UI
-Automation trees are still missing. Linux uses `internal/computeruse/linuxstate`
+minimal window-metadata snapshot with a PrintWindow/GDI screenshot. The
+Windows snapshot now has the retained native-handle/index scaffold needed for
+UI Automation trees, but the live UIA COM reader is still missing and the
+default runtime falls back to the root window node. Linux uses
+`internal/computeruse/linuxstate`
 for X11 window metadata through `wmctrl -lpG` and captures screenshots through
-ImageMagick `import`; AT-SPI trees, input, and Wayland support are still
-missing. Action tools remain registered but return explicit unsupported errors
-until input backends land. Non-Darwin servers expose `mcp://platform/status` so
-clients can inspect the compiled backend and prerequisite probes.
+ImageMagick `import`; root-window pixel/key input uses `xdotool`. AT-SPI trees,
+element actions, and Wayland support are still missing. Non-Darwin servers
+expose `mcp://platform/status` so clients can inspect the compiled backend and
+prerequisite probes.
 
 ## Implementation Slice
 
@@ -84,11 +87,11 @@ subsystem at a time.
 
 `computeruse.PlatformStatus` reports the compiled backend and the capabilities
 that are present or missing. Windows and Linux expose that report through
-`mcp://platform/status`. Linux reports `DISPLAY`, `wmctrl`, and ImageMagick
-`import` availability because the current X11 state backend shells out for
-window enumeration and screenshots. State backends still surface missing
-prerequisites through `list_apps` and `get_app_state` errors instead of
-silently returning empty state.
+`mcp://platform/status`. Linux reports `DISPLAY`, `wmctrl`, ImageMagick
+`import`, and `xdotool` availability because the current X11 backend shells out
+for window enumeration, screenshots, and root-window input. State backends
+still surface missing prerequisites through `list_apps` and `get_app_state`
+errors instead of silently returning empty state.
 
 `computeruse.Backend` is the package-level contract for native
 implementations. It separates app/window state, input, screenshots, and
@@ -99,25 +102,31 @@ exposes a Darwin input adapter over the existing Accessibility, CoreGraphics,
 and SkyLight paths. Windows and Linux backends should implement the same
 interface instead of exposing UIA, MSAA, AT-SPI, X11, WGC, or portal handles
 through tool responses. `internal/computeruse/winstate` is the first Windows
-state slice: it uses Win32 top-level windows for app resolution and a root
-window node plus a PNG screenshot captured with PrintWindow and a GDI BitBlt
-fallback, leaving UIA/MSAA element trees for the next state slice. The Windows
-command now serves that state through the normal MCP `list_apps` and
-`get_app_state` tools. `internal/computeruse/linuxstate` mirrors that boundary
+state slice: it uses Win32 top-level windows for app resolution, a PNG
+screenshot captured with PrintWindow and a GDI BitBlt fallback, and a retained
+snapshot tree model that maps native Windows handles to stable
+`element_index` values with window-local geometry. Production builds still use
+the root window fallback until the live UIA reader lands; tests can inject a
+tree to lock the indexing and geometry contract. The Windows command now
+serves that state through the normal MCP `list_apps` and `get_app_state`
+tools. `internal/computeruse/linuxstate` mirrors that boundary
 for X11: it resolves apps from `wmctrl -lpG` output, captures a PNG screenshot
 with ImageMagick `import`, and returns a root window node while AT-SPI and
-Wayland-specific state remain future work. The Linux command serves that state
-through the same MCP tools.
+Wayland-specific state remain future work. It also routes pixel clicks, drags,
+scrolls, key presses, and window-level typing through `xdotool`; element-index
+actions beyond the root window still require AT-SPI. The Linux command serves
+that state through the same MCP tools.
 
 ## Upstream-Backed Backlog
 
 The next code milestones should keep the current `cmd/computer-use-mcp`
 contract and replace the unsupported stubs behind it.
 
-1. Expand the Windows state backend. Keep HWNDs inside retained snapshots, add
-   UI Automation for the tree, and add an MSAA fallback for apps whose UIA
-   providers hang or lose role fidelity. Preserve axmcp's `state_id` refresh
-   contract instead of exposing reusable raw element handles to callers.
+1. Expand the Windows state backend. Replace the current injected-tree/live
+   fallback boundary with a real UI Automation reader, then add an MSAA
+   fallback for apps whose UIA providers hang or lose role fidelity. Preserve
+   axmcp's `state_id` refresh contract instead of exposing reusable raw
+   element handles to callers.
 2. Expand Windows screenshot and coordinate handling. Add WGC for
    DirectComposition/XAML hosts, DWM frame cropping, and explicit occlusion
    warnings when only BitBlt is available. Preserve the existing 1568 px
@@ -131,9 +140,10 @@ contract and replace the unsupported stubs behind it.
 4. Expand the Linux backend in narrower phases. Replace or supplement the
    `wmctrl` and ImageMagick dependencies when direct X11 paths land, capture
    with XGetImage or portals when available, walk AT-SPI when the bus is
-   available, perform element actions through AT-SPI, and use XSendEvent for
-   window-targeted pixels/keys. Treat Wayland input as passive or portal-gated
-   until compositor support is detected.
+   available, perform element actions through AT-SPI, and replace or harden the
+   current `xdotool` root-window input path with direct XSendEvent/XTest paths.
+   Treat Wayland input as passive or portal-gated until compositor support is
+   detected.
 5. Expand `PlatformStatus` into a real doctor surface. Windows should report
    interactive-session status, UIA reachability, WGC availability, integrity
    level risks, and screen-capture readiness. Linux should report X11 versus
