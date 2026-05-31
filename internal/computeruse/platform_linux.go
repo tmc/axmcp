@@ -10,7 +10,8 @@ import (
 // PlatformStatus reports the compiled native automation backend.
 func PlatformStatus() PlatformReport {
 	caps := []PlatformCapability{
-		{Name: "app_state", Message: "AT-SPI app and accessibility tree backend is not implemented"},
+		{Name: "x11_window_enumeration", Available: true, Message: "compiled wmctrl-backed X11 top-level window enumeration backend"},
+		{Name: "app_state", Message: "AT-SPI accessibility tree backend is not implemented"},
 		{Name: "input", Message: "X11, Wayland, or portal input backend is not implemented"},
 		{Name: "screenshot", Message: "X11, Wayland, or portal screenshot backend is not implemented"},
 		{Name: "intervention", Message: "Linux physical-intervention monitor is not implemented"},
@@ -34,6 +35,6 @@ func PlatformStatus() PlatformReport {
 		OS:           runtime.GOOS,
 		Backend:      "linux-unsupported",
 		Capabilities: caps,
-		Message:      "Linux native desktop automation is not implemented",
+		Message:      "Linux native desktop automation is partially scaffolded; AT-SPI, screenshots, and input are not implemented",
 	}
 }

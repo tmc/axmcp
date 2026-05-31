@@ -59,7 +59,10 @@ Apple dependency chain. Runtime native automation remains unavailable until
 Windows and Linux backends replace those stubs. Windows also has a first
 `internal/computeruse/winstate` package that can enumerate visible Win32
 windows and build a minimal window-metadata snapshot, but the command is not
-wired to serve it yet and UI Automation trees are still missing.
+wired to serve it yet and UI Automation trees are still missing. Linux has the
+matching first `internal/computeruse/linuxstate` package for X11 window
+metadata through `wmctrl -lpG`; AT-SPI trees, screenshots, input, and Wayland
+support are still missing.
 
 ## Implementation Slice
 
@@ -93,6 +96,9 @@ interface instead of exposing UIA, MSAA, AT-SPI, X11, WGC, or portal handles
 through tool responses. `internal/computeruse/winstate` is the first Windows
 state slice: it uses Win32 top-level windows for app resolution and a root
 window node, leaving UIA/MSAA element trees for the next state slice.
+`internal/computeruse/linuxstate` mirrors that boundary for X11: it resolves
+apps from `wmctrl -lpG` output and returns a root window node while AT-SPI and
+Wayland-specific state remain future work.
 
 ## Upstream-Backed Backlog
 
@@ -116,11 +122,13 @@ contract and replace the unsupported stubs behind it.
    to the target HWND. Return a structured `background_unavailable` result when
    background dispatch is known to drop, and require an explicit foreground
    option before using SendInput.
-4. Add a Linux backend in narrower phases. Start with X11: list windows, capture
-   with XGetImage or a checked external helper, walk AT-SPI when the bus is
-   available, perform element actions through AT-SPI, and use XSendEvent for
-   window-targeted pixels/keys. Treat Wayland input as passive or portal-gated
-   until compositor support is detected.
+4. Expand and wire the Linux backend in narrower phases. Connect `linuxstate`
+   to `cmd/computer-use-mcp`, replace or supplement the `wmctrl` dependency
+   when a direct X11 path lands, capture with XGetImage or a checked external
+   helper, walk AT-SPI when the bus is available, perform element actions
+   through AT-SPI, and use XSendEvent for window-targeted pixels/keys. Treat
+   Wayland input as passive or portal-gated until compositor support is
+   detected.
 5. Expand `PlatformStatus` into a real doctor surface. Windows should report
    interactive-session status, UIA reachability, WGC availability, integrity
    level risks, and screen-capture readiness. Linux should report X11 versus
