@@ -46,10 +46,12 @@ func verifyCDPTarget(endpoint, selector string) error {
 
 func findTarget(targets []map[string]any, selector string) (map[string]any, error) {
 	selector = strings.ToLower(selector)
+	var candidates []string
 	for _, target := range targets {
 		if target["type"] != "page" {
 			continue
 		}
+		candidates = append(candidates, targetSummary(target))
 		haystack := strings.ToLower(strings.Join([]string{
 			fmt.Sprint(target["id"]),
 			fmt.Sprint(target["title"]),
@@ -62,7 +64,30 @@ func findTarget(targets []map[string]any, selector string) (map[string]any, erro
 	if selector == "" {
 		return nil, fmt.Errorf("no page target found")
 	}
-	return nil, fmt.Errorf("no page target matching %q", selector)
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no page target matching %q; no page targets available", selector)
+	}
+	return nil, fmt.Errorf("no page target matching %q; available page targets: %s", selector, strings.Join(candidates, "; "))
+}
+
+func targetSummary(target map[string]any) string {
+	id := fmt.Sprint(target["id"])
+	title := fmt.Sprint(target["title"])
+	rawURL := fmt.Sprint(target["url"])
+	parts := make([]string, 0, 3)
+	if title != "" {
+		parts = append(parts, "title="+title)
+	}
+	if id != "" {
+		parts = append(parts, "id="+id)
+	}
+	if rawURL != "" {
+		parts = append(parts, "url="+rawURL)
+	}
+	if len(parts) == 0 {
+		return "(untitled target)"
+	}
+	return strings.Join(parts, " ")
 }
 
 func verifyPreviewURL(client *http.Client, target map[string]any) error {

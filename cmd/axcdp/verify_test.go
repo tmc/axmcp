@@ -1,10 +1,27 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestVerifyCDPTargetRequiresSelector(t *testing.T) {
 	if err := verifyCDPTarget("http://127.0.0.1:1", ""); err == nil {
 		t.Fatal("verifyCDPTarget succeeded without -target selector")
+	}
+}
+
+func TestFindTargetNoMatchListsCandidates(t *testing.T) {
+	targets := []map[string]any{
+		{"type": "page", "id": "target-1", "title": "TextEdit", "url": "http://127.0.0.1:9221/axcdp/window/1/2"},
+		{"type": "node", "id": "node-1", "title": "Node", "url": "http://127.0.0.1:9221/axcdp/node"},
+	}
+	_, err := findTarget(targets, "Calculator")
+	if err == nil {
+		t.Fatal("findTarget succeeded for missing selector")
+	}
+	if !strings.Contains(err.Error(), "available page targets:") || !strings.Contains(err.Error(), "TextEdit") || strings.Contains(err.Error(), "Node") {
+		t.Fatalf("findTarget error = %q, want page candidates only", err)
 	}
 }
 
