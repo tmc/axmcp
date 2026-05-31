@@ -24,13 +24,11 @@ func generateToken() string {
 	b := make([]byte, 16)
 	_, err := rand.Read(b)
 	if err != nil {
-		// Fallback if crypto/rand fails (unlikely)
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b)
 }
 
-// Manual Block Implementation
 var (
 	_NSConcreteGlobalBlock uintptr
 	_malloc                func(size uintptr) uintptr
@@ -73,28 +71,21 @@ func createGlobalBlock(invoke uintptr) (unsafe.Pointer, func()) {
 		return nil, func() {}
 	}
 
-	// Allocate Memory for Layout and Descriptor
 	layoutSize := unsafe.Sizeof(blockLayout{})
 	descSize := unsafe.Sizeof(blockDescriptor{})
-
-	// We allocate them separately or together?
-	// C Blocks imply descriptor is pointer. So separate.
 
 	layoutPtr := _malloc(layoutSize)
 	descPtr := _malloc(descSize)
 
-	// Cleanup function
 	cleanup := func() {
 		_free(layoutPtr)
 		_free(descPtr)
 	}
 
-	// Initialize Descriptor
 	desc := (*blockDescriptor)(unsafe.Pointer(descPtr))
 	desc.reserved = 0
 	desc.size = layoutSize
 
-	// Initialize Layout
 	layout := (*blockLayout)(unsafe.Pointer(layoutPtr))
 	layout.isa = _NSConcreteGlobalBlock
 	layout.flags = 1 << 28 // BLOCK_IS_GLOBAL
@@ -107,12 +98,10 @@ func createGlobalBlock(invoke uintptr) (unsafe.Pointer, func()) {
 
 func InitAXPDelegate() {
 	initDelegateOnce.Do(func() {
-		// Define class
 		cls := objc.GetClass("NSObject")
 		newClsName := "XCMCP_AXPDelegate"
 		newCls := objc.AllocateClassPair(cls, newClsName, 0)
 
-		// Method: accessibilityTranslationDelegateBridgeCallbackWithToken:
 		imp := objc.NewCallback(func(self, _cmd, tokenID objc.ID) objc.ID {
 			token := objc.GoString(tokenID)
 
@@ -133,18 +122,13 @@ func InitAXPDelegate() {
 		})
 		objc.AddMethod(newCls, objc.Sel("accessibilityTranslationDelegateBridgeCallbackWithToken:"), imp, "@:@:@")
 
-		// Method: accessibilityTranslationConvertPlatformFrameToSystem:withToken:
-		// We implement this to avoid crash. We don't care about correctness for now (return garbage/0).
-		// Signature involves structs. We try returning 0 (which might zero-out d0, effectively returning {{0,0},{0,0}}).
+		// AXPTranslator requires this delegate method. Returning zero keeps
+		// the bridge stable for callers that do not need frame conversion.
 		impConvert := objc.NewCallback(func(self, _cmd objc.ID, framePtr unsafe.Pointer, tokenID objc.ID) int {
 			return 0
 		})
-		// Signature: Return Struct, Self, Sel, Arg Struct, Arg ID
-		// Encoding for CGRect is usually `{CGRect={CGPoint=dd}{CGSize=dd}}`.
-		// Let's use simple signature string or correct one.
 		objc.AddMethod(newCls, objc.Sel("accessibilityTranslationConvertPlatformFrameToSystem:withToken:"), impConvert, "{CGRect={CGPoint=dd}{CGSize=dd}}@:{CGRect={CGPoint=dd}{CGSize=dd}}@")
 
-		// Method: accessibilityTranslationRootParentWithToken:
 		impRoot := objc.NewCallback(func(self, _cmd, tokenID objc.ID) objc.ID {
 			return 0
 		})
@@ -152,10 +136,8 @@ func InitAXPDelegate() {
 
 		objc.RegisterClassPair(newCls)
 
-		// Create Singleton Instance
 		delegate = objc.Send[objc.ID](objc.ID(newCls), objc.Sel("new"))
 
-		// Set Delegate on AXPTranslator
 		translatorCls := objc.GetClass("AXPTranslator")
 		translator := objc.Send[objc.ID](objc.ID(translatorCls), objc.Sel("sharedInstance"))
 		objc.Send[objc.ID](translator, objc.Sel("setBridgeTokenDelegate:"), delegate)
