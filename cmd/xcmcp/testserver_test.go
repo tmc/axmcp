@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 )
 
 type rpcRequest struct {
@@ -38,18 +40,16 @@ type testServer struct {
 	nextID  int
 }
 
+var testServerBuild struct {
+	once sync.Once
+	bin  string
+	err  error
+}
+
 func startTestServer(t *testing.T, args ...string) *testServer {
 	t.Helper()
 
-	tmpDir := t.TempDir()
-	bin := filepath.Join(tmpDir, "xcmcp-test")
-	build := exec.Command("go", "build", "-o", bin, ".")
-	build.Dir = "."
-	build.Stdout = os.Stdout
-	build.Stderr = os.Stderr
-	if err := build.Run(); err != nil {
-		t.Fatalf("build xcmcp: %v", err)
-	}
+	bin := testServerBinary(t)
 
 	args = append([]string{"-wait-for-xcode=0s"}, args...)
 	cmd := exec.Command(bin, args...)
@@ -87,6 +87,32 @@ func startTestServer(t *testing.T, args ...string) *testServer {
 	return s
 }
 
+func testServerBinary(t *testing.T) string {
+	t.Helper()
+
+	testServerBuild.once.Do(func() {
+		tmpDir, err := os.MkdirTemp("", "xcmcp-test-*")
+		if err != nil {
+			testServerBuild.err = err
+			return
+		}
+		bin := filepath.Join(tmpDir, "xcmcp-test")
+		build := exec.Command("go", "build", "-o", bin, ".")
+		build.Dir = "."
+		build.Stdout = os.Stdout
+		build.Stderr = os.Stderr
+		if err := build.Run(); err != nil {
+			testServerBuild.err = fmt.Errorf("build xcmcp: %w", err)
+			return
+		}
+		testServerBuild.bin = bin
+	})
+	if testServerBuild.err != nil {
+		t.Fatal(testServerBuild.err)
+	}
+	return testServerBuild.bin
+}
+
 func (s *testServer) notify(method string, params interface{}) {
 	s.t.Helper()
 
@@ -122,21 +148,43 @@ func (s *testServer) request(method string, params interface{}) *rpcResponse {
 		s.t.Fatalf("write request %s: %v", method, err)
 	}
 
-	for s.scanner.Scan() {
-		line := s.scanner.Bytes()
-		var resp rpcResponse
-		if err := json.Unmarshal(line, &resp); err != nil {
-			s.t.Logf("ignoring non-json line: %s", line)
-			continue
-		}
-		if resp.ID == req.ID {
-			return &resp
-		}
+	type scanResult struct {
+		resp *rpcResponse
+		err  error
 	}
-	if err := s.scanner.Err(); err != nil {
-		s.t.Fatalf("read response %s: %v", method, err)
+	ch := make(chan scanResult, 1)
+	go func() {
+		for s.scanner.Scan() {
+			line := s.scanner.Bytes()
+			var resp rpcResponse
+			if err := json.Unmarshal(line, &resp); err != nil {
+				s.t.Logf("ignoring non-json line: %s", line)
+				continue
+			}
+			if resp.ID == req.ID {
+				ch <- scanResult{resp: &resp}
+				return
+			}
+		}
+		if err := s.scanner.Err(); err != nil {
+			ch <- scanResult{err: fmt.Errorf("read response %s: %w", method, err)}
+			return
+		}
+		ch <- scanResult{err: fmt.Errorf("EOF waiting for response to %s", method)}
+	}()
+
+	select {
+	case result := <-ch:
+		if result.err != nil {
+			s.t.Fatal(result.err)
+		}
+		return result.resp
+	case <-time.After(45 * time.Second):
+		if s.cmd.Process != nil {
+			_ = s.cmd.Process.Kill()
+		}
+		s.t.Fatalf("timeout waiting for response to %s id %d", method, req.ID)
 	}
-	s.t.Fatalf("EOF waiting for response to %s", method)
 	return nil
 }
 
