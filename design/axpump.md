@@ -93,86 +93,37 @@ stripped trees on a macOS ≤ 25 host where the symbol exists, the dlsym
 gets re-added behind a version gate. Until then, dead code does not
 ship.
 
-## API sketch
+## Current API
 
 ```go
 package axpump
 
-// ErrAXPumpUnavailable is wrapped into errors returned by Pump and
-// Ensure when the HIServices observer surface cannot be reached, when
-// the run-loop pump cannot be started, or when AXObserverCreate fails
-// for the target pid. Callers branch via errors.Is, never ==, because
-// the sentinel is always wrapped with the underlying cause via
-// fmt.Errorf("%w: ...", ErrAXPumpUnavailable). Same contract spacedetect
-// established for ErrSkyLightUnavailable in v0.2.x.
-var ErrAXPumpUnavailable = errors.New("axpump: AX observer unavailable")
-
-// Pump arranges for observer run-loop sources to be serviced for the
-// life of the process. Spawns one runtime.LockOSThread goroutine that
-// runs CFRunLoopRun on a private CFRunLoop; subsequent Ensure calls
-// attach each pid's source to that run loop. Idempotent: repeat calls
-// are no-ops. Must be called once before any Ensure call. Returns an
-// error wrapping ErrAXPumpUnavailable when the run-loop scaffolding
-// cannot be set up.
-func Pump() error
-
-// Ensure registers a no-op AXObserver for pid (if not already retained
-// from a prior call), attaches its run-loop source to Pump's run loop,
-// and subscribes to a broad notification set so Chromium-family
-// targets keep their renderer-side AX pipeline engaged. Idempotent.
-// Returns nil on success and on partial-success — Chromium only
-// requires presence, not coverage, so a subset of failed subscribes is
-// acceptable as long as at least one is live. Returns an error
-// wrapping ErrAXPumpUnavailable when HIServices is unreachable or
-// AXObserverCreate fails for the pid.
-func Ensure(pid int32) error
-
-// Active reports whether Ensure has registered an observer for pid in
-// this process. ax_tree / ax_snapshot stamp this as "ax_pump_active"
-// metadata so callers debugging "tree looks stripped" can disambiguate
-// "Chromium isn't cooperating" from "we never tried."
-func Active(pid int32) bool
+// Ensure asks a target app to keep its accessibility tree populated
+// while it is backgrounded. It is best-effort: native apps commonly
+// reject the Chromium AX attributes, and callers should still proceed
+// with a normal snapshot.
+func Ensure(pid int32) (bool, error)
 ```
 
-Splitting `Pump` from `Ensure` mirrors `internal/spacedetect`'s
-`sync.Once`-gated `load()` versus per-call `IsOffSpace`. `Pump` owns
-process-wide scaffolding; `Ensure` is the per-pid hot path.
+`Ensure` is idempotent per pid. It first sets Chromium's
+`AXManualAccessibility` / `AXEnhancedUserInterface` attributes when a
+target accepts them, then registers and retains a no-op observer through
+`tmc/apple/x/axuiautomation`. It returns `true` when an observer is
+retained, `false, nil` when the target is not assertable, and an error
+only for invalid pids or failures to connect to the target application.
 
 ## Graceful-degrade contract
 
-Same shape as `spacedetect.ErrSkyLightUnavailable` (see
-`design/spacedetect.md`):
-
-- `ErrAXPumpUnavailable` is a sentinel `errors.New(...)`.
-- The darwin implementation returns it wrapped via `fmt.Errorf("%w:
-  ...", ErrAXPumpUnavailable, cause)`.
-- Callers MUST branch with `errors.Is`, never `==`.
-- Non-darwin builds return `ErrAXPumpUnavailable` unconditionally from
-  a `//go:build !darwin` stub so the package stays importable from any
-  host.
-
-The non-error JSON contract is also parallel: `Active(pid)` returns
-`false` whenever `Ensure` has not succeeded — no separate
-`available bool`, no tri-state. The metadata field on `ax_tree` /
-`ax_snapshot` payloads stays `omitempty`-quiet on the common path.
-
-Caller integration in `cmd/axmcp/tools.go` would mirror the existing
-`spacedetect` site:
+Callers treat axpump as best-effort. The current integration in
+`internal/computeruse/appstate` intentionally discards the return value
+and proceeds with the normal snapshot:
 
 ```go
-if err := axpump.Ensure(app.PID()); err != nil {
-    if !errors.Is(err, axpump.ErrAXPumpUnavailable) {
-        slog.Debug("axpump: ensure failed", "pid", app.PID(), "err", err)
-    }
-}
-// snapshot proceeds regardless; ax_pump_active stamps via Active(pid)
+_, _ = axpump.Ensure(app.PID())
 ```
 
-`ErrAXPumpUnavailable` is silenced (the framework or the pump is gone
-on this host; nothing else to say). Other errors — e.g., a sandboxed
-pid where `AXObserverCreate` fails — log at debug level for inspection
-without drowning structured output. The snapshot itself never errors
-because of axpump.
+The snapshot itself never errors because of axpump. There is no public
+`Active` query or `ax_pump_active` metadata field in the current code.
 
 ## Non-goals
 
@@ -183,11 +134,10 @@ already exist; it is not a structural change to those tools.
   `ax_tree` and `ax_snapshot` continue to call `AXUIElementCopy*`
   synchronously. The observer registered by `axpump` exists for its
   side effect on Chromium, never for its events.
-- **No daemon-mode coupling.** axpump's run-loop pump goroutine spins
-  inside the existing one-shot MCP subprocess. When the subprocess
-  exits, the observer goes with it. Long-lived AX observation across
-  MCP sessions is `cmd/axmcpd` work, deferred per `ROADMAP.md`'s
-  mid-term section.
+- **No daemon-mode coupling.** Observers are retained inside the
+  existing process. When the subprocess exits, the observer goes with
+  it. Long-lived AX observation across MCP sessions is `cmd/axmcpd`
+  work, deferred per `ROADMAP.md`'s mid-term section.
 - **No exposed observer events.** The callback discards every
   argument. No public Go channel, no MCP tool that streams AX
   notifications. Adding either would commit axmcp to an event model
@@ -195,37 +145,13 @@ already exist; it is not a structural change to those tools.
 - **No NSApplication bootstrap.** cua-driver attaches its observer
   source to the main run loop, which is alive because cua runs
   `NSApplication.shared.run()` for its agent-cursor overlay. axmcp has
-  no NSApplication and is not gaining one for axpump; the dedicated
-  `runtime.LockOSThread` + `CFRunLoopRun` goroutine substitutes.
+  no NSApplication bootstrap for axpump.
 
-## Upstream prerequisite
+## Binding shape
 
-`axpump` consumes four `AXObserver*` symbols from the host SDK
-(`AXObserverCreateWithInfoCallback`, `AXObserverGetRunLoopSource`,
-`AXObserverAddNotification`, `AXObserverRemoveNotification`). The
-`tmc/apple/x/axuiautomation` package — already the source of axmcp's
-other AX bindings — currently exports only `AXObserverCreate`
-(see `x/axuiautomation/ax.go` AX function pointers and the public
-`AXObserver*` wrappers). The other three are not yet bound there.
-
-Two implementation paths:
-
-1. **Bind upstream first (preferred).** Land the missing wrappers in
-   `axuiautomation` (mirror the `AXUIElementCopyActionNames` pattern
-   from v0.5.4: `purego.RegisterLibFunc` once on package init, public
-   `AXObserver*` wrappers that no-op when `axLoaded` is false). Then
-   `internal/axpump` stays free of `purego.Dlopen` and matches the
-   binding-consumption shape the rest of the package follows.
-2. **Local dlsym in `internal/axpump`.** Faster, but reproduces the
-   exact ad-hoc binding pattern the `cmd/axmcp/tools.go` cleanup just
-   retired. Choose this only if the upstream bump is blocked, and
-   plan to retire the local bindings the next time `axuiautomation`
-   refreshes.
-
-Path (1) is the load-bearing shape. The `_AXObserverAddNotification` /
-`AXObserverGetRunLoopSource` / `AXObserverCreateWithInfoCallback` set
-is small enough to land as one upstream commit before axpump's first
-`runtime.LockOSThread` goroutine ships.
+`axpump` consumes observer support through `tmc/apple/x/axuiautomation`
+instead of binding HIServices observer symbols locally. It only dlsyms
+CoreFoundation booleans used to set the Chromium AX attributes.
 
 ## Corroboration from cua-driver
 

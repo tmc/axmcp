@@ -50,11 +50,11 @@ leakage). Ghost cursor rendering for click and drag actions lives in
   the lifetime of an AppKit listener (focus-steal prevention,
   long-lived AX observers across multiple MCP client sessions). Today
   the short-lived subprocess shape is the simpler default.
-- Finish the ScreenCaptureKit migration for rectangle and OCR helper
-  paths. App-backed full-window screenshots now prefer
-  `SCContentFilter(desktopIndependentWindow:)`, with
-  `CGWindowListCreateImage` retained for the pre-AppKit direct fast
-  path and fallback. See `design/screencapturekit-tcc.md` for the TCC
+- Revisit the ScreenCaptureKit migration for window, rectangle, and OCR
+  helper paths. `cmd/axmcp` window screenshots currently use
+  `CGWindowListCreateImage` and avoid the SCK window fallback while the
+  AppKit CLI event loop is active; full-display capture remains the
+  explicit SCK path. See `design/screencapturekit-tcc.md` for the TCC
   flow comparison and remaining capture surfaces.
 - Structured error type for window-resolution failures, replacing the
   current "no windows found …" string with a typed error carrying
