@@ -755,7 +755,7 @@ func (b *browserBackend) proxyWebSocket(w http.ResponseWriter, r *http.Request, 
 
 	upstream, _, err := websocket.DefaultDialer.Dial(target.WebSocketDebuggerURL, nil)
 	if err != nil {
-		_ = client.WriteJSON(cdpResponse{Error: &cdpError{Code: -32000, Message: fmt.Sprintf("dial browser target: %v", err)}})
+		writeBrowserProxyError(client, fmt.Errorf("dial browser target: %w", err))
 		return
 	}
 	defer upstream.Close()
@@ -776,6 +776,17 @@ func (b *browserBackend) proxyWebSocket(w http.ResponseWriter, r *http.Request, 
 	go copyConn(upstream, client)
 	go copyConn(client, upstream)
 	<-done
+}
+
+type browserProxyJSONWriter interface {
+	WriteJSON(any) error
+}
+
+func writeBrowserProxyError(w browserProxyJSONWriter, err error) {
+	resp := cdpResponse{Error: &cdpError{Code: -32000, Message: err.Error()}}
+	if writeErr := w.WriteJSON(resp); writeErr != nil {
+		slog.Info("browser proxy error write failed", "err", writeErr, "response_error", err)
+	}
 }
 
 func browserProxyID(wsURL string) string {

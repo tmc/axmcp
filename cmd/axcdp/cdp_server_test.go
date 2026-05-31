@@ -515,6 +515,28 @@ func (w *failingHTTPJSONWriter) Write([]byte) (int, error) {
 
 func (w *failingHTTPJSONWriter) WriteHeader(int) {}
 
+type failingBrowserProxyJSONWriter struct{}
+
+func (failingBrowserProxyJSONWriter) WriteJSON(any) error {
+	return errors.New("write failed")
+}
+
+func TestWriteBrowserProxyErrorLogsWriteError(t *testing.T) {
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() {
+		slog.SetDefault(old)
+	})
+
+	writeBrowserProxyError(failingBrowserProxyJSONWriter{}, errors.New("dial failed"))
+
+	got := buf.String()
+	if !strings.Contains(got, "browser proxy error write failed") || !strings.Contains(got, "write failed") || !strings.Contains(got, "dial failed") {
+		t.Fatalf("log output = %q, want proxy response write failure and original error", got)
+	}
+}
+
 func TestWriteHTTPJSONLogsWriteError(t *testing.T) {
 	var buf bytes.Buffer
 	old := slog.Default()
