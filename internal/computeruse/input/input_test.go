@@ -50,3 +50,21 @@ func TestSendKeyComboToPIDRejectsInvalidPID(t *testing.T) {
 		t.Fatalf("SendKeyComboToPID should reject invalid pid")
 	}
 }
+
+func TestNormalizeClickCount(t *testing.T) {
+	tests := []struct {
+		name string
+		in   int
+		want int
+	}{
+		{name: "negative", in: -1, want: 1},
+		{name: "zero", in: 0, want: 1},
+		{name: "one", in: 1, want: 1},
+		{name: "double", in: 2, want: 2},
+	}
+	for _, tt := range tests {
+		if got := normalizeClickCount(tt.in); got != tt.want {
+			t.Fatalf("%s: normalizeClickCount(%d) = %d, want %d", tt.name, tt.in, got, tt.want)
+		}
+	}
+}

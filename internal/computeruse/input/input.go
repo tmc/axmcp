@@ -132,6 +132,7 @@ func ClickElement(el *axuiautomation.Element, button string, clickCount int) err
 	if el == nil {
 		return fmt.Errorf("target disappeared")
 	}
+	clickCount = normalizeClickCount(clickCount)
 	center := elementCenter(el)
 	ghostcursor.SettleAt(center.X, center.Y, 180*time.Millisecond)
 	switch strings.ToLower(strings.TrimSpace(button)) {
@@ -174,6 +175,7 @@ func ClickElementAt(el *axuiautomation.Element, point LocalPoint, button string,
 	if el == nil {
 		return fmt.Errorf("target disappeared")
 	}
+	clickCount = normalizeClickCount(clickCount)
 	switch strings.ToLower(strings.TrimSpace(button)) {
 	case "", "left":
 		if clickCount <= 1 {
@@ -290,9 +292,7 @@ func ClickScreenPoint(x, y int) error {
 // ClickState=1 then 2 across consecutive down/up pairs), count=3 a triple,
 // etc. count<1 is treated as 1.
 func MultiClickScreenPoint(x, y, count int) error {
-	if count < 1 {
-		count = 1
-	}
+	count = normalizeClickCount(count)
 	return clickScreenPoint(LocalPoint{X: x, Y: y}, cgEventLeftMouseDown, cgEventLeftMouseUp, cgMouseButtonLeft, count)
 }
 
@@ -443,6 +443,7 @@ func elementCenter(el *axuiautomation.Element) LocalPoint {
 }
 
 func clickScreenPoint(point LocalPoint, downType, upType, button int32, clickCount int) error {
+	clickCount = normalizeClickCount(clickCount)
 	initCGMouseEvents()
 	switch {
 	case cgEventCreateMouseEvent == nil:
@@ -490,6 +491,13 @@ func clickScreenPoint(point LocalPoint, downType, upType, button int32, clickCou
 	}
 	press.ReleaseAt(point.X, point.Y)
 	return nil
+}
+
+func normalizeClickCount(clickCount int) int {
+	if clickCount < 1 {
+		return 1
+	}
+	return clickCount
 }
 
 // postMouseMovePath posts three kCGEventMouseMoved events approaching point
