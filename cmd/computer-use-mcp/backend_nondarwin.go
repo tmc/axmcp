@@ -12,6 +12,7 @@ import (
 
 type nonDarwinBackend struct {
 	state       computeruse.StateBackend
+	input       computeruse.InputBackend
 	unsupported *computeruse.UnsupportedBackend
 }
 
@@ -19,16 +20,20 @@ func newNonDarwinBackend() computeruse.Backend {
 	report := computeruse.PlatformStatus()
 	unsupported := computeruse.NewUnsupportedBackend(report)
 	var state computeruse.StateBackend
+	var input computeruse.InputBackend
 	switch runtime.GOOS {
 	case "windows":
 		state = winstate.NewBackend()
 	case "linux":
-		state = linuxstate.NewBackend()
+		backend := linuxstate.NewBackend()
+		state = backend
+		input = backend
 	default:
 		state = unsupported.State()
 	}
 	return &nonDarwinBackend{
 		state:       state,
+		input:       input,
 		unsupported: unsupported,
 	}
 }
@@ -42,6 +47,9 @@ func (b *nonDarwinBackend) State() computeruse.StateBackend {
 }
 
 func (b *nonDarwinBackend) Input() computeruse.InputBackend {
+	if b.input != nil {
+		return b.input
+	}
 	return b.unsupported.Input()
 }
 

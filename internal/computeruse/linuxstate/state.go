@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"math"
 	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/tmc/axmcp/internal/computeruse"
+	"github.com/tmc/axmcp/internal/computeruse/coords"
 )
 
 // Window describes one X11 top-level window.
@@ -31,6 +33,7 @@ type Backend struct {
 }
 
 var _ computeruse.StateBackend = Backend{}
+var _ computeruse.InputBackend = Backend{}
 
 // NewBackend returns a Linux state backend.
 func NewBackend() Backend {
@@ -80,8 +83,8 @@ func (b Backend) BuildState(ctx context.Context, req computeruse.StateRequest) (
 			Index:   0,
 			Role:    "Window",
 			Title:   win.Title,
-			X:       win.X,
-			Y:       win.Y,
+			X:       0,
+			Y:       0,
 			Width:   win.Width,
 			Height:  win.Height,
 			Enabled: true,
@@ -184,6 +187,208 @@ func (s *Snapshot) State() computeruse.AppState {
 
 func (s *Snapshot) Close() error {
 	return nil
+}
+
+func (b Backend) ClickElement(ctx context.Context, snapshot computeruse.Snapshot, index int, opts computeruse.ClickOptions) error {
+	s, err := linuxSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	if index != 0 {
+		return computeruse.PlatformUnsupported("click element with AT-SPI")
+	}
+	point := computeruse.Point{
+		X: s.state.Window.ScreenshotWidth / 2,
+		Y: s.state.Window.ScreenshotHeight / 2,
+	}
+	return b.ClickPoint(ctx, s, point, opts)
+}
+
+func (b Backend) ClickPoint(ctx context.Context, snapshot computeruse.Snapshot, point computeruse.Point, opts computeruse.ClickOptions) error {
+	s, err := linuxSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	local, err := coords.ScreenshotPointToWindowLocal(s.state.Window, point.X, point.Y)
+	if err != nil {
+		return err
+	}
+	button, err := xdotoolButton(opts.Button)
+	if err != nil {
+		return err
+	}
+	if err := b.runXDoTool(ctx, s.window, "mousemove", "--window", s.window.ID, strconv.Itoa(local.X), strconv.Itoa(local.Y)); err != nil {
+		return err
+	}
+	for range normalizeClickCount(opts.ClickCount) {
+		if err := b.runXDoTool(ctx, s.window, "click", "--window", s.window.ID, button); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b Backend) Drag(ctx context.Context, snapshot computeruse.Snapshot, start, end computeruse.Point, opts computeruse.DragOptions) error {
+	s, err := linuxSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	startLocal, err := coords.ScreenshotPointToWindowLocal(s.state.Window, start.X, start.Y)
+	if err != nil {
+		return err
+	}
+	endLocal, err := coords.ScreenshotPointToWindowLocal(s.state.Window, end.X, end.Y)
+	if err != nil {
+		return err
+	}
+	button, err := xdotoolButton(opts.Button)
+	if err != nil {
+		return err
+	}
+	steps := [][]string{
+		{"mousemove", "--window", s.window.ID, strconv.Itoa(startLocal.X), strconv.Itoa(startLocal.Y)},
+		{"mousedown", "--window", s.window.ID, button},
+		{"mousemove", "--window", s.window.ID, strconv.Itoa(endLocal.X), strconv.Itoa(endLocal.Y)},
+		{"mouseup", "--window", s.window.ID, button},
+	}
+	for _, step := range steps {
+		if err := b.runXDoTool(ctx, s.window, step...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b Backend) ScrollElement(ctx context.Context, snapshot computeruse.Snapshot, index int, opts computeruse.ScrollOptions) error {
+	s, err := linuxSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	if index != 0 {
+		return computeruse.PlatformUnsupported("scroll element with AT-SPI")
+	}
+	button, err := scrollButton(opts.Direction)
+	if err != nil {
+		return err
+	}
+	count := scrollCount(opts.Pages)
+	for range count {
+		if err := b.runXDoTool(ctx, s.window, "click", "--window", s.window.ID, button); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b Backend) PerformSecondaryAction(context.Context, computeruse.Snapshot, int, string) error {
+	return computeruse.PlatformUnsupported("perform secondary action with AT-SPI")
+}
+
+func (b Backend) SetValue(context.Context, computeruse.Snapshot, int, string) error {
+	return computeruse.PlatformUnsupported("set value with AT-SPI")
+}
+
+func (b Backend) PressKey(ctx context.Context, snapshot computeruse.Snapshot, key string) error {
+	s, err := linuxSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return fmt.Errorf("missing key")
+	}
+	return b.runXDoTool(ctx, s.window, "key", "--window", s.window.ID, key)
+}
+
+func (b Backend) TypeText(ctx context.Context, snapshot computeruse.Snapshot, elementIndex *int, text string) error {
+	s, err := linuxSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	if elementIndex != nil && *elementIndex != 0 {
+		return computeruse.PlatformUnsupported("type into element with AT-SPI")
+	}
+	return b.runXDoTool(ctx, s.window, "type", "--window", s.window.ID, "--", text)
+}
+
+func linuxSnapshot(snapshot computeruse.Snapshot) (*Snapshot, error) {
+	if snapshot == nil {
+		return nil, fmt.Errorf("missing state snapshot")
+	}
+	s, ok := snapshot.(*Snapshot)
+	if !ok {
+		return nil, fmt.Errorf("state snapshot is not from linux backend")
+	}
+	return s, nil
+}
+
+func (b Backend) runXDoTool(ctx context.Context, win Window, args ...string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(args) == 0 {
+		return fmt.Errorf("missing xdotool command")
+	}
+	if strings.TrimSpace(win.ID) == "" {
+		return fmt.Errorf("missing X11 window id")
+	}
+	run := b.run
+	if run == nil {
+		run = runCommand
+	}
+	if _, err := run(ctx, "xdotool", args...); err != nil {
+		return fmt.Errorf("run xdotool %s: %w", args[0], err)
+	}
+	return nil
+}
+
+func normalizeClickCount(clickCount int) int {
+	if clickCount < 1 {
+		return 1
+	}
+	return clickCount
+}
+
+func xdotoolButton(button string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(button)) {
+	case "", "left":
+		return "1", nil
+	case "middle":
+		return "2", nil
+	case "right":
+		return "3", nil
+	default:
+		return "", fmt.Errorf("invalid button %q; use left, right, or middle", button)
+	}
+}
+
+func scrollButton(direction string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(direction)) {
+	case "", "down":
+		return "5", nil
+	case "up":
+		return "4", nil
+	case "left":
+		return "6", nil
+	case "right":
+		return "7", nil
+	default:
+		return "", fmt.Errorf("invalid scroll direction %q; use up, down, left, or right", direction)
+	}
+}
+
+func scrollCount(pages float64) int {
+	if pages == 0 {
+		pages = 1
+	}
+	if pages < 0 {
+		pages = -pages
+	}
+	count := int(math.Round(pages * 5))
+	if count < 1 {
+		return 1
+	}
+	return count
 }
 
 func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
