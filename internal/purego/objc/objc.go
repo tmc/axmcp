@@ -2,6 +2,7 @@
 package objc
 
 import (
+	"fmt"
 	"sync"
 	"unsafe"
 
@@ -125,22 +126,39 @@ func RegisterClassPair(cls Class) {
 	}
 }
 
-// AddMethod adds a new method to a class.
-// impl must be a uintptr from purego.NewCallback.
+// AddMethod adds a new method to a class. impl must be a uintptr returned by
+// NewCallback. It returns false for an invalid IMP or unavailable runtime.
 func AddMethod(cls Class, sel SEL, impl any, types string) bool {
-	initObjCRuntime()
-	if class_addMethod == nil {
-		return false
+	ok, err := AddMethodChecked(cls, sel, impl, types)
+	return err == nil && ok
+}
+
+// AddMethodChecked adds a new method to a class and reports invalid IMP values
+// as errors instead of panicking.
+func AddMethodChecked(cls Class, sel SEL, impl any, types string) (bool, error) {
+	imp, err := methodIMP(impl)
+	if err != nil {
+		return false, err
 	}
 
-	var imp uintptr
+	initObjCRuntime()
+	if class_addMethod == nil {
+		return false, nil
+	}
+
+	return class_addMethod(cls, sel, imp, types), nil
+}
+
+func methodIMP(impl any) (uintptr, error) {
 	switch v := impl.(type) {
 	case uintptr:
-		imp = v
+		if v == 0 {
+			return 0, fmt.Errorf("add method: nil IMP")
+		}
+		return v, nil
 	default:
-		panic("AddMethod expects uintptr IMP (use purego.NewCallback)")
+		return 0, fmt.Errorf("add method: impl must be uintptr IMP from NewCallback")
 	}
-	return class_addMethod(cls, sel, imp, types)
 }
 
 // NewCallback creates a Go callback for C.
