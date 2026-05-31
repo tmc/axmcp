@@ -78,6 +78,52 @@ func TestBackendDragUsesWindowScreenshotCoordinates(t *testing.T) {
 	}
 }
 
+func TestBackendScrollElementUsesWindowMessages(t *testing.T) {
+	rec := &recordingInput{}
+	backend := Backend{input: rec.run}
+
+	err := backend.ScrollElement(context.Background(), winInputSnapshot(), 1, computeruse.ScrollOptions{
+		Direction: "up",
+		Pages:     0.4,
+	})
+	if err != nil {
+		t.Fatalf("ScrollElement: %v", err)
+	}
+	want := []inputAction{{
+		Kind:       inputScroll,
+		Target:     77,
+		Start:      coords.ScreenPoint{X: 55, Y: 70},
+		WheelDelta: wheelDelta,
+		WheelCount: 2,
+	}}
+	if !reflect.DeepEqual(rec.actions, want) {
+		t.Fatalf("actions = %#v, want %#v", rec.actions, want)
+	}
+}
+
+func TestBackendScrollElementUsesRootWindowFallback(t *testing.T) {
+	rec := &recordingInput{}
+	backend := Backend{input: rec.run}
+
+	err := backend.ScrollElement(context.Background(), winInputSnapshot(), 0, computeruse.ScrollOptions{
+		Direction: "right",
+	})
+	if err != nil {
+		t.Fatalf("ScrollElement: %v", err)
+	}
+	want := []inputAction{{
+		Kind:       inputScroll,
+		Target:     1,
+		Start:      coords.ScreenPoint{X: 160, Y: 120},
+		WheelDelta: wheelDelta,
+		WheelCount: 5,
+		Horizontal: true,
+	}}
+	if !reflect.DeepEqual(rec.actions, want) {
+		t.Fatalf("actions = %#v, want %#v", rec.actions, want)
+	}
+}
+
 func TestBackendClickElementUsesNativeWindowHandle(t *testing.T) {
 	rec := &recordingInput{}
 	backend := Backend{input: rec.run}
@@ -230,6 +276,33 @@ func TestParseAutomationAction(t *testing.T) {
 		if got != tt.want {
 			t.Fatalf("parseAutomationAction(%q) = %v, want %v", tt.action, got, tt.want)
 		}
+	}
+}
+
+func TestWindowsScroll(t *testing.T) {
+	tests := []struct {
+		name           string
+		opts           computeruse.ScrollOptions
+		wantDelta      int
+		wantCount      int
+		wantHorizontal bool
+	}{
+		{name: "default down", opts: computeruse.ScrollOptions{}, wantDelta: -wheelDelta, wantCount: 5},
+		{name: "up fractional", opts: computeruse.ScrollOptions{Direction: "up", Pages: 0.2}, wantDelta: wheelDelta, wantCount: 1},
+		{name: "left horizontal", opts: computeruse.ScrollOptions{Direction: "left", Pages: 2}, wantDelta: -wheelDelta, wantCount: 10, wantHorizontal: true},
+		{name: "right horizontal", opts: computeruse.ScrollOptions{Direction: "right"}, wantDelta: wheelDelta, wantCount: 5, wantHorizontal: true},
+	}
+	for _, tt := range tests {
+		delta, count, horizontal, err := windowsScroll(tt.opts)
+		if err != nil {
+			t.Fatalf("%s: windowsScroll: %v", tt.name, err)
+		}
+		if delta != tt.wantDelta || count != tt.wantCount || horizontal != tt.wantHorizontal {
+			t.Fatalf("%s: windowsScroll = (%d, %d, %v), want (%d, %d, %v)", tt.name, delta, count, horizontal, tt.wantDelta, tt.wantCount, tt.wantHorizontal)
+		}
+	}
+	if _, _, _, err := windowsScroll(computeruse.ScrollOptions{Direction: "diagonal"}); err == nil {
+		t.Fatalf("windowsScroll invalid = nil, want error")
 	}
 }
 

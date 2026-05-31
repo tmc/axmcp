@@ -59,10 +59,10 @@ dependency chain. `cmd/computer-use-mcp` starts as an MCP server on Windows and
 Linux with state tools wired to platform window metadata. Windows uses
 `internal/computeruse/winstate` to enumerate visible Win32 windows and build a
 window snapshot with a PrintWindow/GDI screenshot and bounded UIA control-view
-tree when available. The Windows input slice routes pixel clicks and drags
-through background Win32 mouse messages and invokes common UIA patterns for
-element actions; keyboard input and window-level text use background Win32
-messages, and opt-in foreground clicks use SendInput. Linux uses
+tree when available. The Windows input slice routes pixel clicks, drags, and
+scrolling through background Win32 mouse messages and invokes common UIA
+patterns for element actions; keyboard input and window-level text use
+background Win32 messages, and opt-in foreground clicks use SendInput. Linux uses
 `internal/computeruse/linuxstate`
 for X11 window metadata through `wmctrl -lpG` and captures screenshots through
 ImageMagick `import`; root-window pixel/key input uses `xdotool`; and a
@@ -116,13 +116,13 @@ handles only inside the snapshot lifetime, and fall back to the root window
 node when UIA is unavailable. Tests can still inject a tree to lock the
 indexing and geometry contract. The Windows command now serves that state
 through the normal MCP `list_apps` and `get_app_state` tools. Windows also
-routes root-window pixel clicks and drags through background Win32 mouse
-messages using the returned screenshot coordinate contract. Element clicks
-prefer retained UIA invoke patterns when available and otherwise fall back to
-window messages; secondary actions and set-value route through retained UIA
-pattern handles. Keyboard input and window-level text route through background
-Win32 messages, while `foreground_hid` clicks activate the target window and use
-SendInput for apps that reject background messages.
+routes root-window pixel clicks, drags, and scrolls through background Win32
+mouse messages using the returned screenshot coordinate contract. Element
+clicks prefer retained UIA invoke patterns when available and otherwise fall
+back to window messages; secondary actions and set-value route through retained
+UIA pattern handles. Keyboard input and window-level text route through
+background Win32 messages, while `foreground_hid` clicks activate the target
+window and use SendInput for apps that reject background messages.
 `internal/computeruse/linuxstate` mirrors that boundary for X11: it resolves
 apps from `wmctrl -lpG` output, captures a PNG screenshot with ImageMagick
 `import`, and reads a bounded AT-SPI subtree through `gdbus` when available,

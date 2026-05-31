@@ -3,6 +3,7 @@ package winstate
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/tmc/axmcp/internal/computeruse"
@@ -15,10 +16,15 @@ type automationActionRunner func(context.Context, automationAction) error
 type inputActionKind int
 
 const (
+	wheelDelta = 120
+)
+
+const (
 	inputClick inputActionKind = iota + 1
 	inputDrag
 	inputKey
 	inputText
+	inputScroll
 )
 
 type inputAction struct {
@@ -31,6 +37,9 @@ type inputAction struct {
 	End        coords.ScreenPoint
 	Key        string
 	Text       string
+	WheelDelta int
+	WheelCount int
+	Horizontal bool
 }
 
 type mouseButton int
@@ -134,8 +143,42 @@ func (b Backend) Drag(ctx context.Context, snapshot computeruse.Snapshot, start,
 	})
 }
 
-func (b Backend) ScrollElement(context.Context, computeruse.Snapshot, int, computeruse.ScrollOptions) error {
-	return computeruse.PlatformUnsupported("scroll element with UI Automation")
+func (b Backend) ScrollElement(ctx context.Context, snapshot computeruse.Snapshot, index int, opts computeruse.ScrollOptions) error {
+	s, err := windowsSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	native, node, err := s.NativeElement(index)
+	if err != nil {
+		return err
+	}
+	if node.Width <= 0 || node.Height <= 0 {
+		return fmt.Errorf("element has empty bounds")
+	}
+	target := native.WindowHandle
+	if target == 0 {
+		target = s.window.Handle
+	}
+	local := coords.Point{
+		X: node.X + node.Width/2,
+		Y: node.Y + node.Height/2,
+	}
+	screen, err := coords.WindowLocalToScreen(s.state.Window, local)
+	if err != nil {
+		return err
+	}
+	delta, count, horizontal, err := windowsScroll(opts)
+	if err != nil {
+		return err
+	}
+	return b.runInput(ctx, inputAction{
+		Kind:       inputScroll,
+		Target:     target,
+		Start:      screen,
+		WheelDelta: delta,
+		WheelCount: count,
+		Horizontal: horizontal,
+	})
 }
 
 func (b Backend) PerformSecondaryAction(ctx context.Context, snapshot computeruse.Snapshot, index int, action string) error {
@@ -280,6 +323,35 @@ func normalizeClickCount(clickCount int) int {
 		return 1
 	}
 	return clickCount
+}
+
+func windowsScroll(opts computeruse.ScrollOptions) (delta, count int, horizontal bool, err error) {
+	switch strings.ToLower(strings.TrimSpace(opts.Direction)) {
+	case "", "down":
+		delta = -wheelDelta
+	case "up":
+		delta = wheelDelta
+	case "left":
+		delta = -wheelDelta
+		horizontal = true
+	case "right":
+		delta = wheelDelta
+		horizontal = true
+	default:
+		return 0, 0, false, fmt.Errorf("invalid scroll direction %q; use up, down, left, or right", opts.Direction)
+	}
+	pages := opts.Pages
+	if pages == 0 {
+		pages = 1
+	}
+	if pages < 0 {
+		pages = -pages
+	}
+	count = int(math.Round(pages * 5))
+	if count < 1 {
+		count = 1
+	}
+	return delta, count, horizontal, nil
 }
 
 func parseAutomationAction(action string) (automationActionKind, error) {

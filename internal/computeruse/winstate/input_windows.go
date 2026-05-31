@@ -25,6 +25,8 @@ const (
 	wmKeyDown     = 0x0100
 	wmKeyUp       = 0x0101
 	wmChar        = 0x0102
+	wmMouseWheel  = 0x020A
+	wmMouseHWheel = 0x020E
 
 	mkLButton = 0x0001
 	mkRButton = 0x0002
@@ -81,6 +83,8 @@ func sendWindowInput(ctx context.Context, action inputAction) error {
 		return postKey(ctx, action)
 	case inputText:
 		return postText(ctx, action)
+	case inputScroll:
+		return postScroll(ctx, action)
 	default:
 		return fmt.Errorf("unknown input action %d", action.Kind)
 	}
@@ -157,6 +161,26 @@ func postDrag(ctx context.Context, action inputAction) error {
 		return err
 	}
 	return postMouseMessage(ctx, action.Target, up, 0, end)
+}
+
+func postScroll(ctx context.Context, action inputAction) error {
+	if action.WheelCount < 1 {
+		action.WheelCount = 1
+	}
+	msg := uint32(wmMouseWheel)
+	if action.Horizontal {
+		msg = wmMouseHWheel
+	}
+	point, err := screenWheelPoint(action.Start)
+	if err != nil {
+		return err
+	}
+	for range action.WheelCount {
+		if err := postMouseMessage(ctx, action.Target, msg, wheelWParam(action.WheelDelta), point); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func postKey(ctx context.Context, action inputAction) error {
@@ -249,6 +273,13 @@ func sendMouseInput(ctx context.Context, flags uint32) error {
 	return nil
 }
 
+func screenWheelPoint(point coords.ScreenPoint) (winPoint, error) {
+	if point.X < math.MinInt16 || point.X > math.MaxInt16 || point.Y < math.MinInt16 || point.Y > math.MaxInt16 {
+		return winPoint{}, fmt.Errorf("screen point outside Win32 wheel-message range")
+	}
+	return winPoint{X: int32(point.X), Y: int32(point.Y)}, nil
+}
+
 func clientPoint(hwnd uintptr, point coords.ScreenPoint) (winPoint, error) {
 	if point.X < math.MinInt32 || point.X > math.MaxInt32 || point.Y < math.MinInt32 || point.Y > math.MaxInt32 {
 		return winPoint{}, fmt.Errorf("screen point outside Win32 range")
@@ -301,6 +332,10 @@ func mouseMessages(button mouseButton) (down, up uint32, flag uintptr, err error
 
 func winIntArg(v int) uintptr {
 	return uintptr(uint32(int32(v)))
+}
+
+func wheelWParam(delta int) uintptr {
+	return uintptr(uint32(uint16(int16(delta))) << 16)
 }
 
 func foregroundMouseFlags(button mouseButton) (down, up uint32, err error) {
