@@ -40,10 +40,10 @@ Non-Darwin builds now get unsupported stubs for these packages and for
 Apple dependency chain. Runtime native automation remains unavailable until
 Windows and Linux backends replace those stubs.
 
-## Small Implementation Slice
+## Implementation Slice
 
-The next small code change should split the platform operations behind narrow
-interfaces and keep the Darwin implementation as the first backend:
+Platform operations are split behind Darwin implementations and non-Darwin
+unsupported stubs:
 
 - state building: list apps, resolve an app, read accessibility state, and take
   screenshots;
@@ -51,9 +51,10 @@ interfaces and keep the Darwin implementation as the first backend:
   coordinate;
 - intervention monitoring: start, stop, and report user-intervention state.
 
-The first split is in place: Darwin files carry `//go:build darwin`, and Linux
-and Windows stubs return one shared unsupported platform error. The next slice
-is to replace those stubs with real backends one subsystem at a time.
+Darwin files carry `//go:build darwin`, and non-Darwin stubs return one shared
+unsupported platform error. Windows and Linux native automation backends are not
+implemented. The next slice is to replace those stubs with real backends one
+subsystem at a time.
 
 ## Verification Targets
 
@@ -66,6 +67,6 @@ GOOS=darwin go test ./internal/computeruse/... ./cmd/computer-use-mcp
 The stub layer should keep these compile-oriented checks passing:
 
 ```sh
-GOOS=linux go test ./internal/computeruse/... ./cmd/computer-use-mcp
-GOOS=windows go test ./internal/computeruse/... ./cmd/computer-use-mcp
+GOOS=linux go test -exec=true ./internal/computeruse/... ./cmd/computer-use-mcp
+GOOS=windows go test -exec=true ./internal/computeruse/... ./cmd/computer-use-mcp
 ```

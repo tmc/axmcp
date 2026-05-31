@@ -78,9 +78,11 @@ These are explicitly not part of the roadmap:
 - **Cross-platform parity beyond darwin.** The Accessibility surface,
   the SkyLight bindings, the AX private SPI, the Xcode automation,
   and the simulator/device tooling are all macOS-only. Non-darwin
-  builds compile (`spacedetect_other.go` returns
-  `ErrSkyLightUnavailable`) so the module stays `go install`-able from
-  any host, but no functional parity is targeted.
+  builds compile through unsupported stubs, including the Computer Use
+  app-state, input, intervention, session, and `cmd/computer-use-mcp`
+  paths, so the module stays installable from any host. Windows and
+  Linux native automation backends are not implemented, and no
+  functional parity is targeted.
 - **Kernel extensions or anything requiring SIP-disabled hosts.** The
   bar is "runs on a stock developer-mode macOS with Accessibility
   permission granted." Nothing on the roadmap moves that bar.
