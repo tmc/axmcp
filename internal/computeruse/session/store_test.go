@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/tmc/apple/x/axuiautomation"
@@ -59,6 +60,8 @@ func TestBindReplacesPriorState(t *testing.T) {
 	}
 	if _, _, err := store.Resolve(firstState.StateID, 0); err == nil {
 		t.Fatalf("old state_id should be stale")
+	} else if got := err.Error(); !strings.Contains(got, "retry with the fresh state_id") {
+		t.Fatalf("stale error = %q, want retry guidance", got)
 	}
 }
 
@@ -82,5 +85,26 @@ func TestResolveUsesCurrentSnapshot(t *testing.T) {
 	}
 	if node.Title != "Play" {
 		t.Fatalf("Resolve title = %q, want Play", node.Title)
+	}
+}
+
+func TestStaleStateError(t *testing.T) {
+	tests := []struct {
+		name    string
+		stateID string
+		want    string
+	}{
+		{name: "missing", want: "missing state_id"},
+		{name: "stale", stateID: "old", want: `unknown or stale state_id "old"`},
+	}
+	for _, tt := range tests {
+		err := StaleStateError(tt.stateID)
+		if err == nil {
+			t.Fatalf("%s: StaleStateError = nil", tt.name)
+		}
+		got := err.Error()
+		if !strings.Contains(got, tt.want) || !strings.Contains(got, "retry with the fresh state_id") {
+			t.Fatalf("%s: StaleStateError = %q", tt.name, got)
+		}
 	}
 }

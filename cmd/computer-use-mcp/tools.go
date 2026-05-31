@@ -15,6 +15,7 @@ import (
 	"github.com/tmc/axmcp/internal/computeruse/appstate"
 	"github.com/tmc/axmcp/internal/computeruse/coords"
 	"github.com/tmc/axmcp/internal/computeruse/input"
+	"github.com/tmc/axmcp/internal/computeruse/session"
 	"github.com/tmc/axmcp/internal/sdef"
 	"github.com/tmc/axmcp/internal/skylightinput"
 	"github.com/tmc/axmcp/internal/ui/permissions"
@@ -915,10 +916,10 @@ func stateForAction(rt *runtimeState, action, app, stateID string) (computeruse.
 	}
 	state, ok := rt.sessions.Get(stateID)
 	if !ok {
-		return computeruse.AppState{}, fmt.Errorf("unknown or stale state_id %q; call get_app_state again", stateID)
+		return computeruse.AppState{}, session.StaleStateError(stateID)
 	}
 	if !stateMatchesSelector(state, app) {
-		return computeruse.AppState{}, fmt.Errorf("state_id %q belongs to %s, not %q; call get_app_state again", stateID, state.App.BundleID, app)
+		return computeruse.AppState{}, fmt.Errorf("state_id %q belongs to %s, not %q; call get_app_state again and retry with the fresh state_id", stateID, state.App.BundleID, app)
 	}
 	if rt.urlPolicy != nil {
 		if err := rt.urlPolicy.CheckState(state); err != nil {

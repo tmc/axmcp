@@ -252,6 +252,11 @@ func TestStateForActionRequiresFreshStateID(t *testing.T) {
 	if _, err := stateForAction(rt, "click", "Finder", ""); err == nil {
 		t.Fatalf("stateForAction without state_id = nil, want error")
 	}
+	if _, err := stateForAction(rt, "click", "Finder", "stale"); err == nil {
+		t.Fatalf("stateForAction stale state_id = nil, want error")
+	} else if got := err.Error(); !strings.Contains(got, `unknown or stale state_id "stale"`) || !strings.Contains(got, "retry with the fresh state_id") {
+		t.Fatalf("stateForAction stale error = %q", got)
+	}
 
 	state, err := rt.sessions.Bind(fakeActionSnapshot{state: computeruse.AppState{
 		App: computeruse.AppInfo{Name: "Finder", BundleID: "com.apple.finder", PID: 123},
@@ -268,6 +273,8 @@ func TestStateForActionRequiresFreshStateID(t *testing.T) {
 	}
 	if _, err := stateForAction(rt, "click", "Safari", state.StateID); err == nil {
 		t.Fatalf("stateForAction mismatched app = nil, want error")
+	} else if got := err.Error(); !strings.Contains(got, "retry with the fresh state_id") {
+		t.Fatalf("stateForAction mismatched app error = %q, want retry guidance", got)
 	}
 }
 

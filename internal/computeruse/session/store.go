@@ -104,7 +104,7 @@ func (s *Store) Resolve(stateID string, index int) (*axuiautomation.Element, com
 	entry := s.byStateID[stateID]
 	if entry == nil {
 		s.mu.Unlock()
-		return nil, computeruse.ElementNode{}, fmt.Errorf("unknown or stale state_id %q; call get_app_state again", stateID)
+		return nil, computeruse.ElementNode{}, StaleStateError(stateID)
 	}
 	snapshot := entry.snapshot
 	s.mu.Unlock()
@@ -121,6 +121,15 @@ func (s *Store) ResolveForApp(selector string, index int) (*axuiautomation.Eleme
 	snapshot := entry.snapshot
 	s.mu.Unlock()
 	return snapshot.Resolve(index)
+}
+
+// StaleStateError reports that a state_id cannot be used for an action.
+func StaleStateError(stateID string) error {
+	stateID = strings.TrimSpace(stateID)
+	if stateID == "" {
+		return fmt.Errorf("missing state_id; call get_app_state again and retry with the fresh state_id")
+	}
+	return fmt.Errorf("unknown or stale state_id %q; call get_app_state again and retry with the fresh state_id", stateID)
 }
 
 func (s *Store) InvalidateSession(sessionID string) error {
