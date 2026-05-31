@@ -254,6 +254,12 @@ var _ = errors.Is // keep errors import; reserved for future sentinel matching
 // the window; for our use case (driving an iPhone Mirroring window on
 // possibly another Space) that's the foot-gun.
 func ActivateWithoutRaise(targetPID int32, targetWindowID uint32) error {
+	if err := validatePID(targetPID); err != nil {
+		return err
+	}
+	if targetWindowID == 0 {
+		return fmt.Errorf("window id is zero")
+	}
 	resolve()
 	if resolveErr != nil {
 		return resolveErr
@@ -359,12 +365,15 @@ func buildFocusEventRecord(windowID uint32, focus bool) []byte {
 // click. Off-screen primer click is omitted - that's a Chromium
 // user-activation-gate workaround unrelated to iPhone Mirroring.
 func MouseClick(pid int32, screenPt, windowLocalPt Point, windowID uint32, clickCount int) error {
+	if err := validatePID(pid); err != nil {
+		return err
+	}
+	if clickCount < 1 {
+		return fmt.Errorf("click count must be positive")
+	}
 	resolve()
 	if resolveErr != nil {
 		return resolveErr
-	}
-	if clickCount < 1 {
-		clickCount = 1
 	}
 	trace("click.begin", map[string]any{
 		"pid":         pid,
@@ -440,6 +449,9 @@ func postMouseClickPair(pid int32, screenPt, windowLocalPt Point, windowID uint3
 // SLSEventAuthenticationMessage envelope Chromium-family apps require for
 // background keyboard input.
 func KeyPress(pid int32, keyCode uint16, flags coregraphics.CGEventFlags, attachAuthMessage bool) error {
+	if err := validatePID(pid); err != nil {
+		return err
+	}
 	resolve()
 	if resolveErr != nil {
 		return resolveErr
@@ -472,6 +484,13 @@ func KeyPress(pid int32, keyCode uint16, flags coregraphics.CGEventFlags, attach
 	trace("key.post.up", map[string]any{"pid": pid, "keycode": keyCode, "rc": rc, "err": err})
 	if err != nil {
 		return fmt.Errorf("SLEventPostToPid keyUp: %w", err)
+	}
+	return nil
+}
+
+func validatePID(pid int32) error {
+	if pid <= 0 {
+		return fmt.Errorf("pid must be positive")
 	}
 	return nil
 }

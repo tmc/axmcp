@@ -2,11 +2,65 @@ package skylightinput
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/coregraphics"
 )
+
+func TestValidatePID(t *testing.T) {
+	for _, pid := range []int32{0, -1} {
+		if err := validatePID(pid); err == nil || !strings.Contains(err.Error(), "pid must be positive") {
+			t.Fatalf("validatePID(%d) = %v, want positive pid error", pid, err)
+		}
+	}
+	if err := validatePID(1); err != nil {
+		t.Fatalf("validatePID(1): %v", err)
+	}
+}
+
+func TestPublicAPIsRejectInvalidInputsBeforeResolve(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func() error
+		want string
+	}{
+		{
+			name: "activate pid",
+			run:  func() error { return ActivateWithoutRaise(0, 1) },
+			want: "pid must be positive",
+		},
+		{
+			name: "activate window",
+			run:  func() error { return ActivateWithoutRaise(1, 0) },
+			want: "window id is zero",
+		},
+		{
+			name: "mouse pid",
+			run:  func() error { return MouseClick(0, Point{}, Point{}, 0, 1) },
+			want: "pid must be positive",
+		},
+		{
+			name: "mouse click count",
+			run:  func() error { return MouseClick(1, Point{}, Point{}, 0, 0) },
+			want: "click count must be positive",
+		},
+		{
+			name: "key pid",
+			run:  func() error { return KeyPress(0, 0, 0, false) },
+			want: "pid must be positive",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.run()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
 
 func TestKeyboardEventAuthenticationMessage(t *testing.T) {
 	resolve()
