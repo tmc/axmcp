@@ -107,6 +107,21 @@ func (s *Store) Snapshot(stateID string) (Snapshot, error) {
 	return entry.snapshot, nil
 }
 
+func (s *Store) Resolve(stateID string, index int) (computeruse.ElementNode, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry := s.byStateID[stateID]
+	if entry == nil {
+		return computeruse.ElementNode{}, StaleStateError(stateID)
+	}
+	for _, node := range entry.state.Tree {
+		if node.Index == index {
+			return node, nil
+		}
+	}
+	return computeruse.ElementNode{}, fmt.Errorf("unknown element_index %d", index)
+}
+
 func StaleStateError(stateID string) error {
 	stateID = strings.TrimSpace(stateID)
 	if stateID == "" {

@@ -154,7 +154,7 @@ func orderedComputerUseTools() []*mcp.Tool {
 		},
 		{
 			Name:        "press_key",
-			Description: "Press a key or key-combination on the keyboard, including modifier and navigation keys.\n  - This supports xdotool's `key` syntax.\n  - Examples: \"a\", \"Return\", \"Tab\", \"super+c\", \"Up\", \"KP_0\" (for the numpad 0 key).",
+			Description: "Press a key or key-combination on the keyboard, including modifier and navigation keys. Examples: \"a\", \"Return\", \"Tab\", \"ctrl+a\", \"super+c\", and \"Up\".",
 			Annotations: actionToolAnnotations(),
 			InputSchema: exactObjectSchema(map[string]any{
 				"app":      stringProperty("App name or bundle identifier"),
