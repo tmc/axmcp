@@ -1,11 +1,29 @@
 package main
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/x/axuiautomation"
 )
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write failed")
+}
+
+func TestWriteJSONReportsWriteError(t *testing.T) {
+	err := writeJSON(failingWriter{}, response{Result: map[string]any{"ok": true}})
+	if err == nil {
+		t.Fatal("writeJSON succeeded with failing writer")
+	}
+	if !strings.Contains(err.Error(), "write json response") || !strings.Contains(err.Error(), "write failed") {
+		t.Fatalf("writeJSON error = %v, want wrapped write failure", err)
+	}
+}
 
 func TestParseCommand(t *testing.T) {
 	method, params, err := parseCommand(`AX.copyAttributeValue {"element":"element-1","attribute":"AXRole"}`)

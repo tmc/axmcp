@@ -174,7 +174,10 @@ func main() {
 				resp.Error = &protocolError{Code: -32000, Message: err.Error()}
 			}
 		}
-		writeJSON(os.Stdout, resp)
+		if err := writeJSON(os.Stdout, resp); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		return
 	}
 	if err := s.serve(os.Stdin, os.Stdout); err != nil {
@@ -1032,10 +1035,13 @@ func stringListParam(params map[string]any, name string) ([]string, error) {
 	return out, nil
 }
 
-func writeJSON(w io.Writer, v any) {
+func writeJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	enc.Encode(v)
+	if err := enc.Encode(v); err != nil {
+		return fmt.Errorf("write json response: %w", err)
+	}
+	return nil
 }
 
 var ax = loadAX()
