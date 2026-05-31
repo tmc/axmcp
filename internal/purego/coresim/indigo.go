@@ -63,12 +63,13 @@ func (d SimDevice) ConnectToHID() (*SimDeviceLegacyClient, error) {
 	return &SimDeviceLegacyClient{id: client}, nil
 }
 
+// SendMessage sends a raw Indigo HID message through the legacy client.
 func (c *SimDeviceLegacyClient) SendMessage(msg []byte) error {
 	if c == nil || c.id == 0 {
-		return fmt.Errorf("HID client is nil")
+		return fmt.Errorf("hid client is nil")
 	}
 	if len(msg) == 0 {
-		return fmt.Errorf("HID message is empty")
+		return fmt.Errorf("hid message is empty")
 	}
 
 	queue := objc.Send[objc.ID](objc.ID(objc.GetClass("OS_dispatch_queue")), objc.Sel("mainQueue"))
