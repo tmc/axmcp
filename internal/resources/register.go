@@ -216,6 +216,10 @@ func sessionFileRoots(ctx context.Context, session *mcp.ServerSession) []string 
 	if err != nil || result == nil {
 		return nil
 	}
+	return fileRootsFromListRootsResult(result)
+}
+
+func fileRootsFromListRootsResult(result *mcp.ListRootsResult) []string {
 	var roots []string
 	for _, root := range result.Roots {
 		if root == nil {
