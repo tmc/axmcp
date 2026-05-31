@@ -59,7 +59,7 @@ func PlatformStatus() PlatformReport {
 	}
 	return PlatformReport{
 		OS:           runtime.GOOS,
-		Backend:      "linux-unsupported",
+		Backend:      "linux-x11-partial",
 		Capabilities: caps,
 		Message:      "Linux native desktop automation is partially scaffolded; AT-SPI element actions are not implemented",
 	}

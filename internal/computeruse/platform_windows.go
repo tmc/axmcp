@@ -23,7 +23,7 @@ func PlatformStatus() PlatformReport {
 	}
 	return PlatformReport{
 		OS:           runtime.GOOS,
-		Backend:      "windows-unsupported",
+		Backend:      "windows-win32-partial",
 		Capabilities: caps,
 		Message:      "Windows native desktop automation is partially scaffolded; UIA and input are not implemented",
 	}

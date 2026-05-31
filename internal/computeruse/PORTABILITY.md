@@ -88,11 +88,12 @@ subsystem at a time.
 
 `computeruse.PlatformStatus` reports the compiled backend and the capabilities
 that are present or missing. Windows and Linux expose that report through
-`mcp://platform/status`. Linux reports `DISPLAY`, `wmctrl`, ImageMagick
-`import`, and `xdotool` availability because the current X11 backend shells out
-for window enumeration, screenshots, and root-window input. State backends
-still surface missing prerequisites through `list_apps` and `get_app_state`
-errors instead of silently returning empty state.
+`mcp://platform/status`. Windows reports the `windows-win32-partial` backend;
+Linux reports the `linux-x11-partial` backend plus `DISPLAY`, `wmctrl`,
+ImageMagick `import`, and `xdotool` availability because the current X11
+backend shells out for window enumeration, screenshots, and root-window input.
+State backends still surface missing prerequisites through `list_apps` and
+`get_app_state` errors instead of silently returning empty state.
 
 `computeruse.Backend` is the package-level contract for native
 implementations. It separates app/window state, input, screenshots, and
