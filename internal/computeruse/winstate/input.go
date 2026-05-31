@@ -215,7 +215,10 @@ func (b Backend) SetValue(ctx context.Context, snapshot computeruse.Snapshot, in
 		if err == nil {
 			return nil
 		}
-		if !errors.Is(err, computeruse.ErrPlatformUnsupported) {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if !errors.Is(err, computeruse.ErrPlatformUnsupported) && !node.Settable {
 			return err
 		}
 	}

@@ -348,6 +348,56 @@ func TestBackendSetValueFallsBackWhenUIAUnavailable(t *testing.T) {
 	}
 }
 
+func TestBackendSetValueFallsBackWhenUIAFails(t *testing.T) {
+	input := &recordingInput{}
+	automation := &recordingAutomation{err: errors.New("provider rejected value")}
+	backend := Backend{input: input.run, uiaAction: automation.run}
+	snapshot := winSettableInputSnapshot()
+	native := snapshot.elements[1]
+	native.AutomationHandle = 1234
+	snapshot.elements[1] = native
+
+	if err := backend.SetValue(context.Background(), snapshot, 1, "42"); err != nil {
+		t.Fatalf("SetValue: %v", err)
+	}
+	wantAutomation := []automationAction{{
+		Kind:    automationSetValue,
+		Element: 1234,
+		Value:   "42",
+	}}
+	if !reflect.DeepEqual(automation.actions, wantAutomation) {
+		t.Fatalf("automation actions = %#v, want %#v", automation.actions, wantAutomation)
+	}
+	wantInput := []inputAction{
+		{
+			Kind:       inputClick,
+			Target:     77,
+			Button:     mouseLeft,
+			ClickCount: 1,
+			Start:      coords.ScreenPoint{X: 55, Y: 70},
+		},
+		{Kind: inputKey, Target: 77, Key: "ctrl+a"},
+		{Kind: inputText, Target: 77, Text: "42"},
+	}
+	if !reflect.DeepEqual(input.actions, wantInput) {
+		t.Fatalf("input actions = %#v, want %#v", input.actions, wantInput)
+	}
+}
+
+func TestBackendSetValueReturnsUIAFailureWithoutKeyboardFallback(t *testing.T) {
+	input := &recordingInput{}
+	automation := &recordingAutomation{err: errors.New("provider rejected value")}
+	backend := Backend{input: input.run, uiaAction: automation.run}
+
+	err := backend.SetValue(context.Background(), winInputSnapshot(), 1, "42")
+	if err == nil || err.Error() != "provider rejected value" {
+		t.Fatalf("SetValue error = %v, want provider error", err)
+	}
+	if len(input.actions) != 0 {
+		t.Fatalf("input actions = %#v, want none", input.actions)
+	}
+}
+
 func TestParseAutomationAction(t *testing.T) {
 	tests := []struct {
 		action string
