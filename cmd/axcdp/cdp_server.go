@@ -92,6 +92,7 @@ type cdpServer struct {
 	windowID   uint32
 	windowName string
 	castMaxDim int
+	staticList bool
 
 	mu       sync.Mutex
 	writeMu  *sync.Mutex
@@ -356,10 +357,12 @@ func (s *cdpServer) handleList(w http.ResponseWriter, r *http.Request) {
 				targets = append(targets, browserTargets...)
 			}
 		}
-		for _, app := range runningApps() {
-			windows := appWindows(app)
-			for _, win := range windows {
-				targets = append(targets, s.windowTarget(r, app, win))
+		if !s.staticList {
+			for _, app := range runningApps() {
+				windows := appWindows(app)
+				for _, win := range windows {
+					targets = append(targets, s.windowTarget(r, app, win))
+				}
 			}
 		}
 	}
@@ -1085,6 +1088,9 @@ func (s *cdpServer) connectionServer(r *http.Request) *cdpServer {
 	if s.root != nil && (base == "/" || base == "." || base == "") {
 		return s
 	}
+	if base == s.currentTargetID() {
+		return s
+	}
 	switch {
 	case strings.HasPrefix(base, "app-page-"):
 		appArg = strings.TrimPrefix(base, "app-page-")
@@ -1112,6 +1118,7 @@ func (s *cdpServer) connectionServer(r *http.Request) *cdpServer {
 		windowID:   windowID,
 		windowName: windowName,
 		castMaxDim: s.castMaxDim,
+		staticList: s.staticList,
 		nodes:      make(map[int]*cdpNode),
 		backend:    make(map[int]*cdpNode),
 		writeMu:    s.writeMu,

@@ -416,12 +416,13 @@ func TestVerifyBrowserCDPEndpoint(t *testing.T) {
 
 func TestVerifyCDPEndpoint(t *testing.T) {
 	s := &cdpServer{
-		addr:     "127.0.0.1:0",
-		nodes:    make(map[int]*cdpNode),
-		backend:  make(map[int]*cdpNode),
-		sessions: make(map[string]*cdpServer),
-		casts:    make(map[string]chan struct{}),
-		searches: make(map[string][]int),
+		addr:       "127.0.0.1:0",
+		staticList: true,
+		nodes:      make(map[int]*cdpNode),
+		backend:    make(map[int]*cdpNode),
+		sessions:   make(map[string]*cdpServer),
+		casts:      make(map[string]chan struct{}),
+		searches:   make(map[string][]int),
 	}
 	s.root = &cdpNode{NodeID: 1, BackendID: 1, NodeName: "AXWindow", LocalName: "window", Role: "AXWindow", Title: "Fixture", Bounds: axRect{X: 10, Y: 20, Width: 100, Height: 80}}
 	s.nodes[1] = s.root
