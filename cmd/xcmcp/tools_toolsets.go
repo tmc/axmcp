@@ -35,15 +35,16 @@ var globalToolsets = &toolsetRegistry{
 // (or fails). When --wait-for-xcode is set, server.Run blocks on this.
 var xcodeReady sync.WaitGroup
 
-func (r *toolsetRegistry) add(ts toolset) {
+func (r *toolsetRegistry) add(ts toolset) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, existing := range r.sets {
 		if existing.name == ts.name {
-			panic(fmt.Sprintf("duplicate toolset %q", ts.name))
+			return fmt.Errorf("duplicate toolset %q", ts.name)
 		}
 	}
 	r.sets = append(r.sets, ts)
+	return nil
 }
 
 func (r *toolsetRegistry) enable(s *mcp.Server, name string) error {
@@ -90,11 +91,16 @@ func (r *toolsetRegistry) list() []map[string]string {
 
 // addXcodeBridgeToolset adds the Xcode mcpbridge as a named toolset. Call this
 // before registerToolsetTools so it appears in the list and description.
-func addXcodeBridgeToolset(prefix string, subscribeBuildErrors bool, wait bool) {
+func addXcodeBridgeToolset(prefix string, subscribeBuildErrors bool, wait bool) (err error) {
 	if wait {
 		xcodeReady.Add(1)
 	}
-	globalToolsets.add(toolset{
+	defer func() {
+		if err != nil && wait {
+			xcodeReady.Done()
+		}
+	}()
+	return globalToolsets.add(toolset{
 		name:        "xcode",
 		description: "Xcode IDE tools via xcrun mcpbridge plus native Xcode workflows such as preview batches and target creation",
 		async:       true,
@@ -150,9 +156,11 @@ func addXcodeBridgeToolset(prefix string, subscribeBuildErrors bool, wait bool) 
 
 // registerToolsetTools registers the toolset discovery/enable tools and declares
 // the optional toolsets. Call this after registering the always-on tools.
-func registerToolsetTools(s *mcp.Server) {
+func registerToolsetTools(s *mcp.Server) error {
 	for _, ts := range standardToolsets() {
-		globalToolsets.add(ts)
+		if err := globalToolsets.add(ts); err != nil {
+			return err
+		}
 	}
 
 	// list_toolsets — discover available optional tool groups
@@ -189,4 +197,5 @@ func registerToolsetTools(s *mcp.Server) {
 			Message: fmt.Sprintf("toolset %q enabled — tools are now available", args.Name),
 		}, nil
 	})
+	return nil
 }

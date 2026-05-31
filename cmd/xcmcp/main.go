@@ -174,7 +174,9 @@ func main() {
 
 	// The xcode bridge toolset must be declared before registerToolsetTools
 	// so it appears in list_toolsets / enable_toolset descriptions.
-	addXcodeBridgeToolset(*xcodeToolsPrefix, *subscribeBuildErrors, *waitForXcode > 0)
+	if err := addXcodeBridgeToolset(*xcodeToolsPrefix, *subscribeBuildErrors, *waitForXcode > 0); err != nil {
+		log.Fatalf("register xcode toolset: %v", err)
+	}
 	if *enableXcode || *xcodeOnly {
 		_ = globalToolsets.enable(server, "xcode")
 	}
@@ -183,7 +185,9 @@ func main() {
 	if !*xcodeOnly {
 		registerCoreTools(server)
 		// list_toolsets + enable_toolset — declares all optional categories.
-		registerToolsetTools(server)
+		if err := registerToolsetTools(server); err != nil {
+			log.Fatalf("register toolsets: %v", err)
+		}
 
 		// Pre-enable toolsets selected via flags (same toolsets are also
 		// available for dynamic enable via enable_toolset at runtime).

@@ -86,14 +86,16 @@ func TestStaticToolNamesUnique(t *testing.T) {
 
 func TestToolsetRegistryRejectsDuplicateNames(t *testing.T) {
 	r := &toolsetRegistry{enabled: map[string]bool{}}
-	r.add(toolset{name: "device"})
-
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected duplicate toolset registration to panic")
-		}
-	}()
-	r.add(toolset{name: "device"})
+	if err := r.add(toolset{name: "device"}); err != nil {
+		t.Fatalf("first add returned error: %v", err)
+	}
+	err := r.add(toolset{name: "device"})
+	if err == nil {
+		t.Fatal("duplicate add returned nil error")
+	}
+	if !strings.Contains(err.Error(), `duplicate toolset "device"`) {
+		t.Fatalf("duplicate add error = %q, want duplicate toolset message", err)
+	}
 }
 
 func TestXcodeAddTargetSchemaExposesPlatformAndEmbedIn(t *testing.T) {
