@@ -41,6 +41,7 @@ func TestBindReplacesPriorState(t *testing.T) {
 		state: computeruse.AppState{
 			App: computeruse.AppInfo{BundleID: "com.example.app"},
 		},
+		closeErr: fmt.Errorf("close replaced snapshot"),
 	}
 	firstState, err := store.Bind(first)
 	if err != nil {
@@ -53,10 +54,13 @@ func TestBindReplacesPriorState(t *testing.T) {
 	}
 	secondState, err := store.Bind(second)
 	if err != nil {
-		t.Fatalf("Bind(second): %v", err)
+		t.Fatalf("Bind(second) should ignore replaced snapshot cleanup error: %v", err)
 	}
 	if !first.closed {
 		t.Fatalf("first snapshot should be closed after replacement")
+	}
+	if first.closes != 1 {
+		t.Fatalf("first snapshot closed %d times, want once", first.closes)
 	}
 	if firstState.StateID == secondState.StateID {
 		t.Fatalf("StateID should change across bindings")
@@ -65,6 +69,19 @@ func TestBindReplacesPriorState(t *testing.T) {
 		t.Fatalf("old state_id should be stale")
 	} else if got := err.Error(); !strings.Contains(got, "retry with the fresh state_id") {
 		t.Fatalf("stale error = %q, want retry guidance", got)
+	}
+}
+
+func TestBindMissingIdentityClosesSnapshot(t *testing.T) {
+	store := NewStore()
+	snapshot := &fakeSnapshot{closeErr: fmt.Errorf("close unpublished snapshot")}
+	if _, err := store.Bind(snapshot); err == nil {
+		t.Fatalf("Bind missing identity error = nil, want error")
+	} else if got := err.Error(); !strings.Contains(got, "missing app identity") {
+		t.Fatalf("Bind missing identity error = %q, want app identity error", got)
+	}
+	if !snapshot.closed || snapshot.closes != 1 {
+		t.Fatalf("close state = closed %v closes %d, want closed once", snapshot.closed, snapshot.closes)
 	}
 }
 

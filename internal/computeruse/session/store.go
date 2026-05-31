@@ -47,6 +47,8 @@ func (s *Store) Bind(snapshot Snapshot) (computeruse.AppState, error) {
 	state := snapshot.State()
 	key := sessionKey(state.App)
 	if key == "" {
+		// Bind is failing before the snapshot is published; close is cleanup
+		// and must not mask the app identity error.
 		_ = snapshot.Close()
 		return computeruse.AppState{}, fmt.Errorf("missing app identity")
 	}
@@ -57,6 +59,8 @@ func (s *Store) Bind(snapshot Snapshot) (computeruse.AppState, error) {
 	sessionID := key
 	stateID, err := newID()
 	if err != nil {
+		// Bind is failing before the snapshot is published; close is cleanup
+		// and must not mask the state id generation error.
 		_ = snapshot.Close()
 		return computeruse.AppState{}, err
 	}
@@ -72,6 +76,8 @@ func (s *Store) Bind(snapshot Snapshot) (computeruse.AppState, error) {
 
 	if prev := s.bySession[sessionID]; prev != nil {
 		delete(s.byStateID, prev.stateID)
+		// The old snapshot is no longer user-visible. Keep Bind successful
+		// after publishing the replacement rather than surfacing cleanup.
 		_ = prev.snapshot.Close()
 	}
 	s.bySession[sessionID] = next
