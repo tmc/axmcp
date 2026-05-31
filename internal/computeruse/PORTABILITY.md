@@ -56,7 +56,10 @@ or Apple-specific APIs:
 Non-Darwin builds now get unsupported stubs for these packages and for
 `cmd/computer-use-mcp`, so the package set can compile without pulling in the
 Apple dependency chain. Runtime native automation remains unavailable until
-Windows and Linux backends replace those stubs.
+Windows and Linux backends replace those stubs. Windows also has a first
+`internal/computeruse/winstate` package that can enumerate visible Win32
+windows and build a minimal window-metadata snapshot, but the command is not
+wired to serve it yet and UI Automation trees are still missing.
 
 ## Implementation Slice
 
@@ -87,18 +90,20 @@ capture, replay state binding, and action execution through that backend, and
 exposes a Darwin input adapter over the existing Accessibility, CoreGraphics,
 and SkyLight paths. Windows and Linux backends should implement the same
 interface instead of exposing UIA, MSAA, AT-SPI, X11, WGC, or portal handles
-through tool responses.
+through tool responses. `internal/computeruse/winstate` is the first Windows
+state slice: it uses Win32 top-level windows for app resolution and a root
+window node, leaving UIA/MSAA element trees for the next state slice.
 
 ## Upstream-Backed Backlog
 
 The next code milestones should keep the current `cmd/computer-use-mcp`
 contract and replace the unsupported stubs behind it.
 
-1. Add a Windows state backend. Use Win32 process/window enumeration, HWND as
-   the native window id, UI Automation for the tree, and a retained per-state
-   element cache. Add an MSAA fallback for apps whose UIA providers hang or lose
-   role fidelity. Preserve axmcp's `state_id` refresh contract instead of
-   exposing reusable raw element handles to callers.
+1. Expand and wire the Windows state backend. Connect `winstate` to
+   `cmd/computer-use-mcp`, keep HWNDs inside retained snapshots, add UI
+   Automation for the tree, and add an MSAA fallback for apps whose UIA
+   providers hang or lose role fidelity. Preserve axmcp's `state_id` refresh
+   contract instead of exposing reusable raw element handles to callers.
 2. Add Windows screenshot and coordinate handling. Mirror TryCUA's target:
    WGC for DirectComposition/XAML hosts, PrintWindow for normal windows,
    screen-region BitBlt only as a fallback with an occlusion warning, and DWM

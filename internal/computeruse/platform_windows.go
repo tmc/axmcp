@@ -10,7 +10,8 @@ import (
 // PlatformStatus reports the compiled native automation backend.
 func PlatformStatus() PlatformReport {
 	caps := []PlatformCapability{
-		{Name: "app_state", Message: "UI Automation and Win32 window backend is not implemented"},
+		{Name: "win32_window_enumeration", Available: true, Message: "compiled Win32 top-level window enumeration backend"},
+		{Name: "app_state", Message: "UI Automation tree backend is not implemented"},
 		{Name: "input", Message: "background Win32 or foreground SendInput backend is not implemented"},
 		{Name: "screenshot", Message: "Windows Graphics Capture or GDI screenshot backend is not implemented"},
 		{Name: "intervention", Message: "Windows physical-intervention monitor is not implemented"},
@@ -24,6 +25,6 @@ func PlatformStatus() PlatformReport {
 		OS:           runtime.GOOS,
 		Backend:      "windows-unsupported",
 		Capabilities: caps,
-		Message:      "Windows native desktop automation is not implemented",
+		Message:      "Windows native desktop automation is partially scaffolded; UIA, screenshots, and input are not implemented",
 	}
 }
