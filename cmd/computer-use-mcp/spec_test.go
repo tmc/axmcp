@@ -72,23 +72,58 @@ func TestComputerUsePermissionsResource(t *testing.T) {
 	}
 }
 
-func TestRequiresRefreshResult(t *testing.T) {
-	res, payload, err := requiresRefreshResult("click", "Brave")
-	if err != nil {
-		t.Fatalf("requiresRefreshResult error = %v", err)
+func TestRefreshResultsRequireFreshState(t *testing.T) {
+	tests := []struct {
+		name    string
+		call    func() (*mcp.CallToolResult, any, error)
+		action  string
+		message []string
+	}{
+		{
+			name:   "missing app state",
+			call:   func() (*mcp.CallToolResult, any, error) { return requiresRefreshResult("click", "Brave") },
+			action: "click",
+			message: []string{
+				`no current app state for "Brave"`,
+				"call get_app_state again",
+			},
+		},
+		{
+			name: "stale state id",
+			call: func() (*mcp.CallToolResult, any, error) {
+				return staleStateResult("press_key", session.StaleStateError("old"))
+			},
+			action: "press_key",
+			message: []string{
+				`unknown or stale state_id "old"`,
+				"call get_app_state again",
+				"retry with the fresh state_id",
+			},
+		},
 	}
-	if res == nil || !res.IsError {
-		t.Fatalf("requiresRefreshResult result = %#v, want tool error", res)
-	}
-	action, ok := payload.(computeruse.ActionResult)
-	if !ok {
-		t.Fatalf("payload type = %T, want ActionResult", payload)
-	}
-	if !action.RequiresRefresh {
-		t.Fatalf("RequiresRefresh = false, want true")
-	}
-	if !strings.Contains(action.Message, "call get_app_state again") {
-		t.Fatalf("Message = %q, want refresh guidance", action.Message)
+	for _, tt := range tests {
+		res, payload, err := tt.call()
+		if err != nil {
+			t.Fatalf("%s: result error = %v", tt.name, err)
+		}
+		if res == nil || !res.IsError {
+			t.Fatalf("%s: result = %#v, want tool error", tt.name, res)
+		}
+		action, ok := payload.(computeruse.ActionResult)
+		if !ok {
+			t.Fatalf("%s: payload type = %T, want ActionResult", tt.name, payload)
+		}
+		if action.Action != tt.action {
+			t.Fatalf("%s: Action = %q, want %q", tt.name, action.Action, tt.action)
+		}
+		if !action.RequiresRefresh {
+			t.Fatalf("%s: RequiresRefresh = false, want true", tt.name)
+		}
+		for _, want := range tt.message {
+			if !strings.Contains(action.Message, want) {
+				t.Fatalf("%s: Message = %q, want %q", tt.name, action.Message, want)
+			}
+		}
 	}
 }
 
