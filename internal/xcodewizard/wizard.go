@@ -1,3 +1,5 @@
+//go:build darwin
+
 // Package xcodewizard drives Xcode's File > New > Target wizard through the
 // macOS Accessibility API. It is scoped to that wizard and does not attempt to
 // be a general-purpose UI automation layer; use the axuiautomation package
