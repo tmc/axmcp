@@ -303,12 +303,9 @@ func registerUITools(s *mcp.Server) {
 			filename = "/tmp/xcmcp_screenshot_app.png"
 		}
 
-		// Create file to ensure permissions? screencapture creates it.
-		// remove old
+		// Remove stale output before writing a fresh screenshot.
 		os.Remove(filename)
 
-		// We need to implement ScreenshotToFile in Element because Screenshot() reads it into memory.
-		// Or just write 'data' to file.
 		data, err := el.Screenshot()
 		if err != nil {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, map[string]string{}, nil
@@ -321,7 +318,6 @@ func registerUITools(s *mcp.Server) {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				&mcp.TextContent{Text: fmt.Sprintf("Screenshot saved to: %s", filename)},
-				// Optional: Send a small preview or just the text
 			},
 		}, map[string]string{"message": "Screenshot taken", "path": filename}, nil
 	}))
