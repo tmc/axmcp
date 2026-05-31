@@ -70,6 +70,36 @@ func TestWindowLocalToScreenshotClamps(t *testing.T) {
 	}
 }
 
+func TestCappedScreenshotCoordinatesMapToWindowLocal(t *testing.T) {
+	window := computeruse.WindowInfo{
+		Width:            3136,
+		Height:           1960,
+		ScreenshotWidth:  1568,
+		ScreenshotHeight: 980,
+	}
+	point, err := ScreenshotPointToWindowLocal(window, 784, 490)
+	if err != nil {
+		t.Fatalf("ScreenshotPointToWindowLocal: %v", err)
+	}
+	if point.X != 1568 || point.Y != 980 {
+		t.Fatalf("point = %+v, want {1568 980}", point)
+	}
+	got, err := WindowLocalToScreenshot(window, point)
+	if err != nil {
+		t.Fatalf("WindowLocalToScreenshot: %v", err)
+	}
+	if got.X != 784 || got.Y != 490 {
+		t.Fatalf("round trip = %+v, want {784 490}", got)
+	}
+	end, err := ScreenshotPointToWindowLocal(window, 1567, 979)
+	if err != nil {
+		t.Fatalf("ScreenshotPointToWindowLocal capped end: %v", err)
+	}
+	if end.X != 3134 || end.Y != 1958 {
+		t.Fatalf("end = %+v, want {3134 1958}", end)
+	}
+}
+
 func TestWindowScreenRoundTripPreservesNegativeDisplayOrigin(t *testing.T) {
 	window := computeruse.WindowInfo{
 		X:      -1280,
