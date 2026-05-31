@@ -74,6 +74,13 @@ func (rt *runtimeState) stateBackend() computeruse.StateBackend {
 	return newDarwinBackend(nil, nil).State()
 }
 
+func (rt *runtimeState) inputBackend() computeruse.InputBackend {
+	if rt != nil && rt.backend != nil && rt.backend.Input() != nil {
+		return rt.backend.Input()
+	}
+	return newDarwinBackend(nil, nil).Input()
+}
+
 func (rt *runtimeState) bindSnapshot(snapshot computeruse.Snapshot) (computeruse.AppState, error) {
 	if rt == nil || rt.sessions == nil {
 		if snapshot != nil {
@@ -94,4 +101,11 @@ func (rt *runtimeState) bindSnapshot(snapshot computeruse.Snapshot) (computeruse
 		return computeruse.AppState{}, err
 	}
 	return state, nil
+}
+
+func (rt *runtimeState) snapshotForAction(stateID string) (computeruse.Snapshot, error) {
+	if rt == nil || rt.sessions == nil {
+		return nil, fmt.Errorf("runtime is missing session store")
+	}
+	return rt.sessions.Snapshot(stateID)
 }

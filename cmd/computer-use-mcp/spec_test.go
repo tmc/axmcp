@@ -439,6 +439,71 @@ func TestBindReplayStateUsesBackend(t *testing.T) {
 	}
 }
 
+func TestReplayClickPointUsesBackendInput(t *testing.T) {
+	backend := &fakeRuntimeBackend{}
+	rt := &runtimeState{
+		backend:  backend,
+		sessions: session.NewStore(),
+	}
+	x, y := 10.4, 20.6
+	out, err := rt.replayClick(context.Background(), clickInput{
+		App:           "Finder",
+		StateID:       "stale",
+		X:             &x,
+		Y:             &y,
+		MouseButton:   "left",
+		ForegroundHID: true,
+	})
+	if err != nil {
+		t.Fatalf("replayClick: %v", err)
+	}
+	if len(backend.input.clickPoints) != 1 {
+		t.Fatalf("click point calls = %d, want 1", len(backend.input.clickPoints))
+	}
+	call := backend.input.clickPoints[0]
+	if call.point != (computeruse.Point{X: 10, Y: 21}) {
+		t.Fatalf("click point = %#v, want rounded screenshot point", call.point)
+	}
+	if call.opts.ClickCount != 1 || !call.opts.ForegroundHID {
+		t.Fatalf("click opts = %#v, want normalized foreground click", call.opts)
+	}
+	if call.snapshot.State().App.Name != "Finder" {
+		t.Fatalf("snapshot app = %#v, want Finder", call.snapshot.State().App)
+	}
+	if out.StateID == "" || out.StateID == "stale" {
+		t.Fatalf("out StateID = %q, want fresh replay state", out.StateID)
+	}
+}
+
+func TestReplayPressKeyUsesBackendInput(t *testing.T) {
+	backend := &fakeRuntimeBackend{}
+	rt := &runtimeState{
+		backend:  backend,
+		sessions: session.NewStore(),
+	}
+	out, err := rt.replayPressKey(context.Background(), pressKeyInput{
+		App:     "Finder",
+		StateID: "stale",
+		Key:     "Return",
+	})
+	if err != nil {
+		t.Fatalf("replayPressKey: %v", err)
+	}
+	if len(backend.input.pressKeys) != 1 {
+		t.Fatalf("press key calls = %d, want 1", len(backend.input.pressKeys))
+	}
+	call := backend.input.pressKeys[0]
+	if call.key != "Return" {
+		t.Fatalf("press key = %q, want Return", call.key)
+	}
+	if call.snapshot.State().App.Name != "Finder" {
+		t.Fatalf("snapshot app = %#v, want Finder", call.snapshot.State().App)
+	}
+	if out.StateID == "" || out.StateID == "stale" {
+		t.Fatalf("out StateID = %q, want fresh replay state", out.StateID)
+	}
+}
+
 func TestStateForActionRequiresFreshStateID(t *testing.T) {
 	rt := &runtimeState{sessions: session.NewStore()}
 	if _, err := stateForAction(rt, "click", "Finder", ""); err == nil {
@@ -509,6 +574,7 @@ func (f fakeActionSnapshot) Close() error {
 
 type fakeRuntimeBackend struct {
 	state fakeRuntimeStateBackend
+	input fakeRuntimeInputBackend
 }
 
 func (b *fakeRuntimeBackend) Platform() computeruse.PlatformReport {
@@ -520,7 +586,7 @@ func (b *fakeRuntimeBackend) State() computeruse.StateBackend {
 }
 
 func (b *fakeRuntimeBackend) Input() computeruse.InputBackend {
-	return computeruse.NewUnsupportedBackend(b.Platform()).Input()
+	return &b.input
 }
 
 func (b *fakeRuntimeBackend) Screenshots() computeruse.ScreenshotBackend {
@@ -553,6 +619,75 @@ func (b *fakeRuntimeStateBackend) BuildState(_ context.Context, req computeruse.
 			Title: "Finder",
 		}},
 	}}, nil
+}
+
+type fakeClickElementCall struct {
+	snapshot computeruse.Snapshot
+	index    int
+	opts     computeruse.ClickOptions
+}
+
+type fakeClickPointCall struct {
+	snapshot computeruse.Snapshot
+	point    computeruse.Point
+	opts     computeruse.ClickOptions
+}
+
+type fakePressKeyCall struct {
+	snapshot computeruse.Snapshot
+	key      string
+}
+
+type fakeRuntimeInputBackend struct {
+	clickElements []fakeClickElementCall
+	clickPoints   []fakeClickPointCall
+	pressKeys     []fakePressKeyCall
+}
+
+func (b *fakeRuntimeInputBackend) ClickElement(_ context.Context, snapshot computeruse.Snapshot, index int, opts computeruse.ClickOptions) error {
+	b.clickElements = append(b.clickElements, fakeClickElementCall{
+		snapshot: snapshot,
+		index:    index,
+		opts:     opts,
+	})
+	return nil
+}
+
+func (b *fakeRuntimeInputBackend) ClickPoint(_ context.Context, snapshot computeruse.Snapshot, point computeruse.Point, opts computeruse.ClickOptions) error {
+	b.clickPoints = append(b.clickPoints, fakeClickPointCall{
+		snapshot: snapshot,
+		point:    point,
+		opts:     opts,
+	})
+	return nil
+}
+
+func (b *fakeRuntimeInputBackend) Drag(context.Context, computeruse.Snapshot, computeruse.Point, computeruse.Point, computeruse.DragOptions) error {
+	return nil
+}
+
+func (b *fakeRuntimeInputBackend) ScrollElement(context.Context, computeruse.Snapshot, int, computeruse.ScrollOptions) error {
+	return nil
+}
+
+func (b *fakeRuntimeInputBackend) PerformSecondaryAction(context.Context, computeruse.Snapshot, int, string) error {
+	return nil
+}
+
+func (b *fakeRuntimeInputBackend) SetValue(context.Context, computeruse.Snapshot, int, string) error {
+	return nil
+}
+
+func (b *fakeRuntimeInputBackend) PressKey(_ context.Context, snapshot computeruse.Snapshot, key string) error {
+	b.pressKeys = append(b.pressKeys, fakePressKeyCall{
+		snapshot: snapshot,
+		key:      key,
+	})
+	return nil
+}
+
+func (b *fakeRuntimeInputBackend) TypeText(context.Context, computeruse.Snapshot, *int, string) error {
+	return nil
 }
 
 func newTestClientSession(t *testing.T, ctx context.Context) *mcp.ClientSession {

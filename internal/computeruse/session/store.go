@@ -107,6 +107,16 @@ func (s *Store) GetForApp(selector string) (computeruse.AppState, bool) {
 	return entry.state, true
 }
 
+func (s *Store) Snapshot(stateID string) (Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry := s.byStateID[stateID]
+	if entry == nil {
+		return nil, StaleStateError(stateID)
+	}
+	return entry.snapshot, nil
+}
+
 func (s *Store) Resolve(stateID string, index int) (*axuiautomation.Element, computeruse.ElementNode, error) {
 	s.mu.Lock()
 	entry := s.byStateID[stateID]

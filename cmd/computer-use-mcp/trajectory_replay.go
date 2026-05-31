@@ -10,9 +10,6 @@ import (
 
 	"github.com/tmc/axmcp/internal/cdp"
 	"github.com/tmc/axmcp/internal/computeruse"
-	"github.com/tmc/axmcp/internal/computeruse/coords"
-	"github.com/tmc/axmcp/internal/computeruse/input"
-	"github.com/tmc/axmcp/internal/skylightinput"
 )
 
 func (rt *runtimeState) replayTrajectoryStep(ctx context.Context, step trajectoryStep) (any, error) {
@@ -107,6 +104,10 @@ func (rt *runtimeState) replayClick(ctx context.Context, args clickInput) (compu
 		return computeruse.ActionResult{}, err
 	}
 	args.StateID = state.StateID
+	snapshot, err := rt.snapshotForAction(state.StateID)
+	if err != nil {
+		return computeruse.ActionResult{}, err
+	}
 	clickCount := args.ClickCount
 	if clickCount <= 0 {
 		clickCount = 1
@@ -116,11 +117,16 @@ func (rt *runtimeState) replayClick(ctx context.Context, args clickInput) (compu
 		if err != nil {
 			return computeruse.ActionResult{}, err
 		}
-		el, node, err := rt.sessions.Resolve(args.StateID, index)
+		_, node, err := rt.sessions.Resolve(args.StateID, index)
 		if err != nil {
 			return computeruse.ActionResult{}, err
 		}
-		if err := input.ClickElement(el, args.MouseButton, clickCount); err != nil {
+		opts := computeruse.ClickOptions{
+			Button:        args.MouseButton,
+			ClickCount:    clickCount,
+			ForegroundHID: args.ForegroundHID,
+		}
+		if err := rt.inputBackend().ClickElement(ctx, snapshot, index, opts); err != nil {
 			return computeruse.ActionResult{}, err
 		}
 		return computeruse.ActionResult{SessionID: state.SessionID, StateID: state.StateID, Action: "click", Target: formatNode(node), Message: fmt.Sprintf("clicked %s", formatNode(node))}, nil
@@ -130,30 +136,12 @@ func (rt *runtimeState) replayClick(ctx context.Context, args clickInput) (compu
 	}
 	x := roundCoordinate(*args.X)
 	y := roundCoordinate(*args.Y)
-	point, err := input.ScreenshotPointToWindowLocal(state.Window, x, y)
-	if err != nil {
-		return computeruse.ActionResult{}, err
+	opts := computeruse.ClickOptions{
+		Button:        args.MouseButton,
+		ClickCount:    clickCount,
+		ForegroundHID: args.ForegroundHID,
 	}
-	if args.ForegroundHID {
-		if err := activatePID(state.App.PID); err != nil {
-			return computeruse.ActionResult{}, err
-		}
-	} else if canUseSkyLightPixelClick(args.MouseButton, clickCount, state) {
-		screenPoint, err := coords.WindowLocalToScreen(state.Window, coords.Point{X: point.X, Y: point.Y})
-		if err != nil {
-			return computeruse.ActionResult{}, err
-		}
-		screen := skylightinput.Point{X: float64(screenPoint.X), Y: float64(screenPoint.Y)}
-		local := skylightinput.Point{X: float64(point.X), Y: float64(point.Y)}
-		if err := skylightinput.MouseClick(int32(state.App.PID), screen, local, state.Window.WindowID, clickCount); err == nil {
-			return computeruse.ActionResult{SessionID: state.SessionID, StateID: state.StateID, Action: "click", Target: fmt.Sprintf("pixel %d,%d", x, y), Message: fmt.Sprintf("clicked pixel %d,%d", x, y)}, nil
-		}
-	}
-	root, _, err := rt.sessions.Resolve(args.StateID, 0)
-	if err != nil {
-		return computeruse.ActionResult{}, err
-	}
-	if err := input.ClickElementAt(root, point, args.MouseButton, clickCount); err != nil {
+	if err := rt.inputBackend().ClickPoint(ctx, snapshot, computeruse.Point{X: x, Y: y}, opts); err != nil {
 		return computeruse.ActionResult{}, err
 	}
 	message := fmt.Sprintf("clicked pixel %d,%d", x, y)
@@ -168,15 +156,19 @@ func (rt *runtimeState) replayPerformSecondaryAction(ctx context.Context, args p
 	if err != nil {
 		return computeruse.ActionResult{}, err
 	}
+	snapshot, err := rt.snapshotForAction(state.StateID)
+	if err != nil {
+		return computeruse.ActionResult{}, err
+	}
 	index, err := parseElementIndex(args.ElementIndex)
 	if err != nil {
 		return computeruse.ActionResult{}, err
 	}
-	el, node, err := rt.sessions.Resolve(state.StateID, index)
+	_, node, err := rt.sessions.Resolve(state.StateID, index)
 	if err != nil {
 		return computeruse.ActionResult{}, err
 	}
-	if err := el.PerformAction(args.Action); err != nil {
+	if err := rt.inputBackend().PerformSecondaryAction(ctx, snapshot, index, args.Action); err != nil {
 		return computeruse.ActionResult{}, err
 	}
 	return computeruse.ActionResult{SessionID: state.SessionID, StateID: state.StateID, Action: args.Action, Target: formatNode(node), Message: fmt.Sprintf("performed %s on %s", args.Action, formatNode(node))}, nil
@@ -187,15 +179,19 @@ func (rt *runtimeState) replaySetValue(ctx context.Context, args setValueInput) 
 	if err != nil {
 		return computeruse.ActionResult{}, err
 	}
+	snapshot, err := rt.snapshotForAction(state.StateID)
+	if err != nil {
+		return computeruse.ActionResult{}, err
+	}
 	index, err := parseElementIndex(args.ElementIndex)
 	if err != nil {
 		return computeruse.ActionResult{}, err
 	}
-	el, node, err := rt.sessions.Resolve(state.StateID, index)
+	_, node, err := rt.sessions.Resolve(state.StateID, index)
 	if err != nil {
 		return computeruse.ActionResult{}, err
 	}
-	if err := el.SetValue(args.Value); err != nil {
+	if err := rt.inputBackend().SetValue(ctx, snapshot, index, args.Value); err != nil {
 		return computeruse.ActionResult{}, err
 	}
 	return computeruse.ActionResult{SessionID: state.SessionID, StateID: state.StateID, Action: "set_value", Target: formatNode(node), Message: fmt.Sprintf("set value on %s", formatNode(node))}, nil
@@ -206,15 +202,20 @@ func (rt *runtimeState) replayScroll(ctx context.Context, args scrollInput) (com
 	if err != nil {
 		return computeruse.ActionResult{}, err
 	}
+	snapshot, err := rt.snapshotForAction(state.StateID)
+	if err != nil {
+		return computeruse.ActionResult{}, err
+	}
 	index, err := parseElementIndex(args.ElementIndex)
 	if err != nil {
 		return computeruse.ActionResult{}, err
 	}
-	el, node, err := rt.sessions.Resolve(state.StateID, index)
+	_, node, err := rt.sessions.Resolve(state.StateID, index)
 	if err != nil {
 		return computeruse.ActionResult{}, err
 	}
-	if err := input.ScrollElement(el, args.Direction, args.Pages); err != nil {
+	opts := computeruse.ScrollOptions{Direction: args.Direction, Pages: args.Pages}
+	if err := rt.inputBackend().ScrollElement(ctx, snapshot, index, opts); err != nil {
 		return computeruse.ActionResult{}, err
 	}
 	return computeruse.ActionResult{SessionID: state.SessionID, StateID: state.StateID, Action: "scroll", Target: formatNode(node), Message: fmt.Sprintf("scrolled %s %s", formatNode(node), args.Direction)}, nil
@@ -225,7 +226,7 @@ func (rt *runtimeState) replayDrag(ctx context.Context, args dragInput) (compute
 	if err != nil {
 		return computeruse.ActionResult{}, err
 	}
-	root, _, err := rt.sessions.Resolve(state.StateID, 0)
+	snapshot, err := rt.snapshotForAction(state.StateID)
 	if err != nil {
 		return computeruse.ActionResult{}, err
 	}
@@ -233,15 +234,9 @@ func (rt *runtimeState) replayDrag(ctx context.Context, args dragInput) (compute
 	startY := roundCoordinate(args.FromY)
 	endX := roundCoordinate(args.ToX)
 	endY := roundCoordinate(args.ToY)
-	start, err := input.ScreenshotPointToWindowLocal(state.Window, startX, startY)
-	if err != nil {
-		return computeruse.ActionResult{}, err
-	}
-	end, err := input.ScreenshotPointToWindowLocal(state.Window, endX, endY)
-	if err != nil {
-		return computeruse.ActionResult{}, err
-	}
-	if err := input.DragElement(root, start, end, "left"); err != nil {
+	start := computeruse.Point{X: startX, Y: startY}
+	end := computeruse.Point{X: endX, Y: endY}
+	if err := rt.inputBackend().Drag(ctx, snapshot, start, end, computeruse.DragOptions{Button: "left"}); err != nil {
 		return computeruse.ActionResult{}, err
 	}
 	return computeruse.ActionResult{SessionID: state.SessionID, StateID: state.StateID, Action: "drag", Target: fmt.Sprintf("%d,%d -> %d,%d", startX, startY, endX, endY), Message: fmt.Sprintf("dragged from %d,%d to %d,%d", startX, startY, endX, endY)}, nil
@@ -252,7 +247,11 @@ func (rt *runtimeState) replayPressKey(ctx context.Context, args pressKeyInput) 
 	if err != nil {
 		return computeruse.ActionResult{}, err
 	}
-	if err := input.SendKeyComboToPID(int32(state.App.PID), args.Key); err != nil {
+	snapshot, err := rt.snapshotForAction(state.StateID)
+	if err != nil {
+		return computeruse.ActionResult{}, err
+	}
+	if err := rt.inputBackend().PressKey(ctx, snapshot, args.Key); err != nil {
 		return computeruse.ActionResult{}, err
 	}
 	return computeruse.ActionResult{SessionID: state.SessionID, StateID: state.StateID, Action: "press_key", Target: args.Key, Message: fmt.Sprintf("pressed %s", args.Key)}, nil
@@ -263,37 +262,25 @@ func (rt *runtimeState) replayTypeText(ctx context.Context, args typeTextInput) 
 	if err != nil {
 		return computeruse.ActionResult{}, err
 	}
+	snapshot, err := rt.snapshotForAction(state.StateID)
+	if err != nil {
+		return computeruse.ActionResult{}, err
+	}
 	if args.ElementIndex != nil {
 		index, err := parseElementIndex(*args.ElementIndex)
 		if err != nil {
 			return computeruse.ActionResult{}, err
 		}
-		el, node, err := rt.sessions.Resolve(state.StateID, index)
+		_, node, err := rt.sessions.Resolve(state.StateID, index)
 		if err != nil {
 			return computeruse.ActionResult{}, err
 		}
-		endTypingCursor := beginTypingCursor(el)
-		defer endTypingCursor()
-		if err := el.TypeText(args.Text); err != nil {
+		if err := rt.inputBackend().TypeText(ctx, snapshot, &index, args.Text); err != nil {
 			return computeruse.ActionResult{}, err
 		}
 		return computeruse.ActionResult{SessionID: state.SessionID, StateID: state.StateID, Action: "type_text", Target: formatNode(node), Message: fmt.Sprintf("typed into %s", formatNode(node))}, nil
 	}
-	root, _, err := rt.sessions.Resolve(state.StateID, 0)
-	if err != nil {
-		return computeruse.ActionResult{}, err
-	}
-	app := root.Application()
-	if app == nil {
-		return computeruse.ActionResult{}, fmt.Errorf("no active application for %q", args.App)
-	}
-	el := app.FocusedElement()
-	if el == nil {
-		return computeruse.ActionResult{}, fmt.Errorf("no focused element found")
-	}
-	endTypingCursor := beginTypingCursor(el)
-	defer endTypingCursor()
-	if err := el.TypeText(args.Text); err != nil {
+	if err := rt.inputBackend().TypeText(ctx, snapshot, nil, args.Text); err != nil {
 		return computeruse.ActionResult{}, err
 	}
 	node := computeruse.ElementNode{Role: "AXUIElement", Title: "focused element"}

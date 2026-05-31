@@ -83,47 +83,45 @@ probes instead of silent no-op behavior.
 implementations. It separates app/window state, input, screenshots, and
 intervention monitoring while keeping native element handles inside
 state-bound snapshots. `cmd/computer-use-mcp` now routes Darwin app-state
-capture and replay state binding through that backend, and exposes a Darwin
-input adapter over the existing Accessibility, CoreGraphics, and SkyLight
-paths. Windows and Linux backends should implement the same interface instead
-of exposing UIA, MSAA, AT-SPI, X11, WGC, or portal handles through tool
-responses.
+capture, replay state binding, and action execution through that backend, and
+exposes a Darwin input adapter over the existing Accessibility, CoreGraphics,
+and SkyLight paths. Windows and Linux backends should implement the same
+interface instead of exposing UIA, MSAA, AT-SPI, X11, WGC, or portal handles
+through tool responses.
 
 ## Upstream-Backed Backlog
 
 The next code milestones should keep the current `cmd/computer-use-mcp`
 contract and replace the unsupported stubs behind it.
 
-1. Finish routing Darwin action handlers through `computeruse.Backend.Input`
-   while keeping the current MCP schema and state_id behavior unchanged.
-2. Add a Windows state backend. Use Win32 process/window enumeration, HWND as
+1. Add a Windows state backend. Use Win32 process/window enumeration, HWND as
    the native window id, UI Automation for the tree, and a retained per-state
    element cache. Add an MSAA fallback for apps whose UIA providers hang or lose
    role fidelity. Preserve axmcp's `state_id` refresh contract instead of
    exposing reusable raw element handles to callers.
-3. Add Windows screenshot and coordinate handling. Mirror TryCUA's target:
+2. Add Windows screenshot and coordinate handling. Mirror TryCUA's target:
    WGC for DirectComposition/XAML hosts, PrintWindow for normal windows,
    screen-region BitBlt only as a fallback with an occlusion warning, and DWM
    frame cropping so returned image pixels map to the same origin used by pixel
    actions. Preserve the existing 1568 px long-side cap and returned-dimension
    coordinate contract.
-4. Add Windows input dispatch. Prefer element-index UIA patterns
+3. Add Windows input dispatch. Prefer element-index UIA patterns
    (`Invoke`, `Value`, `Toggle`, `SelectionItem`, `ExpandCollapse`) for
    background actions. For pixel actions, hit-test UIA first, then PostMessage
    to the target HWND. Return a structured `background_unavailable` result when
    background dispatch is known to drop, and require an explicit foreground
    option before using SendInput.
-5. Add a Linux backend in narrower phases. Start with X11: list windows, capture
+4. Add a Linux backend in narrower phases. Start with X11: list windows, capture
    with XGetImage or a checked external helper, walk AT-SPI when the bus is
    available, perform element actions through AT-SPI, and use XSendEvent for
    window-targeted pixels/keys. Treat Wayland input as passive or portal-gated
    until compositor support is detected.
-6. Expand `PlatformStatus` into a real doctor surface. Windows should report
+5. Expand `PlatformStatus` into a real doctor surface. Windows should report
    interactive-session status, UIA reachability, WGC availability, integrity
    level risks, and screen-capture readiness. Linux should report X11 versus
    Wayland, AT-SPI bus reachability, XTest availability, portal availability,
    and screenshot helper availability.
-7. Add tests before broad implementation: contract tests against fake backends,
+6. Add tests before broad implementation: contract tests against fake backends,
    cross-`GOOS` compile tests for stubs, and host-gated integration tests that
    prove one calculator/notepad-class workflow on Windows and one GTK/Qt
    workflow on Linux.

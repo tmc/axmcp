@@ -110,6 +110,35 @@ func TestResolveUsesCurrentSnapshot(t *testing.T) {
 	}
 }
 
+func TestSnapshotReturnsCurrentSnapshot(t *testing.T) {
+	store := NewStore()
+	snapshot := &fakeSnapshot{
+		state: computeruse.AppState{
+			App: computeruse.AppInfo{BundleID: "com.example.app"},
+		},
+	}
+	state, err := store.Bind(snapshot)
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	got, err := store.Snapshot(state.StateID)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if got != snapshot {
+		t.Fatalf("Snapshot returned %T, want bound snapshot", got)
+	}
+}
+
+func TestSnapshotReturnsStaleStateError(t *testing.T) {
+	store := NewStore()
+	if _, err := store.Snapshot("old"); err == nil {
+		t.Fatalf("Snapshot stale state error = nil, want error")
+	} else if got := err.Error(); !strings.Contains(got, `unknown or stale state_id "old"`) || !strings.Contains(got, "retry with the fresh state_id") {
+		t.Fatalf("Snapshot stale error = %q, want retry guidance", got)
+	}
+}
+
 func TestCloseClosesSnapshotsAndRemovesState(t *testing.T) {
 	store := NewStore()
 	firstErr := fmt.Errorf("close first")

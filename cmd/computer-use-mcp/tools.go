@@ -14,11 +14,8 @@ import (
 	"github.com/tmc/apple/appkit"
 	"github.com/tmc/axmcp/internal/cdp"
 	"github.com/tmc/axmcp/internal/computeruse"
-	"github.com/tmc/axmcp/internal/computeruse/coords"
-	"github.com/tmc/axmcp/internal/computeruse/input"
 	"github.com/tmc/axmcp/internal/computeruse/session"
 	"github.com/tmc/axmcp/internal/sdef"
-	"github.com/tmc/axmcp/internal/skylightinput"
 	"github.com/tmc/axmcp/internal/ui/permissions"
 )
 
@@ -234,7 +231,7 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 			"x":              numberProperty("X coordinate in screenshot pixel coordinates"),
 			"y":              numberProperty("Y coordinate in screenshot pixel coordinates"),
 		}, "app", "state_id"),
-	}, func(_ context.Context, _ *mcp.CallToolRequest, args clickInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args clickInput) (*mcp.CallToolResult, any, error) {
 		if res, payload, ok := actionBlockedForPermissions("click"); ok {
 			return res, payload, nil
 		}
@@ -242,6 +239,10 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 			return res, payload, nil
 		}
 		state, err := stateForAction(rt, "click", args.App, args.StateID)
+		if err != nil {
+			return staleStateResult("click", err)
+		}
+		snapshot, err := rt.snapshotForAction(args.StateID)
 		if err != nil {
 			return staleStateResult("click", err)
 		}
@@ -254,11 +255,16 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 			if err != nil {
 				return toolError(err), nil, nil
 			}
-			el, node, err := rt.sessions.Resolve(args.StateID, index)
+			_, node, err := rt.sessions.Resolve(args.StateID, index)
 			if err != nil {
 				return staleStateResult("click", err)
 			}
-			if err := input.ClickElement(el, args.MouseButton, clickCount); err != nil {
+			opts := computeruse.ClickOptions{
+				Button:        args.MouseButton,
+				ClickCount:    clickCount,
+				ForegroundHID: args.ForegroundHID,
+			}
+			if err := rt.inputBackend().ClickElement(ctx, snapshot, index, opts); err != nil {
 				return toolError(err), nil, nil
 			}
 			out := computeruse.ActionResult{
@@ -276,41 +282,12 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 		}
 		x := roundCoordinate(*args.X)
 		y := roundCoordinate(*args.Y)
-		point, err := input.ScreenshotPointToWindowLocal(state.Window, x, y)
-		if err != nil {
-			return toolError(err), nil, nil
+		opts := computeruse.ClickOptions{
+			Button:        args.MouseButton,
+			ClickCount:    clickCount,
+			ForegroundHID: args.ForegroundHID,
 		}
-		if args.ForegroundHID {
-			if err := activatePID(state.App.PID); err != nil {
-				return toolError(err), nil, nil
-			}
-		} else if canUseSkyLightPixelClick(args.MouseButton, clickCount, state) {
-			screenPoint, err := coords.WindowLocalToScreen(state.Window, coords.Point{X: point.X, Y: point.Y})
-			if err != nil {
-				return toolError(err), nil, nil
-			}
-			screen := skylightinput.Point{
-				X: float64(screenPoint.X),
-				Y: float64(screenPoint.Y),
-			}
-			local := skylightinput.Point{X: float64(point.X), Y: float64(point.Y)}
-			if err := skylightinput.MouseClick(int32(state.App.PID), screen, local, state.Window.WindowID, clickCount); err == nil {
-				out := computeruse.ActionResult{
-					SessionID: state.SessionID,
-					StateID:   state.StateID,
-					Action:    "click",
-					Target:    fmt.Sprintf("pixel %d,%d", x, y),
-					Message:   fmt.Sprintf("clicked pixel %d,%d", x, y),
-				}
-				rt.recording.record("click", args, out)
-				return &mcp.CallToolResult{}, out, nil
-			}
-		}
-		root, _, err := rt.sessions.Resolve(args.StateID, 0)
-		if err != nil {
-			return staleStateResult("click", err)
-		}
-		if err := input.ClickElementAt(root, point, args.MouseButton, clickCount); err != nil {
+		if err := rt.inputBackend().ClickPoint(ctx, snapshot, computeruse.Point{X: x, Y: y}, opts); err != nil {
 			return toolError(err), nil, nil
 		}
 		message := fmt.Sprintf("clicked pixel %d,%d", x, y)
@@ -361,7 +338,7 @@ func registerPerformSecondaryAction(s *mcp.Server, rt *runtimeState) {
 			"element_index": stringProperty("Element identifier"),
 			"state_id":      stringProperty("State token returned by get_app_state"),
 		}, "app", "state_id", "element_index", "action"),
-	}, func(_ context.Context, _ *mcp.CallToolRequest, args performSecondaryActionInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args performSecondaryActionInput) (*mcp.CallToolResult, any, error) {
 		if res, payload, ok := actionBlockedForPermissions(args.Action); ok {
 			return res, payload, nil
 		}
@@ -372,15 +349,19 @@ func registerPerformSecondaryAction(s *mcp.Server, rt *runtimeState) {
 		if err != nil {
 			return staleStateResult(args.Action, err)
 		}
+		snapshot, err := rt.snapshotForAction(args.StateID)
+		if err != nil {
+			return staleStateResult(args.Action, err)
+		}
 		index, err := parseElementIndex(args.ElementIndex)
 		if err != nil {
 			return toolError(err), nil, nil
 		}
-		el, node, err := rt.sessions.Resolve(args.StateID, index)
+		_, node, err := rt.sessions.Resolve(args.StateID, index)
 		if err != nil {
 			return staleStateResult(args.Action, err)
 		}
-		if err := el.PerformAction(args.Action); err != nil {
+		if err := rt.inputBackend().PerformSecondaryAction(ctx, snapshot, index, args.Action); err != nil {
 			return toolError(err), nil, nil
 		}
 		out := computeruse.ActionResult{
@@ -406,7 +387,7 @@ func registerSetValue(s *mcp.Server, rt *runtimeState) {
 			"state_id":      stringProperty("State token returned by get_app_state"),
 			"value":         stringProperty("Value to assign"),
 		}, "app", "state_id", "element_index", "value"),
-	}, func(_ context.Context, _ *mcp.CallToolRequest, args setValueInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args setValueInput) (*mcp.CallToolResult, any, error) {
 		if res, payload, ok := actionBlockedForPermissions("set_value"); ok {
 			return res, payload, nil
 		}
@@ -417,15 +398,19 @@ func registerSetValue(s *mcp.Server, rt *runtimeState) {
 		if err != nil {
 			return staleStateResult("set_value", err)
 		}
+		snapshot, err := rt.snapshotForAction(args.StateID)
+		if err != nil {
+			return staleStateResult("set_value", err)
+		}
 		index, err := parseElementIndex(args.ElementIndex)
 		if err != nil {
 			return toolError(err), nil, nil
 		}
-		el, node, err := rt.sessions.Resolve(args.StateID, index)
+		_, node, err := rt.sessions.Resolve(args.StateID, index)
 		if err != nil {
 			return staleStateResult("set_value", err)
 		}
-		if err := el.SetValue(args.Value); err != nil {
+		if err := rt.inputBackend().SetValue(ctx, snapshot, index, args.Value); err != nil {
 			return toolError(err), nil, nil
 		}
 		out := computeruse.ActionResult{
@@ -452,7 +437,7 @@ func registerScroll(s *mcp.Server, rt *runtimeState) {
 			"pages":         numberProperty("Number of pages to scroll. Fractional values are supported. Defaults to 1"),
 			"state_id":      stringProperty("State token returned by get_app_state"),
 		}, "app", "state_id", "element_index", "direction"),
-	}, func(_ context.Context, _ *mcp.CallToolRequest, args scrollInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args scrollInput) (*mcp.CallToolResult, any, error) {
 		if res, payload, ok := actionBlockedForPermissions("scroll"); ok {
 			return res, payload, nil
 		}
@@ -463,15 +448,20 @@ func registerScroll(s *mcp.Server, rt *runtimeState) {
 		if err != nil {
 			return staleStateResult("scroll", err)
 		}
+		snapshot, err := rt.snapshotForAction(args.StateID)
+		if err != nil {
+			return staleStateResult("scroll", err)
+		}
 		index, err := parseElementIndex(args.ElementIndex)
 		if err != nil {
 			return toolError(err), nil, nil
 		}
-		el, node, err := rt.sessions.Resolve(args.StateID, index)
+		_, node, err := rt.sessions.Resolve(args.StateID, index)
 		if err != nil {
 			return staleStateResult("scroll", err)
 		}
-		if err := input.ScrollElement(el, args.Direction, args.Pages); err != nil {
+		opts := computeruse.ScrollOptions{Direction: args.Direction, Pages: args.Pages}
+		if err := rt.inputBackend().ScrollElement(ctx, snapshot, index, opts); err != nil {
 			return toolError(err), nil, nil
 		}
 		out := computeruse.ActionResult{
@@ -499,7 +489,7 @@ func registerDrag(s *mcp.Server, rt *runtimeState) {
 			"to_x":     numberProperty("End X coordinate"),
 			"to_y":     numberProperty("End Y coordinate"),
 		}, "app", "state_id", "from_x", "from_y", "to_x", "to_y"),
-	}, func(_ context.Context, _ *mcp.CallToolRequest, args dragInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args dragInput) (*mcp.CallToolResult, any, error) {
 		if res, payload, ok := actionBlockedForPermissions("drag"); ok {
 			return res, payload, nil
 		}
@@ -510,7 +500,7 @@ func registerDrag(s *mcp.Server, rt *runtimeState) {
 		if err != nil {
 			return staleStateResult("drag", err)
 		}
-		root, _, err := rt.sessions.Resolve(args.StateID, 0)
+		snapshot, err := rt.snapshotForAction(args.StateID)
 		if err != nil {
 			return staleStateResult("drag", err)
 		}
@@ -518,15 +508,9 @@ func registerDrag(s *mcp.Server, rt *runtimeState) {
 		startY := roundCoordinate(args.FromY)
 		endX := roundCoordinate(args.ToX)
 		endY := roundCoordinate(args.ToY)
-		start, err := input.ScreenshotPointToWindowLocal(state.Window, startX, startY)
-		if err != nil {
-			return toolError(err), nil, nil
-		}
-		end, err := input.ScreenshotPointToWindowLocal(state.Window, endX, endY)
-		if err != nil {
-			return toolError(err), nil, nil
-		}
-		if err := input.DragElement(root, start, end, "left"); err != nil {
+		start := computeruse.Point{X: startX, Y: startY}
+		end := computeruse.Point{X: endX, Y: endY}
+		if err := rt.inputBackend().Drag(ctx, snapshot, start, end, computeruse.DragOptions{Button: "left"}); err != nil {
 			return toolError(err), nil, nil
 		}
 		out := computeruse.ActionResult{
@@ -551,7 +535,7 @@ func registerPressKey(s *mcp.Server, rt *runtimeState) {
 			"key":      stringProperty("Key or key combination to press"),
 			"state_id": stringProperty("State token returned by get_app_state"),
 		}, "app", "state_id", "key"),
-	}, func(_ context.Context, _ *mcp.CallToolRequest, args pressKeyInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args pressKeyInput) (*mcp.CallToolResult, any, error) {
 		if res, payload, ok := actionBlockedForPermissions("press_key"); ok {
 			return res, payload, nil
 		}
@@ -562,7 +546,11 @@ func registerPressKey(s *mcp.Server, rt *runtimeState) {
 		if err != nil {
 			return staleStateResult("press_key", err)
 		}
-		if err := input.SendKeyComboToPID(int32(state.App.PID), args.Key); err != nil {
+		snapshot, err := rt.snapshotForAction(args.StateID)
+		if err != nil {
+			return staleStateResult("press_key", err)
+		}
+		if err := rt.inputBackend().PressKey(ctx, snapshot, args.Key); err != nil {
 			return toolError(err), nil, nil
 		}
 		out := computeruse.ActionResult{
@@ -588,7 +576,7 @@ func registerTypeText(s *mcp.Server, rt *runtimeState) {
 			"state_id":      stringProperty("State token returned by get_app_state"),
 			"text":          stringProperty("Literal text to type"),
 		}, "app", "state_id", "text"),
-	}, func(_ context.Context, _ *mcp.CallToolRequest, args typeTextInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args typeTextInput) (*mcp.CallToolResult, any, error) {
 		if res, payload, ok := actionBlockedForPermissions("type_text"); ok {
 			return res, payload, nil
 		}
@@ -599,18 +587,20 @@ func registerTypeText(s *mcp.Server, rt *runtimeState) {
 		if err != nil {
 			return staleStateResult("type_text", err)
 		}
+		snapshot, err := rt.snapshotForAction(args.StateID)
+		if err != nil {
+			return staleStateResult("type_text", err)
+		}
 		if args.ElementIndex != nil {
 			index, err := parseElementIndex(*args.ElementIndex)
 			if err != nil {
 				return toolError(err), nil, nil
 			}
-			el, node, err := rt.sessions.Resolve(args.StateID, index)
+			_, node, err := rt.sessions.Resolve(args.StateID, index)
 			if err != nil {
 				return staleStateResult("type_text", err)
 			}
-			endTypingCursor := beginTypingCursor(el)
-			defer endTypingCursor()
-			if err := el.TypeText(args.Text); err != nil {
+			if err := rt.inputBackend().TypeText(ctx, snapshot, &index, args.Text); err != nil {
 				return toolError(err), nil, nil
 			}
 			out := computeruse.ActionResult{
@@ -623,21 +613,7 @@ func registerTypeText(s *mcp.Server, rt *runtimeState) {
 			rt.recording.record("type_text", args, out)
 			return &mcp.CallToolResult{}, out, nil
 		}
-		root, _, err := rt.sessions.Resolve(args.StateID, 0)
-		if err != nil {
-			return staleStateResult("type_text", err)
-		}
-		app := root.Application()
-		if app == nil {
-			return toolError(fmt.Errorf("no active application for %q", args.App)), nil, nil
-		}
-		el := app.FocusedElement()
-		if el == nil {
-			return toolError(fmt.Errorf("no focused element found")), nil, nil
-		}
-		endTypingCursor := beginTypingCursor(el)
-		defer endTypingCursor()
-		if err := el.TypeText(args.Text); err != nil {
+		if err := rt.inputBackend().TypeText(ctx, snapshot, nil, args.Text); err != nil {
 			return toolError(err), nil, nil
 		}
 		node := computeruse.ElementNode{Role: "AXUIElement", Title: "focused element"}

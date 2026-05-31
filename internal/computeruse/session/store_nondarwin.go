@@ -35,6 +35,10 @@ func (s *Store) GetForApp(string) (computeruse.AppState, bool) {
 	return computeruse.AppState{}, false
 }
 
+func (s *Store) Snapshot(stateID string) (Snapshot, error) {
+	return nil, StaleStateError(stateID)
+}
+
 func StaleStateError(stateID string) error {
 	stateID = strings.TrimSpace(stateID)
 	if stateID == "" {
