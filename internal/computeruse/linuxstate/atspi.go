@@ -3,6 +3,7 @@ package linuxstate
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"strconv"
@@ -20,6 +21,7 @@ const (
 	atspiAccessible    = "org.a11y.atspi.Accessible"
 	atspiAction        = "org.a11y.atspi.Action"
 	atspiComponent     = "org.a11y.atspi.Component"
+	atspiEditableText  = "org.a11y.atspi.EditableText"
 	atspiValue         = "org.a11y.atspi.Value"
 	dbusProperties     = "org.freedesktop.DBus.Properties"
 	maxATSPIDepth      = 10
@@ -49,6 +51,10 @@ func readAccessibilityTree(ctx context.Context, win Window) (AccessibilityNode, 
 
 func performATSPIAction(ctx context.Context, action accessibilityAction) error {
 	return defaultATSPIReader().performAction(ctx, action)
+}
+
+func setATSPIValue(ctx context.Context, value accessibilityValue) error {
+	return defaultATSPIReader().setValue(ctx, value)
 }
 
 func defaultATSPIReader() *atspiReader {
@@ -216,6 +222,52 @@ func (r *atspiReader) performAction(ctx context.Context, action accessibilityAct
 	return nil
 }
 
+func (r *atspiReader) setValue(ctx context.Context, value accessibilityValue) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	ref := atspiRef{
+		Bus:  strings.TrimSpace(value.Native.BusName),
+		Path: strings.TrimSpace(value.Native.ObjectPath),
+	}
+	if ref.Bus == "" || ref.Path == "" {
+		return computeruse.PlatformUnsupported("set value with AT-SPI")
+	}
+	if err := r.configure(ctx); err != nil {
+		return err
+	}
+	interfaces := r.interfaces(ctx, ref)
+	if interfaces.has(atspiEditableText) {
+		out, err := r.call(ctx, r.address, ref.Bus, ref.Path, atspiEditableText+".SetTextContents", quoteGVariantString(value.Value))
+		if err != nil {
+			return fmt.Errorf("set AT-SPI text contents: %w", err)
+		}
+		if gvariantIsFalse(out) {
+			return fmt.Errorf("set AT-SPI text contents: action returned false")
+		}
+		return nil
+	}
+	if interfaces.has(atspiValue) {
+		f, err := strconv.ParseFloat(strings.TrimSpace(value.Value), 64)
+		if err != nil {
+			return fmt.Errorf("set AT-SPI current value: parse %q as number: %w", value.Value, err)
+		}
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return fmt.Errorf("set AT-SPI current value: invalid number %q", value.Value)
+		}
+		_, err = r.call(ctx, r.address, ref.Bus, ref.Path, dbusProperties+".Set",
+			quoteGVariantString(atspiValue),
+			quoteGVariantString("CurrentValue"),
+			formatGVariantDoubleVariant(f),
+		)
+		if err != nil {
+			return fmt.Errorf("set AT-SPI current value: %w", err)
+		}
+		return nil
+	}
+	return computeruse.PlatformUnsupported("set value with AT-SPI")
+}
+
 func (r *atspiReader) readNodeMetadata(ctx context.Context, win Window, ref atspiRef) AccessibilityNode {
 	interfaces := r.interfaces(ctx, ref)
 	states := r.states(ctx, ref)
@@ -232,7 +284,7 @@ func (r *atspiReader) readNodeMetadata(ctx context.Context, win Window, ref atsp
 		Identifier:       r.stringProperty(ctx, ref, atspiAccessible, "AccessibleId"),
 		Rect:             r.extents(ctx, ref, interfaces),
 		Enabled:          states[atspiStateEnabled],
-		Settable:         states[atspiStateEditable] || interfaces.has(atspiValue) || settableByAction,
+		Settable:         states[atspiStateEditable] || interfaces.has(atspiEditableText) || interfaces.has(atspiValue) || settableByAction,
 		SecondaryActions: actions,
 	}
 	if interfaces.has(atspiValue) {
@@ -613,7 +665,13 @@ func isIdentifierByte(b byte) bool {
 }
 
 func quoteGVariantString(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "\\'") + "'"
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "'", "\\'")
+	return "'" + s + "'"
+}
+
+func formatGVariantDoubleVariant(f float64) string {
+	return "<double " + strconv.FormatFloat(f, 'g', -1, 64) + ">"
 }
 
 func atspiActionNameKey(name string) string {

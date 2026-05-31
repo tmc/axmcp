@@ -99,6 +99,26 @@ func TestBackendPerformSecondaryActionUsesATSPIAction(t *testing.T) {
 	}
 }
 
+func TestBackendSetValueUsesATSPIValue(t *testing.T) {
+	rec := &recordingAccessibilityValues{}
+	backend := Backend{atspiSetValue: rec.run}
+
+	if err := backend.SetValue(context.Background(), linuxATSPISnapshot(), 2, "49"); err != nil {
+		t.Fatalf("SetValue: %v", err)
+	}
+	want := []accessibilityValue{{
+		Native: NativeElement{
+			WindowID:   "0x03e00007",
+			BusName:    ":1.10",
+			ObjectPath: "/org/a11y/atspi/accessible/text",
+		},
+		Value: "49",
+	}}
+	if !reflect.DeepEqual(rec.values, want) {
+		t.Fatalf("values = %#v, want %#v", rec.values, want)
+	}
+}
+
 func TestBackendElementActionsRequireATSPI(t *testing.T) {
 	backend := Backend{run: (&recordingRunner{}).run}
 	err := backend.ClickElement(context.Background(), linuxInputSnapshot(), 1, computeruse.ClickOptions{})
@@ -133,6 +153,15 @@ func (r *recordingAccessibilityActions) run(_ context.Context, action accessibil
 	return nil
 }
 
+type recordingAccessibilityValues struct {
+	values []accessibilityValue
+}
+
+func (r *recordingAccessibilityValues) run(_ context.Context, value accessibilityValue) error {
+	r.values = append(r.values, value)
+	return nil
+}
+
 func linuxInputSnapshot() *Snapshot {
 	win := Window{
 		ID:     "0x03e00007",
@@ -145,6 +174,7 @@ func linuxInputSnapshot() *Snapshot {
 	}
 	root := computeruse.ElementNode{Index: 0, ParentIndex: -1, Role: "Window", Title: "Calculator", Width: win.Width, Height: win.Height, Enabled: true}
 	button := computeruse.ElementNode{Index: 1, ParentIndex: 0, Role: "push button", Title: "Seven", X: 20, Y: 40, Width: 50, Height: 20, Enabled: true, SecondaryActions: []string{"click"}}
+	text := computeruse.ElementNode{Index: 2, ParentIndex: 0, Role: "text", Title: "Display", Value: "42", X: 30, Y: 70, Width: 100, Height: 30, Enabled: true, Settable: true}
 	return &Snapshot{
 		window: win,
 		state: computeruse.AppState{
@@ -159,15 +189,17 @@ func linuxInputSnapshot() *Snapshot {
 				ScreenshotWidth:  150,
 				ScreenshotHeight: 100,
 			},
-			Tree: []computeruse.ElementNode{root, button},
+			Tree: []computeruse.ElementNode{root, button, text},
 		},
 		nodes: map[int]computeruse.ElementNode{
 			0: root,
 			1: button,
+			2: text,
 		},
 		elements: map[int]NativeElement{
 			0: {WindowID: win.ID},
 			1: {WindowID: win.ID},
+			2: {WindowID: win.ID},
 		},
 	}
 }
@@ -184,5 +216,10 @@ func linuxATSPISnapshot() *Snapshot {
 	s.nodes[1] = node
 	s.state.Tree[1] = node
 	s.elements[1] = native
+	s.elements[2] = NativeElement{
+		WindowID:   "0x03e00007",
+		BusName:    ":1.10",
+		ObjectPath: "/org/a11y/atspi/accessible/text",
+	}
 	return s
 }

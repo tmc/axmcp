@@ -183,6 +183,69 @@ func TestATSPIReaderPerformsActionByName(t *testing.T) {
 	}
 }
 
+func TestATSPIReaderSetsEditableTextContents(t *testing.T) {
+	bus := fakeATSPIBus{}
+	reader := fakeATSPIReader(bus.run, t)
+
+	err := reader.setValue(context.Background(), accessibilityValue{
+		Native: NativeElement{
+			BusName:    ":1.10",
+			ObjectPath: "/org/a11y/atspi/accessible/editable",
+		},
+		Value: "new 'total'\\value",
+	})
+	if err != nil {
+		t.Fatalf("setValue: %v", err)
+	}
+	want := []atspiCall{{
+		path:   "/org/a11y/atspi/accessible/editable",
+		method: atspiEditableText + ".SetTextContents",
+		extra:  []string{"'new \\'total\\'\\\\value'"},
+	}}
+	if !reflect.DeepEqual(bus.valueCalls, want) {
+		t.Fatalf("valueCalls = %#v, want %#v", bus.valueCalls, want)
+	}
+}
+
+func TestATSPIReaderSetsNumericCurrentValue(t *testing.T) {
+	bus := fakeATSPIBus{}
+	reader := fakeATSPIReader(bus.run, t)
+
+	err := reader.setValue(context.Background(), accessibilityValue{
+		Native: NativeElement{
+			BusName:    ":1.10",
+			ObjectPath: "/org/a11y/atspi/accessible/text",
+		},
+		Value: "49",
+	})
+	if err != nil {
+		t.Fatalf("setValue: %v", err)
+	}
+	want := []atspiCall{{
+		path:   "/org/a11y/atspi/accessible/text",
+		method: dbusProperties + ".Set",
+		extra: []string{
+			"'org.a11y.atspi.Value'",
+			"'CurrentValue'",
+			"<double 49>",
+		},
+	}}
+	if !reflect.DeepEqual(bus.valueCalls, want) {
+		t.Fatalf("valueCalls = %#v, want %#v", bus.valueCalls, want)
+	}
+
+	err = reader.setValue(context.Background(), accessibilityValue{
+		Native: NativeElement{
+			BusName:    ":1.10",
+			ObjectPath: "/org/a11y/atspi/accessible/text",
+		},
+		Value: "not a number",
+	})
+	if err == nil {
+		t.Fatalf("setValue nonnumeric = nil, want error")
+	}
+}
+
 func TestATSPIParsers(t *testing.T) {
 	refs := parseATSPIRefs([]byte("([(':1.1', objectpath '/org/a11y/atspi/accessible/1'), (':1.2', objectpath '/org/a11y/atspi/accessible/null')],)"))
 	wantRefs := []atspiRef{{Bus: ":1.1", Path: "/org/a11y/atspi/accessible/1"}}
@@ -195,9 +258,29 @@ func TestATSPIParsers(t *testing.T) {
 	}
 }
 
+func fakeATSPIReader(run func(context.Context, string, ...string) ([]byte, error), t *testing.T) *atspiReader {
+	t.Helper()
+	return &atspiReader{
+		env: func(name string) string {
+			if name == "DBUS_SESSION_BUS_ADDRESS" {
+				return "unix:path=/tmp/session"
+			}
+			return ""
+		},
+		lookPath: func(name string) (string, error) {
+			if name != "gdbus" {
+				t.Fatalf("LookPath(%q), want gdbus", name)
+			}
+			return "/usr/bin/gdbus", nil
+		},
+		run: run,
+	}
+}
+
 type fakeATSPIBus struct {
 	calls       []string
 	actionCalls []atspiCall
+	valueCalls  []atspiCall
 }
 
 func (b *fakeATSPIBus) run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -223,6 +306,15 @@ func (b *fakeATSPIBus) run(_ context.Context, name string, args ...string) ([]by
 			return nil, fmt.Errorf("missing property args")
 		}
 		return fakeATSPIProperty(call.path, unquoteGVariantString(call.extra[0]), unquoteGVariantString(call.extra[1]))
+	case dbusProperties + ".Set":
+		if call.path != "/org/a11y/atspi/accessible/text" {
+			return nil, fmt.Errorf("missing value target")
+		}
+		if !reflect.DeepEqual(call.extra, []string{"'org.a11y.atspi.Value'", "'CurrentValue'", "<double 49>"}) {
+			return nil, fmt.Errorf("Set args = %#v", call.extra)
+		}
+		b.valueCalls = append(b.valueCalls, call)
+		return []byte("()"), nil
 	case atspiComponent + ".GetExtents":
 		return []byte(fakeATSPIExtents(call.path)), nil
 	case atspiAction + ".GetName":
@@ -238,6 +330,15 @@ func (b *fakeATSPIBus) run(_ context.Context, name string, args ...string) ([]by
 			return nil, fmt.Errorf("DoAction args = %#v, want [0]", call.extra)
 		}
 		b.actionCalls = append(b.actionCalls, call)
+		return []byte("(true,)"), nil
+	case atspiEditableText + ".SetTextContents":
+		if call.path != "/org/a11y/atspi/accessible/editable" {
+			return nil, fmt.Errorf("missing editable target")
+		}
+		if len(call.extra) != 1 || unquoteGVariantString(call.extra[0]) != "new 'total'\\value" {
+			return nil, fmt.Errorf("SetTextContents args = %#v", call.extra)
+		}
+		b.valueCalls = append(b.valueCalls, call)
 		return []byte("(true,)"), nil
 	default:
 		return nil, fmt.Errorf("unexpected method %q", call.method)
@@ -303,6 +404,8 @@ func fakeATSPIInterfaces(path string) string {
 		return "(['org.a11y.atspi.Component', 'org.a11y.atspi.Action'],)"
 	case "/org/a11y/atspi/accessible/text":
 		return "(['org.a11y.atspi.Component', 'org.a11y.atspi.Value'],)"
+	case "/org/a11y/atspi/accessible/editable":
+		return "(['org.a11y.atspi.Component', 'org.a11y.atspi.EditableText'],)"
 	default:
 		return "([],)"
 	}
@@ -379,7 +482,15 @@ func fakeATSPIExtents(path string) string {
 }
 
 func unquoteGVariantString(s string) string {
-	return strings.Trim(strings.ReplaceAll(s, "\\'", "'"), "'")
+	s = strings.Trim(s, "'")
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			i++
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 func linuxTestWindow() Window {

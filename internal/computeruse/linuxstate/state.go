@@ -63,6 +63,7 @@ type Backend struct {
 	run           func(context.Context, string, ...string) ([]byte, error)
 	accessibility func(context.Context, Window) (AccessibilityNode, error)
 	atspiAction   accessibilityActionRunner
+	atspiSetValue accessibilityValueRunner
 }
 
 var _ computeruse.StateBackend = Backend{}
@@ -73,6 +74,13 @@ type accessibilityActionRunner func(context.Context, accessibilityAction) error
 type accessibilityAction struct {
 	Native NativeElement
 	Name   string
+}
+
+type accessibilityValueRunner func(context.Context, accessibilityValue) error
+
+type accessibilityValue struct {
+	Native NativeElement
+	Value  string
 }
 
 // NewBackend returns a Linux state backend.
@@ -458,8 +466,16 @@ func (b Backend) PerformSecondaryAction(ctx context.Context, snapshot computerus
 	return b.runAccessibilityAction(ctx, accessibilityAction{Native: native, Name: action})
 }
 
-func (b Backend) SetValue(context.Context, computeruse.Snapshot, int, string) error {
-	return computeruse.PlatformUnsupported("set value with AT-SPI")
+func (b Backend) SetValue(ctx context.Context, snapshot computeruse.Snapshot, index int, value string) error {
+	s, err := linuxSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	native, _, err := s.NativeElement(index)
+	if err != nil {
+		return err
+	}
+	return b.runAccessibilityValue(ctx, accessibilityValue{Native: native, Value: value})
 }
 
 func (b Backend) PressKey(ctx context.Context, snapshot computeruse.Snapshot, key string) error {
@@ -501,6 +517,20 @@ func (b Backend) runAccessibilityAction(ctx context.Context, action accessibilit
 		run = performATSPIAction
 	}
 	return run(ctx, action)
+}
+
+func (b Backend) runAccessibilityValue(ctx context.Context, value accessibilityValue) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(value.Native.BusName) == "" || strings.TrimSpace(value.Native.ObjectPath) == "" {
+		return computeruse.PlatformUnsupported("set value with AT-SPI")
+	}
+	run := b.atspiSetValue
+	if run == nil {
+		run = setATSPIValue
+	}
+	return run(ctx, value)
 }
 
 func linuxSnapshot(snapshot computeruse.Snapshot) (*Snapshot, error) {
