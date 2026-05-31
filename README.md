@@ -19,7 +19,7 @@ If you want an LLM to click through a real app: `axmcp`. If you want it to build
 - **Accessibility-first, not screenshot-first.** Pointer actions target AX elements by role and title, so an LLM can say "click the Build button" and get the actual button — not the pixel that looked right a moment ago.
 - **OCR and screenshots are the fallback, not the plan.** `ax_ocr`, `ax_ocr_diff`, and `ax_ocr_click` exist for Electron apps, custom canvases, and partially inaccessible UI. They ride on top of the AX flow, not around it.
 - **Xcode, fully drivable.** See the Xcode automation section below — from `xcodebuild` wrappers and simulator control all the way up to driving the File > New > Target wizard through the live UI when `xcodebuild` can't do the job.
-- **One repo, several automation surfaces.** The primitive surface (`axmcp`) is for open exploration; the Codex contract (`computer-use-mcp`) is for drop-in replacement; the Xcode surface (`xcmcp`) is the IDE-adjacent tool belt; the CDP surface (`axcdp`) is for DevTools-shaped native UI inspection; the iPhone Mirroring surface (`iphonemirror-mcp`) is for opaque iOS UI. They share one set of internal packages so behavior stays consistent.
+- **One repo, several automation surfaces.** The primitive surface (`axmcp`) is for open exploration; the Codex-compatible core contract (`computer-use-mcp`) is for stateful app control; the Xcode surface (`xcmcp`) is the IDE-adjacent tool belt; the CDP surface (`axcdp`) is for DevTools-shaped native UI inspection; the iPhone Mirroring surface (`iphonemirror-mcp`) is for opaque iOS UI. They share one set of internal packages so behavior stays consistent.
 
 ## What's new in v0.2.x
 
@@ -166,7 +166,7 @@ Or all at once:
 xcmcp --enable-all
 ```
 
-**Drop-in Codex Computer Use contract:**
+**Codex-compatible Computer Use surface:**
 
 ```sh
 computer-use-mcp

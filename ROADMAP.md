@@ -12,8 +12,9 @@ v0.2.x ships four MCP servers — `cmd/axmcp`, `cmd/xcmcp`,
 internal packages. The Accessibility surface walks live AX trees, posts
 pointer and keyboard events, captures and OCRs screen regions, and
 drives windows with explicit raise / move / drag actions. The Codex
-Computer Use server wraps the same primitives in the 9-tool contract
-with per-session app state, best-effort `internal/axpump` support for
+Computer Use server wraps the same primitives in the core Computer Use
+contract plus recording, replay, and browser-evaluation extensions, with
+per-session app state, best-effort `internal/axpump` support for
 Chromium-family AX trees, and optional private SkyLight input posting
 through `internal/skylightinput`; see `design/cua-parity.md` for the
 current CUA-driver/OpenAI compatibility boundary. The Xcode surface

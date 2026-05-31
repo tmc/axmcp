@@ -219,7 +219,7 @@ func computerUseInstructions() string {
 		"",
 		"The available tools are list_apps, get_app_state, set_recording, replay_trajectory, click, perform_secondary_action, scroll, drag, type_text, press_key, set_value, evaluate_javascript, and evaluate_cdp_javascript. If any of these are not available in your environment, use tool_search to surface one before calling any Computer Use action tools.",
 		"",
-		"Computer Use tools allow you to use the user's apps in the background, so while you're using an app, the user can continue to use other apps on their computer. Avoid doing anything that would disrupt the user's active session, such as overwriting the contents of their clipboard, unless they asked you to!",
+		"Computer Use tools prefer background-safe AX and pid-routed actions where possible, but some fallbacks can affect the foreground session. Avoid disrupting the user's active session, such as overwriting the contents of their clipboard, unless they asked you to!",
 		"",
 		"The physical-user intervention monitor is disabled by default. If the server is started with --human-intervention-monitor or COMPUTER_USE_MCP_HUMAN_INTERVENTION_MONITOR=1, recent physical mouse or keyboard input pauses action tools and requires a fresh get_app_state before continuing.",
 		"Set COMPUTER_USE_MCP_BLOCKED_DOMAINS to a comma-separated list of domains to block action tools on matching browser URLs.",
