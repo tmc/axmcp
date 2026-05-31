@@ -1,3 +1,5 @@
+//go:build darwin
+
 // Package skylightinput posts synthetic mouse and keyboard events to a target
 // process via SkyLight's per-pid SPI, bypassing the public CGEvent HID-tap
 // pipeline.
