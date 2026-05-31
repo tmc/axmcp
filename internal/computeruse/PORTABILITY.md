@@ -65,9 +65,10 @@ default runtime falls back to the root window node. Linux uses
 `internal/computeruse/linuxstate`
 for X11 window metadata through `wmctrl -lpG` and captures screenshots through
 ImageMagick `import`; root-window pixel/key input uses `xdotool`. AT-SPI trees,
-element actions, and Wayland support are still missing. Non-Darwin servers
-expose `mcp://platform/status` so clients can inspect the compiled backend and
-prerequisite probes.
+element actions, and Wayland support are still missing, but the Linux snapshot
+now has the retained native-handle/index scaffold needed for AT-SPI trees.
+Non-Darwin servers expose `mcp://platform/status` so clients can inspect the
+compiled backend and prerequisite probes.
 
 ## Implementation Slice
 
@@ -114,8 +115,10 @@ for X11: it resolves apps from `wmctrl -lpG` output, captures a PNG screenshot
 with ImageMagick `import`, and returns a root window node while AT-SPI and
 Wayland-specific state remain future work. It also routes pixel clicks, drags,
 scrolls, key presses, and window-level typing through `xdotool`; element-index
-actions beyond the root window still require AT-SPI. The Linux command serves
-that state through the same MCP tools.
+actions beyond the root window still require AT-SPI. Like Windows, tests can
+inject an accessibility tree to lock stable `element_index` values,
+window-local geometry, and retained native handles before the live reader lands.
+The Linux command serves that state through the same MCP tools.
 
 ## Upstream-Backed Backlog
 
@@ -138,12 +141,12 @@ contract and replace the unsupported stubs behind it.
    background dispatch is known to drop, and require an explicit foreground
    option before using SendInput.
 4. Expand the Linux backend in narrower phases. Replace or supplement the
-   `wmctrl` and ImageMagick dependencies when direct X11 paths land, capture
-   with XGetImage or portals when available, walk AT-SPI when the bus is
-   available, perform element actions through AT-SPI, and replace or harden the
-   current `xdotool` root-window input path with direct XSendEvent/XTest paths.
-   Treat Wayland input as passive or portal-gated until compositor support is
-   detected.
+   current injected-tree/live fallback boundary with a real AT-SPI reader,
+   replace or supplement the `wmctrl` and ImageMagick dependencies when direct
+   X11 paths land, capture with XGetImage or portals when available, perform
+   element actions through AT-SPI, and replace or harden the current `xdotool`
+   root-window input path with direct XSendEvent/XTest paths. Treat Wayland
+   input as passive or portal-gated until compositor support is detected.
 5. Expand `PlatformStatus` into a real doctor surface. Windows should report
    interactive-session status, UIA reachability, WGC availability, integrity
    level risks, and screen-capture readiness. Linux should report X11 versus

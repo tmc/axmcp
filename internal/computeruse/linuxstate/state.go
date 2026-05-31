@@ -3,6 +3,7 @@ package linuxstate
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"math"
 	"os/exec"
@@ -27,9 +28,39 @@ type Window struct {
 	Height      int
 }
 
+// NativeElement identifies a Linux UI element retained in a snapshot.
+type NativeElement struct {
+	WindowID   string
+	ObjectPath string
+}
+
+// AccessibilityNode is one node read from a Linux accessibility tree.
+type AccessibilityNode struct {
+	Native           NativeElement
+	Role             string
+	Title            string
+	Value            string
+	Description      string
+	Identifier       string
+	Rect             Rect
+	Enabled          bool
+	Settable         bool
+	SecondaryActions []string
+	Children         []AccessibilityNode
+}
+
+// Rect is an element rectangle in screen coordinates.
+type Rect struct {
+	X      int
+	Y      int
+	Width  int
+	Height int
+}
+
 // Backend builds app state from X11 top-level windows.
 type Backend struct {
-	run func(context.Context, string, ...string) ([]byte, error)
+	run           func(context.Context, string, ...string) ([]byte, error)
+	accessibility func(context.Context, Window) (AccessibilityNode, error)
 }
 
 var _ computeruse.StateBackend = Backend{}
@@ -79,17 +110,12 @@ func (b Backend) BuildState(ctx context.Context, req computeruse.StateRequest) (
 	state := computeruse.AppState{
 		App:    appInfo(win),
 		Window: windowInfo(win),
-		Tree: []computeruse.ElementNode{{
-			Index:   0,
-			Role:    "Window",
-			Title:   win.Title,
-			X:       0,
-			Y:       0,
-			Width:   win.Width,
-			Height:  win.Height,
-			Enabled: true,
-		}},
 	}
+	tree, nodes, elements, err := b.buildTree(ctx, win)
+	if err != nil {
+		return nil, err
+	}
+	state.Tree = tree
 	if req.Instructions != nil {
 		state.Instructions = req.Instructions.Instructions(state.App)
 	}
@@ -104,7 +130,7 @@ func (b Backend) BuildState(ctx context.Context, req computeruse.StateRequest) (
 	state.ScreenshotPNGBase64 = base64.StdEncoding.EncodeToString(pngData)
 	state.Window.ScreenshotWidth = cfg.Width
 	state.Window.ScreenshotHeight = cfg.Height
-	return &Snapshot{state: state, window: win}, nil
+	return &Snapshot{state: state, window: win, nodes: nodes, elements: elements}, nil
 }
 
 func (b Backend) listWindows(ctx context.Context) ([]Window, error) {
@@ -147,6 +173,28 @@ func captureWindowPNG(ctx context.Context, run func(context.Context, string, ...
 	return out, nil
 }
 
+func (b Backend) buildTree(ctx context.Context, win Window) ([]computeruse.ElementNode, map[int]computeruse.ElementNode, map[int]NativeElement, error) {
+	root, err := b.accessibilityTree(ctx, win)
+	if err != nil {
+		if b.accessibility != nil || ctx.Err() != nil || !errors.Is(err, computeruse.ErrPlatformUnsupported) {
+			return nil, nil, nil, fmt.Errorf("read AT-SPI tree: %w", err)
+		}
+		root = fallbackAccessibilityRoot(win)
+	}
+	if root.isEmpty() {
+		root = fallbackAccessibilityRoot(win)
+	}
+	tree, nodes, elements := flattenAccessibilityTree(win, root)
+	return tree, nodes, elements, nil
+}
+
+func (b Backend) accessibilityTree(ctx context.Context, win Window) (AccessibilityNode, error) {
+	if b.accessibility != nil {
+		return b.accessibility(ctx, win)
+	}
+	return readAccessibilityTree(ctx, win)
+}
+
 func (b Backend) resolveWindow(ctx context.Context, selector string) (Window, error) {
 	selector = strings.TrimSpace(selector)
 	if selector == "" {
@@ -174,8 +222,10 @@ func (b Backend) resolveWindow(ctx context.Context, selector string) (Window, er
 
 // Snapshot is a Linux state snapshot.
 type Snapshot struct {
-	state  computeruse.AppState
-	window Window
+	state    computeruse.AppState
+	window   Window
+	nodes    map[int]computeruse.ElementNode
+	elements map[int]NativeElement
 }
 
 func (s *Snapshot) State() computeruse.AppState {
@@ -185,8 +235,113 @@ func (s *Snapshot) State() computeruse.AppState {
 	return s.state
 }
 
+func (s *Snapshot) NativeElement(index int) (NativeElement, computeruse.ElementNode, error) {
+	if s == nil {
+		return NativeElement{}, computeruse.ElementNode{}, fmt.Errorf("nil snapshot")
+	}
+	node, ok := s.nodes[index]
+	if !ok {
+		return NativeElement{}, computeruse.ElementNode{}, fmt.Errorf("unknown element_index %d", index)
+	}
+	return s.elements[index], node, nil
+}
+
 func (s *Snapshot) Close() error {
 	return nil
+}
+
+func readAccessibilityTree(ctx context.Context, win Window) (AccessibilityNode, error) {
+	if err := ctx.Err(); err != nil {
+		return AccessibilityNode{}, err
+	}
+	if strings.TrimSpace(win.ID) == "" {
+		return AccessibilityNode{}, fmt.Errorf("missing X11 window id")
+	}
+	return AccessibilityNode{}, computeruse.PlatformUnsupported("read AT-SPI tree")
+}
+
+func fallbackAccessibilityRoot(win Window) AccessibilityNode {
+	return AccessibilityNode{
+		Native: NativeElement{
+			WindowID: win.ID,
+		},
+		Role:    "Window",
+		Title:   win.Title,
+		Rect:    Rect{X: win.X, Y: win.Y, Width: win.Width, Height: win.Height},
+		Enabled: true,
+	}
+}
+
+func (n AccessibilityNode) isEmpty() bool {
+	return n.Native == (NativeElement{}) &&
+		strings.TrimSpace(n.Role) == "" &&
+		strings.TrimSpace(n.Title) == "" &&
+		n.Rect == (Rect{}) &&
+		len(n.Children) == 0
+}
+
+func flattenAccessibilityTree(win Window, root AccessibilityNode) ([]computeruse.ElementNode, map[int]computeruse.ElementNode, map[int]NativeElement) {
+	type queueItem struct {
+		parent int
+		node   AccessibilityNode
+	}
+	queue := []queueItem{{parent: -1, node: root}}
+	tree := make([]computeruse.ElementNode, 0, 128)
+	nodes := make(map[int]computeruse.ElementNode)
+	elements := make(map[int]NativeElement)
+
+	for len(queue) > 0 {
+		item := queue[0]
+		queue = queue[1:]
+		index := len(tree)
+		node := elementNode(win, item.node, item.parent, index)
+		tree = append(tree, node)
+		nodes[index] = node
+		elements[index] = nativeElement(win, item.node)
+		for _, child := range item.node.Children {
+			queue = append(queue, queueItem{parent: index, node: child})
+		}
+	}
+	return tree, nodes, elements
+}
+
+func elementNode(win Window, src AccessibilityNode, parent, index int) computeruse.ElementNode {
+	rect := src.Rect
+	if rect.Width <= 0 || rect.Height <= 0 {
+		rect = Rect{X: win.X, Y: win.Y, Width: win.Width, Height: win.Height}
+	}
+	role := strings.TrimSpace(src.Role)
+	if role == "" && index == 0 {
+		role = "Window"
+	}
+	title := strings.TrimSpace(src.Title)
+	if title == "" && index == 0 {
+		title = win.Title
+	}
+	return computeruse.ElementNode{
+		Index:            index,
+		ParentIndex:      parent,
+		Role:             role,
+		Title:            title,
+		Value:            strings.TrimSpace(src.Value),
+		Description:      strings.TrimSpace(src.Description),
+		Identifier:       strings.TrimSpace(src.Identifier),
+		X:                rect.X - win.X,
+		Y:                rect.Y - win.Y,
+		Width:            rect.Width,
+		Height:           rect.Height,
+		Enabled:          src.Enabled,
+		Settable:         src.Settable,
+		SecondaryActions: append([]string(nil), src.SecondaryActions...),
+	}
+}
+
+func nativeElement(win Window, node AccessibilityNode) NativeElement {
+	native := node.Native
+	if native.WindowID == "" {
+		native.WindowID = win.ID
+	}
+	return native
 }
 
 func (b Backend) ClickElement(ctx context.Context, snapshot computeruse.Snapshot, index int, opts computeruse.ClickOptions) error {
