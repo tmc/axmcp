@@ -123,41 +123,6 @@ func registerGetAppState(s *mcp.Server, rt *runtimeState) {
 	})
 }
 
-type captureMode string
-
-const (
-	captureModeSOM    captureMode = "som"
-	captureModeAX     captureMode = "ax"
-	captureModeVision captureMode = "vision"
-)
-
-func parseCaptureMode(raw string) (captureMode, error) {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "", string(captureModeSOM):
-		return captureModeSOM, nil
-	case string(captureModeAX):
-		return captureModeAX, nil
-	case string(captureModeVision):
-		return captureModeVision, nil
-	default:
-		return "", fmt.Errorf("invalid capture_mode %q; use som, ax, or vision", raw)
-	}
-}
-
-func appStateResponse(state computeruse.AppState, mode captureMode, omitScreenshot bool) computeruse.AppState {
-	switch mode {
-	case "", captureModeSOM:
-	case captureModeAX:
-		omitScreenshot = true
-	case captureModeVision:
-		state.Tree = nil
-	}
-	if omitScreenshot {
-		state.ScreenshotPNGBase64 = ""
-	}
-	return state
-}
-
 func registerSetRecording(s *mcp.Server, rt *runtimeState) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "set_recording",
@@ -778,24 +743,6 @@ func appleScriptString(s string) string {
 	return b.String()
 }
 
-func readOnlyToolAnnotations() *mcp.ToolAnnotations {
-	return &mcp.ToolAnnotations{
-		DestructiveHint: boolPtr(false),
-		IdempotentHint:  true,
-		OpenWorldHint:   boolPtr(false),
-		ReadOnlyHint:    true,
-	}
-}
-
-func actionToolAnnotations() *mcp.ToolAnnotations {
-	return &mcp.ToolAnnotations{
-		DestructiveHint: boolPtr(false),
-		IdempotentHint:  false,
-		OpenWorldHint:   boolPtr(false),
-		ReadOnlyHint:    false,
-	}
-}
-
 func currentPermissions() computeruse.PermissionState {
 	snapshot := permissions.CurrentSnapshot(permissions.ReqAccessibility, permissions.ReqScreenRecording)
 	return computeruse.PermissionState{
@@ -977,8 +924,4 @@ func requiresRefreshResult(action, app string) (*mcp.CallToolResult, any, error)
 
 func roundCoordinate(v float64) int {
 	return int(math.Round(v))
-}
-
-func boolPtr(v bool) *bool {
-	return &v
 }

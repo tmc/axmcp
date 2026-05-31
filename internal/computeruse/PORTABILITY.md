@@ -53,16 +53,16 @@ or Apple-specific APIs:
 - `internal/computeruse/intervention`: CoreFoundation, CoreGraphics, and kernel
   event APIs.
 
-Non-Darwin builds now get unsupported stubs for these packages and for
-`cmd/computer-use-mcp`, so the package set can compile without pulling in the
-Apple dependency chain. Runtime native automation remains unavailable until
-Windows and Linux backends replace those stubs. Windows also has a first
-`internal/computeruse/winstate` package that can enumerate visible Win32
-windows and build a minimal window-metadata snapshot, but the command is not
-wired to serve it yet and UI Automation trees are still missing. Linux has the
-matching first `internal/computeruse/linuxstate` package for X11 window
-metadata through `wmctrl -lpG`; AT-SPI trees, screenshots, input, and Wayland
-support are still missing.
+Non-Darwin builds now get unsupported stubs for the Darwin-only helper
+packages, so the package set can compile without pulling in the Apple
+dependency chain. `cmd/computer-use-mcp` starts as an MCP server on Windows and
+Linux with state tools wired to platform window metadata. Windows uses
+`internal/computeruse/winstate` to enumerate visible Win32 windows and build a
+minimal window-metadata snapshot; UI Automation trees are still missing. Linux
+uses `internal/computeruse/linuxstate` for X11 window metadata through
+`wmctrl -lpG`; AT-SPI trees, screenshots, input, and Wayland support are still
+missing. Action tools remain registered but return explicit unsupported errors
+until input backends land.
 
 ## Implementation Slice
 
@@ -81,9 +81,9 @@ implemented. The next slice is to replace those stubs with real backends one
 subsystem at a time.
 
 `computeruse.PlatformStatus` reports the compiled backend and the capabilities
-that are present or missing. The non-Darwin command prints that report before
-exiting so missing Windows or Linux prerequisites can become explicit backend
-probes instead of silent no-op behavior.
+that are present or missing. Windows and Linux state backends currently surface
+missing prerequisites, such as `wmctrl`, through `list_apps` and
+`get_app_state` errors instead of silently returning empty state.
 
 `computeruse.Backend` is the package-level contract for native
 implementations. It separates app/window state, input, screenshots, and
@@ -95,19 +95,20 @@ and SkyLight paths. Windows and Linux backends should implement the same
 interface instead of exposing UIA, MSAA, AT-SPI, X11, WGC, or portal handles
 through tool responses. `internal/computeruse/winstate` is the first Windows
 state slice: it uses Win32 top-level windows for app resolution and a root
-window node, leaving UIA/MSAA element trees for the next state slice.
-`internal/computeruse/linuxstate` mirrors that boundary for X11: it resolves
-apps from `wmctrl -lpG` output and returns a root window node while AT-SPI and
-Wayland-specific state remain future work.
+window node, leaving UIA/MSAA element trees for the next state slice. The
+Windows command now serves that state through the normal MCP `list_apps` and
+`get_app_state` tools. `internal/computeruse/linuxstate` mirrors that boundary
+for X11: it resolves apps from `wmctrl -lpG` output and returns a root window
+node while AT-SPI and Wayland-specific state remain future work. The Linux
+command serves that state through the same MCP tools.
 
 ## Upstream-Backed Backlog
 
 The next code milestones should keep the current `cmd/computer-use-mcp`
 contract and replace the unsupported stubs behind it.
 
-1. Expand and wire the Windows state backend. Connect `winstate` to
-   `cmd/computer-use-mcp`, keep HWNDs inside retained snapshots, add UI
-   Automation for the tree, and add an MSAA fallback for apps whose UIA
+1. Expand the Windows state backend. Keep HWNDs inside retained snapshots, add
+   UI Automation for the tree, and add an MSAA fallback for apps whose UIA
    providers hang or lose role fidelity. Preserve axmcp's `state_id` refresh
    contract instead of exposing reusable raw element handles to callers.
 2. Add Windows screenshot and coordinate handling. Mirror TryCUA's target:
@@ -122,13 +123,12 @@ contract and replace the unsupported stubs behind it.
    to the target HWND. Return a structured `background_unavailable` result when
    background dispatch is known to drop, and require an explicit foreground
    option before using SendInput.
-4. Expand and wire the Linux backend in narrower phases. Connect `linuxstate`
-   to `cmd/computer-use-mcp`, replace or supplement the `wmctrl` dependency
-   when a direct X11 path lands, capture with XGetImage or a checked external
-   helper, walk AT-SPI when the bus is available, perform element actions
-   through AT-SPI, and use XSendEvent for window-targeted pixels/keys. Treat
-   Wayland input as passive or portal-gated until compositor support is
-   detected.
+4. Expand the Linux backend in narrower phases. Replace or supplement the
+   `wmctrl` dependency when a direct X11 path lands, capture with XGetImage or a
+   checked external helper, walk AT-SPI when the bus is available, perform
+   element actions through AT-SPI, and use XSendEvent for window-targeted
+   pixels/keys. Treat Wayland input as passive or portal-gated until compositor
+   support is detected.
 5. Expand `PlatformStatus` into a real doctor surface. Windows should report
    interactive-session status, UIA reachability, WGC availability, integrity
    level risks, and screen-capture readiness. Linux should report X11 versus
