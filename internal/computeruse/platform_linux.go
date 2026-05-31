@@ -12,10 +12,10 @@ import (
 func PlatformStatus() PlatformReport {
 	display := os.Getenv("DISPLAY")
 	wmctrlPath, wmctrlErr := exec.LookPath("wmctrl")
+	importPath, importErr := exec.LookPath("import")
 	caps := []PlatformCapability{
 		{Name: "app_state", Message: "AT-SPI accessibility tree backend is not implemented"},
 		{Name: "input", Message: "X11, Wayland, or portal input backend is not implemented"},
-		{Name: "screenshot", Message: "X11, Wayland, or portal screenshot backend is not implemented"},
 		{Name: "intervention", Message: "Linux physical-intervention monitor is not implemented"},
 	}
 	switch {
@@ -25,6 +25,14 @@ func PlatformStatus() PlatformReport {
 		caps = append(caps, PlatformCapability{Name: "x11_window_enumeration", Message: "wmctrl is not available on PATH"})
 	default:
 		caps = append(caps, PlatformCapability{Name: "x11_window_enumeration", Available: true, Message: "wmctrl-backed X11 top-level window enumeration is available at " + wmctrlPath})
+	}
+	switch {
+	case display == "":
+		caps = append(caps, PlatformCapability{Name: "screenshot", Message: "DISPLAY is not set"})
+	case importErr != nil:
+		caps = append(caps, PlatformCapability{Name: "screenshot", Message: "ImageMagick import is not available on PATH"})
+	default:
+		caps = append(caps, PlatformCapability{Name: "screenshot", Available: true, Message: "ImageMagick import-backed X11 screenshot is available at " + importPath})
 	}
 	if display == "" {
 		caps = append(caps, PlatformCapability{Name: "x11", Message: "DISPLAY is not set"})
@@ -45,6 +53,6 @@ func PlatformStatus() PlatformReport {
 		OS:           runtime.GOOS,
 		Backend:      "linux-unsupported",
 		Capabilities: caps,
-		Message:      "Linux native desktop automation is partially scaffolded; AT-SPI, screenshots, and input are not implemented",
+		Message:      "Linux native desktop automation is partially scaffolded; AT-SPI and input are not implemented",
 	}
 }

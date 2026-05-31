@@ -2,6 +2,7 @@ package linuxstate
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os/exec"
 	"sort"
@@ -89,6 +90,17 @@ func (b Backend) BuildState(ctx context.Context, req computeruse.StateRequest) (
 	if req.Instructions != nil {
 		state.Instructions = req.Instructions.Instructions(state.App)
 	}
+	pngData, err := b.captureScreenshot(ctx, win)
+	if err != nil {
+		return nil, err
+	}
+	pngData, cfg, err := computeruse.NormalizeScreenshotPNG(pngData, computeruse.MaxScreenshotLongSide)
+	if err != nil {
+		return nil, err
+	}
+	state.ScreenshotPNGBase64 = base64.StdEncoding.EncodeToString(pngData)
+	state.Window.ScreenshotWidth = cfg.Width
+	state.Window.ScreenshotHeight = cfg.Height
 	return &Snapshot{state: state, window: win}, nil
 }
 
@@ -102,6 +114,34 @@ func (b Backend) listWindows(ctx context.Context) ([]Window, error) {
 		return nil, fmt.Errorf("list X11 windows with wmctrl: %w", err)
 	}
 	return parseWMCTRL(out)
+}
+
+func (b Backend) captureScreenshot(ctx context.Context, win Window) ([]byte, error) {
+	run := b.run
+	if run == nil {
+		run = runCommand
+	}
+	return captureWindowPNG(ctx, run, win)
+}
+
+func captureWindowPNG(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error), win Window) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(win.ID) == "" {
+		return nil, fmt.Errorf("missing X11 window id")
+	}
+	if win.Width <= 0 || win.Height <= 0 {
+		return nil, fmt.Errorf("window has empty bounds")
+	}
+	out, err := run(ctx, "import", "-window", win.ID, "png:-")
+	if err != nil {
+		return nil, fmt.Errorf("capture X11 window screenshot with import: %w", err)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("capture X11 window screenshot with import: empty output")
+	}
+	return out, nil
 }
 
 func (b Backend) resolveWindow(ctx context.Context, selector string) (Window, error) {

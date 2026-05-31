@@ -1,7 +1,12 @@
 package linuxstate
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"fmt"
+	"image"
+	"image/png"
 	"reflect"
 	"testing"
 
@@ -78,7 +83,8 @@ func TestBackendResolveAppMatchesPIDTitleAndWindowID(t *testing.T) {
 }
 
 func TestBackendBuildStateReturnsWindowSnapshot(t *testing.T) {
-	backend := Backend{run: fakeWMCTRL}
+	runner := fakeRunner{png: testPNG(t, 320, 200)}
+	backend := Backend{run: runner.run}
 	snapshot, err := backend.BuildState(context.Background(), computeruse.StateRequest{
 		App:          "calculator",
 		Instructions: fakeInstructions{},
@@ -95,6 +101,15 @@ func TestBackendBuildStateReturnsWindowSnapshot(t *testing.T) {
 	if state.Window.Title != "Calculator" || state.Window.Width != 300 || state.Window.Height != 200 {
 		t.Fatalf("state.Window = %#v, want Calculator 300x200", state.Window)
 	}
+	if state.Window.ScreenshotWidth != 320 || state.Window.ScreenshotHeight != 200 {
+		t.Fatalf("screenshot size = %dx%d, want 320x200", state.Window.ScreenshotWidth, state.Window.ScreenshotHeight)
+	}
+	if _, err := base64.StdEncoding.DecodeString(state.ScreenshotPNGBase64); err != nil {
+		t.Fatalf("ScreenshotPNGBase64 is not base64 PNG: %v", err)
+	}
+	if !runner.imported {
+		t.Fatalf("BuildState did not capture screenshot with import")
+	}
 	if len(state.Tree) != 1 || state.Tree[0].Role != "Window" || state.Tree[0].Title != "Calculator" {
 		t.Fatalf("state.Tree = %#v, want root window node", state.Tree)
 	}
@@ -103,12 +118,67 @@ func TestBackendBuildStateReturnsWindowSnapshot(t *testing.T) {
 	}
 }
 
+func TestBackendBuildStateCapsScreenshotLongSide(t *testing.T) {
+	runner := fakeRunner{png: testPNG(t, 3136, 1960)}
+	backend := Backend{run: runner.run}
+	snapshot, err := backend.BuildState(context.Background(), computeruse.StateRequest{App: "calculator"})
+	if err != nil {
+		t.Fatalf("BuildState: %v", err)
+	}
+	state := snapshot.State()
+	if state.Window.ScreenshotWidth != 1568 || state.Window.ScreenshotHeight != 980 {
+		t.Fatalf("screenshot size = %dx%d, want 1568x980", state.Window.ScreenshotWidth, state.Window.ScreenshotHeight)
+	}
+	data, err := base64.StdEncoding.DecodeString(state.ScreenshotPNGBase64)
+	if err != nil {
+		t.Fatalf("DecodeString: %v", err)
+	}
+	cfg, err := png.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("DecodeConfig: %v", err)
+	}
+	if cfg.Width != 1568 || cfg.Height != 980 {
+		t.Fatalf("encoded screenshot = %dx%d, want 1568x980", cfg.Width, cfg.Height)
+	}
+}
+
 func fakeWMCTRL(context.Context, string, ...string) ([]byte, error) {
 	return []byte(wmctrlOutput), nil
+}
+
+type fakeRunner struct {
+	png      []byte
+	imported bool
+}
+
+func (r *fakeRunner) run(_ context.Context, name string, args ...string) ([]byte, error) {
+	switch name {
+	case "wmctrl":
+		return []byte(wmctrlOutput), nil
+	case "import":
+		if !reflect.DeepEqual(args, []string{"-window", "0x03e00007", "png:-"}) {
+			return nil, fmt.Errorf("import args = %#v", args)
+		}
+		r.imported = true
+		return r.png, nil
+	default:
+		return nil, fmt.Errorf("unexpected command %q", name)
+	}
 }
 
 type fakeInstructions struct{}
 
 func (fakeInstructions) Instructions(app computeruse.AppInfo) string {
 	return "use " + app.Name
+}
+
+func testPNG(t *testing.T, width, height int) []byte {
+	t.Helper()
+
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("png.Encode: %v", err)
+	}
+	return buf.Bytes()
 }
