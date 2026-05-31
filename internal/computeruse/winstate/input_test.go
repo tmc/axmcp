@@ -264,6 +264,90 @@ func TestBackendSetValueUsesUIAPattern(t *testing.T) {
 	}
 }
 
+func TestBackendSetValueFallsBackToWindowTextReplacement(t *testing.T) {
+	rec := &recordingInput{}
+	backend := Backend{input: rec.run}
+	snapshot := winSettableInputSnapshot()
+
+	if err := backend.SetValue(context.Background(), snapshot, 1, "42"); err != nil {
+		t.Fatalf("SetValue: %v", err)
+	}
+	want := []inputAction{
+		{
+			Kind:       inputClick,
+			Target:     77,
+			Button:     mouseLeft,
+			ClickCount: 1,
+			Start:      coords.ScreenPoint{X: 55, Y: 70},
+		},
+		{Kind: inputKey, Target: 77, Key: "ctrl+a"},
+		{Kind: inputText, Target: 77, Text: "42"},
+	}
+	if !reflect.DeepEqual(rec.actions, want) {
+		t.Fatalf("actions = %#v, want %#v", rec.actions, want)
+	}
+}
+
+func TestBackendSetValueFallsBackToWindowEmptyReplacement(t *testing.T) {
+	rec := &recordingInput{}
+	backend := Backend{input: rec.run}
+	snapshot := winSettableInputSnapshot()
+
+	if err := backend.SetValue(context.Background(), snapshot, 1, ""); err != nil {
+		t.Fatalf("SetValue: %v", err)
+	}
+	want := []inputAction{
+		{
+			Kind:       inputClick,
+			Target:     77,
+			Button:     mouseLeft,
+			ClickCount: 1,
+			Start:      coords.ScreenPoint{X: 55, Y: 70},
+		},
+		{Kind: inputKey, Target: 77, Key: "ctrl+a"},
+		{Kind: inputKey, Target: 77, Key: "BackSpace"},
+	}
+	if !reflect.DeepEqual(rec.actions, want) {
+		t.Fatalf("actions = %#v, want %#v", rec.actions, want)
+	}
+}
+
+func TestBackendSetValueFallsBackWhenUIAUnavailable(t *testing.T) {
+	input := &recordingInput{}
+	automation := &recordingAutomation{err: computeruse.PlatformUnsupported("set value with UI Automation")}
+	backend := Backend{input: input.run, uiaAction: automation.run}
+	snapshot := winSettableInputSnapshot()
+	native := snapshot.elements[1]
+	native.AutomationHandle = 1234
+	snapshot.elements[1] = native
+
+	if err := backend.SetValue(context.Background(), snapshot, 1, "42"); err != nil {
+		t.Fatalf("SetValue: %v", err)
+	}
+	wantAutomation := []automationAction{{
+		Kind:    automationSetValue,
+		Element: 1234,
+		Value:   "42",
+	}}
+	if !reflect.DeepEqual(automation.actions, wantAutomation) {
+		t.Fatalf("automation actions = %#v, want %#v", automation.actions, wantAutomation)
+	}
+	wantInput := []inputAction{
+		{
+			Kind:       inputClick,
+			Target:     77,
+			Button:     mouseLeft,
+			ClickCount: 1,
+			Start:      coords.ScreenPoint{X: 55, Y: 70},
+		},
+		{Kind: inputKey, Target: 77, Key: "ctrl+a"},
+		{Kind: inputText, Target: 77, Text: "42"},
+	}
+	if !reflect.DeepEqual(input.actions, wantInput) {
+		t.Fatalf("input actions = %#v, want %#v", input.actions, wantInput)
+	}
+}
+
 func TestParseAutomationAction(t *testing.T) {
 	tests := []struct {
 		action string
@@ -334,11 +418,12 @@ func (r *recordingInput) run(_ context.Context, action inputAction) error {
 
 type recordingAutomation struct {
 	actions []automationAction
+	err     error
 }
 
 func (r *recordingAutomation) run(_ context.Context, action automationAction) error {
 	r.actions = append(r.actions, action)
-	return nil
+	return r.err
 }
 
 func winInputSnapshot() *Snapshot {
@@ -377,4 +462,17 @@ func winInputSnapshot() *Snapshot {
 			1: {WindowHandle: 77, AutomationHandle: 1234},
 		},
 	}
+}
+
+func winSettableInputSnapshot() *Snapshot {
+	s := winInputSnapshot()
+	node := s.nodes[1]
+	node.Role = "Edit"
+	node.Settable = true
+	s.nodes[1] = node
+	s.state.Tree[1] = node
+	native := s.elements[1]
+	native.AutomationHandle = 0
+	s.elements[1] = native
+	return s
 }

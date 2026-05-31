@@ -61,7 +61,8 @@ Linux with state tools wired to platform window metadata. Windows uses
 window snapshot with a PrintWindow/GDI screenshot and bounded UIA control-view
 tree when available. The Windows input slice routes pixel clicks, drags, and
 scrolling through background Win32 mouse messages and invokes common UIA
-patterns for element actions; keyboard input and window-level text use
+patterns for element actions, with background keyboard replacement as a
+set-value fallback for settable fields; keyboard input and window-level text use
 background Win32 messages, and opt-in foreground clicks use SendInput. Linux uses
 `internal/computeruse/linuxstate`
 for X11 window metadata through `wmctrl -lpG` and captures screenshots through
@@ -124,9 +125,11 @@ routes root-window pixel clicks, drags, and scrolls through background Win32
 mouse messages using the returned screenshot coordinate contract. Element
 clicks prefer retained UIA invoke patterns when available and otherwise fall
 back to window messages; secondary actions and set-value route through retained
-UIA pattern handles. Keyboard input and window-level text route through
-background Win32 messages, while `foreground_hid` clicks activate the target
-window and use SendInput for apps that reject background messages.
+UIA pattern handles. Set-value falls back to a background click, `ctrl+a`, and
+keyboard text replacement for settable fields when UIA set-value is
+unavailable. Keyboard input and window-level text route through background
+Win32 messages, while `foreground_hid` clicks activate the target window and
+use SendInput for apps that reject background messages.
 `internal/computeruse/linuxstate` mirrors that boundary for X11: it resolves
 apps from `wmctrl -lpG` output, captures a PNG screenshot with ImageMagick
 `import`, and reads a bounded AT-SPI subtree through `gdbus` when available,

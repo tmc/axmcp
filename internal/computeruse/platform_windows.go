@@ -12,7 +12,7 @@ func PlatformStatus() PlatformReport {
 	caps := []PlatformCapability{
 		{Name: "win32_window_enumeration", Available: true, Message: "compiled Win32 top-level window enumeration backend"},
 		{Name: "app_state", Available: true, Message: "state uses Win32 windows, screenshots, and a bounded UIA control-view reader with root fallback"},
-		{Name: "input", Available: true, Message: "pixel clicks, drags, scrolling, key presses, and text use background Win32 messages; foreground clicks use opt-in SendInput; UIA invoke/toggle/select/expand-collapse/set-value patterns are available"},
+		{Name: "input", Available: true, Message: "pixel clicks, drags, scrolling, key presses, and text use background Win32 messages; foreground clicks use opt-in SendInput; UIA invoke/toggle/select/expand-collapse/set-value patterns are available with keyboard set-value fallback"},
 		{Name: "screenshot", Available: true, Message: "state screenshots use PrintWindow with a GDI BitBlt fallback; WGC is not implemented"},
 		{Name: "intervention", Message: "Windows physical-intervention monitor is not implemented"},
 	}

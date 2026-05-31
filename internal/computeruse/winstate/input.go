@@ -2,6 +2,7 @@ package winstate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -205,14 +206,20 @@ func (b Backend) SetValue(ctx context.Context, snapshot computeruse.Snapshot, in
 	if err != nil {
 		return err
 	}
-	native, _, err := s.NativeElement(index)
+	native, node, err := s.NativeElement(index)
 	if err != nil {
 		return err
 	}
-	if native.AutomationHandle == 0 {
-		return computeruse.PlatformUnsupported("set value with UI Automation")
+	if native.AutomationHandle != 0 {
+		err := b.runAutomationAction(ctx, automationAction{Kind: automationSetValue, Element: native.AutomationHandle, Value: value})
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, computeruse.ErrPlatformUnsupported) {
+			return err
+		}
 	}
-	return b.runAutomationAction(ctx, automationAction{Kind: automationSetValue, Element: native.AutomationHandle, Value: value})
+	return b.setValueByKeyboard(ctx, s, native, node, value)
 }
 
 func (b Backend) PressKey(ctx context.Context, snapshot computeruse.Snapshot, key string) error {
@@ -262,6 +269,30 @@ func (b Backend) clickWindowLocal(ctx context.Context, s *Snapshot, target uintp
 		ClickCount: normalizeClickCount(opts.ClickCount),
 		Start:      screen,
 	})
+}
+
+func (b Backend) setValueByKeyboard(ctx context.Context, s *Snapshot, native NativeElement, node computeruse.ElementNode, value string) error {
+	if !node.Settable {
+		return computeruse.PlatformUnsupported("set value with UI Automation")
+	}
+	if node.Width <= 0 || node.Height <= 0 {
+		return fmt.Errorf("element has empty bounds")
+	}
+	target := native.WindowHandle
+	if target == 0 {
+		target = s.window.Handle
+	}
+	local := coords.Point{X: node.X + node.Width/2, Y: node.Y + node.Height/2}
+	if err := b.clickWindowLocal(ctx, s, target, local, computeruse.ClickOptions{}); err != nil {
+		return err
+	}
+	if err := b.runInput(ctx, inputAction{Kind: inputKey, Target: target, Key: "ctrl+a"}); err != nil {
+		return err
+	}
+	if value == "" {
+		return b.runInput(ctx, inputAction{Kind: inputKey, Target: target, Key: "BackSpace"})
+	}
+	return b.runInput(ctx, inputAction{Kind: inputText, Target: target, Text: value})
 }
 
 func (b Backend) runInput(ctx context.Context, action inputAction) error {
