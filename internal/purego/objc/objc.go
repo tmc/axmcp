@@ -1,3 +1,5 @@
+//go:build darwin
+
 // Package objc provides Objective-C runtime bindings using purego.
 package objc
 
