@@ -67,11 +67,11 @@ func registerGetAppState(s *mcp.Server, rt *runtimeState) {
 			"omit_screenshot": booleanProperty("Omit screenshot_png_base64 from the returned state. The state_id remains valid for element-index actions; pixel-coordinate actions still require coordinates derived from a screenshot."),
 		}, "app"),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args getAppStateInput) (*mcp.CallToolResult, any, error) {
-		info, err := appstate.ResolveApp(ctx, args.App)
+		mode, err := parseCaptureMode(args.CaptureMode)
 		if err != nil {
 			return toolError(err), nil, nil
 		}
-		mode, err := parseCaptureMode(args.CaptureMode)
+		info, err := appstate.ResolveApp(ctx, args.App)
 		if err != nil {
 			return toolError(err), nil, nil
 		}

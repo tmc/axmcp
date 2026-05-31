@@ -271,6 +271,71 @@ func TestParseCaptureMode(t *testing.T) {
 	}
 }
 
+func TestVisionCaptureModePreservesStoredState(t *testing.T) {
+	rt := &runtimeState{
+		sessions:  session.NewStore(),
+		urlPolicy: policy.NewURLPolicy(nil),
+	}
+	state, err := rt.sessions.Bind(fakeActionSnapshot{state: computeruse.AppState{
+		App:                 computeruse.AppInfo{Name: "Finder", BundleID: "com.apple.finder", PID: 123},
+		ScreenshotPNGBase64: "base64",
+		Tree: []computeruse.ElementNode{{
+			Index: 7,
+			Role:  "AXButton",
+			Title: "OK",
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+
+	response := appStateResponse(state, captureModeVision, false)
+	if len(response.Tree) != 0 {
+		t.Fatalf("vision response tree length = %d, want 0", len(response.Tree))
+	}
+	if response.ScreenshotPNGBase64 == "" {
+		t.Fatalf("vision response omitted screenshot")
+	}
+
+	stored, err := stateForAction(rt, "click", "Finder", response.StateID)
+	if err != nil {
+		t.Fatalf("stateForAction after vision response: %v", err)
+	}
+	if len(stored.Tree) != 1 {
+		t.Fatalf("stored tree length = %d, want 1", len(stored.Tree))
+	}
+	_, node, err := rt.sessions.Resolve(response.StateID, 7)
+	if err != nil {
+		t.Fatalf("Resolve after vision response: %v", err)
+	}
+	if node.Index != 7 {
+		t.Fatalf("resolved node index = %d, want 7", node.Index)
+	}
+}
+
+func TestInvalidCaptureModeDoesNotMutateSessions(t *testing.T) {
+	rt := &runtimeState{sessions: session.NewStore()}
+	ctx := context.Background()
+	cs := newTestClientSessionForRuntime(t, ctx, rt)
+
+	_, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name: "get_app_state",
+		Arguments: map[string]any{
+			"app":          "not-a-real-app-name-for-capture-mode-test",
+			"capture_mode": "screen",
+		},
+	})
+	if err == nil {
+		t.Fatalf("CallTool invalid capture_mode = nil, want error")
+	}
+	if got := err.Error(); !strings.Contains(got, "capture_mode") || !strings.Contains(got, "screen") {
+		t.Fatalf("CallTool error = %q, want capture_mode validation", got)
+	}
+	if _, ok := rt.sessions.GetForApp("not-a-real-app-name-for-capture-mode-test"); ok {
+		t.Fatalf("session store mutated after invalid capture_mode")
+	}
+}
+
 func TestEvaluateJavascriptBuildsAppleScriptTarget(t *testing.T) {
 	if got := browserScriptTarget(computeruse.AppInfo{BundleID: "com.brave.Browser", Name: "Brave Browser"}); got != `id "com.brave.Browser"` {
 		t.Fatalf("browserScriptTarget bundle = %q", got)
@@ -394,7 +459,13 @@ func (f fakeActionSnapshot) Close() error {
 func newTestClientSession(t *testing.T, ctx context.Context) *mcp.ClientSession {
 	t.Helper()
 
-	server := newComputerUseServer(&runtimeState{})
+	return newTestClientSessionForRuntime(t, ctx, &runtimeState{})
+}
+
+func newTestClientSessionForRuntime(t *testing.T, ctx context.Context, rt *runtimeState) *mcp.ClientSession {
+	t.Helper()
+
+	server := newComputerUseServer(rt)
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
