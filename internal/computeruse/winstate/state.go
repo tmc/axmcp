@@ -57,6 +57,7 @@ type Backend struct {
 	screenshot func(context.Context, Window) ([]byte, error)
 	automation func(context.Context, Window) (AutomationNode, error)
 	input      inputRunner
+	uiaAction  automationActionRunner
 }
 
 var _ computeruse.StateBackend = Backend{}

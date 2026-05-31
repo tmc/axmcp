@@ -60,8 +60,8 @@ Linux with state tools wired to platform window metadata. Windows uses
 `internal/computeruse/winstate` to enumerate visible Win32 windows and build a
 window snapshot with a PrintWindow/GDI screenshot and bounded UIA control-view
 tree when available. The Windows input slice routes pixel clicks and drags
-through background Win32 mouse messages; UIA pattern actions, keyboard input,
-and foreground SendInput remain missing. Linux uses
+through background Win32 mouse messages and invokes common UIA patterns for
+element actions; keyboard input and foreground SendInput remain missing. Linux uses
 `internal/computeruse/linuxstate`
 for X11 window metadata through `wmctrl -lpG` and captures screenshots through
 ImageMagick `import`; root-window pixel/key input uses `xdotool`; and a
@@ -114,9 +114,11 @@ node when UIA is unavailable. Tests can still inject a tree to lock the
 indexing and geometry contract. The Windows command now serves that state
 through the normal MCP `list_apps` and `get_app_state` tools. Windows also
 routes root-window pixel clicks and drags through background Win32 mouse
-messages using the returned screenshot coordinate contract. Element clicks use
-retained native HWNDs when present, but UIA pattern invocation, keyboard input,
-and foreground SendInput remain explicit unsupported paths.
+messages using the returned screenshot coordinate contract. Element clicks
+prefer retained UIA invoke patterns when available and otherwise fall back to
+window messages; secondary actions and set-value route through retained UIA
+pattern handles. Keyboard input and foreground SendInput remain explicit
+unsupported paths.
 `internal/computeruse/linuxstate` mirrors that boundary for X11: it resolves
 apps from `wmctrl -lpG` output, captures a PNG screenshot with ImageMagick
 `import`, and reads a bounded AT-SPI subtree through `gdbus` when available,
@@ -141,12 +143,11 @@ contract and replace the unsupported stubs behind it.
    DirectComposition/XAML hosts, DWM frame cropping, and explicit occlusion
    warnings when only BitBlt is available. Preserve the existing 1568 px
    long-side cap and returned-dimension coordinate contract.
-3. Expand Windows input dispatch. Prefer element-index UIA patterns
-   (`Invoke`, `Value`, `Toggle`, `SelectionItem`, `ExpandCollapse`) for
-   background actions. Harden the current PostMessage pixel path with
-   hit-testing and drop detection. Return a structured `background_unavailable`
-   result when background dispatch is known to drop, and require an explicit
-   foreground option before using SendInput.
+3. Expand Windows input dispatch. Harden the current UIA pattern and
+   PostMessage pixel paths with provider timeouts, hit-testing, drop detection,
+   and structured `background_unavailable` results when background dispatch is
+   known to drop. Add explicit foreground SendInput only behind an opt-in
+   foreground option.
 4. Expand the Linux backend in narrower phases. Harden the current `gdbus`
    AT-SPI reader with direct DBus calls, cache/batch requests, and timeout
    handling; replace or supplement the `wmctrl` and ImageMagick dependencies

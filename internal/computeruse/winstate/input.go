@@ -10,6 +10,7 @@ import (
 )
 
 type inputRunner func(context.Context, inputAction) error
+type automationActionRunner func(context.Context, automationAction) error
 
 type inputActionKind int
 
@@ -35,6 +36,24 @@ const (
 	mouseMiddle
 )
 
+type automationActionKind int
+
+const (
+	automationInvoke automationActionKind = iota + 1
+	automationToggle
+	automationSelect
+	automationExpand
+	automationCollapse
+	automationExpandCollapse
+	automationSetValue
+)
+
+type automationAction struct {
+	Kind    automationActionKind
+	Element uintptr
+	Value   string
+}
+
 func (b Backend) ClickElement(ctx context.Context, snapshot computeruse.Snapshot, index int, opts computeruse.ClickOptions) error {
 	if opts.ForegroundHID {
 		return computeruse.PlatformUnsupported("foreground SendInput click")
@@ -49,6 +68,9 @@ func (b Backend) ClickElement(ctx context.Context, snapshot computeruse.Snapshot
 	}
 	if node.Width <= 0 || node.Height <= 0 {
 		return fmt.Errorf("element has empty bounds")
+	}
+	if canInvokeElement(node, native, opts) {
+		return b.runAutomationAction(ctx, automationAction{Kind: automationInvoke, Element: native.AutomationHandle})
 	}
 	target := native.WindowHandle
 	if target == 0 {
@@ -114,12 +136,38 @@ func (b Backend) ScrollElement(context.Context, computeruse.Snapshot, int, compu
 	return computeruse.PlatformUnsupported("scroll element with UI Automation")
 }
 
-func (b Backend) PerformSecondaryAction(context.Context, computeruse.Snapshot, int, string) error {
-	return computeruse.PlatformUnsupported("perform UI Automation action")
+func (b Backend) PerformSecondaryAction(ctx context.Context, snapshot computeruse.Snapshot, index int, action string) error {
+	s, err := windowsSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	native, _, err := s.NativeElement(index)
+	if err != nil {
+		return err
+	}
+	if native.AutomationHandle == 0 {
+		return computeruse.PlatformUnsupported("perform UI Automation action")
+	}
+	kind, err := parseAutomationAction(action)
+	if err != nil {
+		return err
+	}
+	return b.runAutomationAction(ctx, automationAction{Kind: kind, Element: native.AutomationHandle})
 }
 
-func (b Backend) SetValue(context.Context, computeruse.Snapshot, int, string) error {
-	return computeruse.PlatformUnsupported("set value with UI Automation")
+func (b Backend) SetValue(ctx context.Context, snapshot computeruse.Snapshot, index int, value string) error {
+	s, err := windowsSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	native, _, err := s.NativeElement(index)
+	if err != nil {
+		return err
+	}
+	if native.AutomationHandle == 0 {
+		return computeruse.PlatformUnsupported("set value with UI Automation")
+	}
+	return b.runAutomationAction(ctx, automationAction{Kind: automationSetValue, Element: native.AutomationHandle, Value: value})
 }
 
 func (b Backend) PressKey(context.Context, computeruse.Snapshot, string) error {
@@ -162,6 +210,20 @@ func (b Backend) runInput(ctx context.Context, action inputAction) error {
 	return run(ctx, action)
 }
 
+func (b Backend) runAutomationAction(ctx context.Context, action automationAction) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if action.Element == 0 {
+		return computeruse.PlatformUnsupported("perform UI Automation action")
+	}
+	run := b.uiaAction
+	if run == nil {
+		run = performAutomationAction
+	}
+	return run(ctx, action)
+}
+
 func windowsSnapshot(snapshot computeruse.Snapshot) (*Snapshot, error) {
 	if snapshot == nil {
 		return nil, fmt.Errorf("missing state snapshot")
@@ -173,11 +235,45 @@ func windowsSnapshot(snapshot computeruse.Snapshot) (*Snapshot, error) {
 	return s, nil
 }
 
+func canInvokeElement(node computeruse.ElementNode, native NativeElement, opts computeruse.ClickOptions) bool {
+	if native.AutomationHandle == 0 || normalizeClickCount(opts.ClickCount) != 1 {
+		return false
+	}
+	if strings.TrimSpace(opts.Button) != "" && !strings.EqualFold(strings.TrimSpace(opts.Button), "left") {
+		return false
+	}
+	for _, action := range node.SecondaryActions {
+		if strings.EqualFold(strings.TrimSpace(action), "invoke") {
+			return true
+		}
+	}
+	return false
+}
+
 func normalizeClickCount(clickCount int) int {
 	if clickCount < 1 {
 		return 1
 	}
 	return clickCount
+}
+
+func parseAutomationAction(action string) (automationActionKind, error) {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "invoke", "press", "click":
+		return automationInvoke, nil
+	case "toggle":
+		return automationToggle, nil
+	case "select":
+		return automationSelect, nil
+	case "expand":
+		return automationExpand, nil
+	case "collapse":
+		return automationCollapse, nil
+	case "expand_collapse", "expandcollapse":
+		return automationExpandCollapse, nil
+	default:
+		return 0, fmt.Errorf("unsupported UI Automation action %q", action)
+	}
 }
 
 func parseMouseButton(button string) (mouseButton, error) {

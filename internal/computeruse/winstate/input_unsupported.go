@@ -11,3 +11,7 @@ import (
 func sendWindowInput(context.Context, inputAction) error {
 	return computeruse.PlatformUnsupported("windows input")
 }
+
+func performAutomationAction(context.Context, automationAction) error {
+	return computeruse.PlatformUnsupported("windows UI Automation action")
+}

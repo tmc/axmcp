@@ -72,13 +72,91 @@ func TestBackendClickElementUsesNativeWindowHandle(t *testing.T) {
 	}
 }
 
+func TestBackendClickElementPrefersInvokePattern(t *testing.T) {
+	rec := &recordingAutomation{}
+	backend := Backend{uiaAction: rec.run}
+	snapshot := winInputSnapshot()
+	node := snapshot.nodes[1]
+	node.SecondaryActions = []string{"invoke"}
+	snapshot.nodes[1] = node
+	snapshot.state.Tree[1].SecondaryActions = []string{"invoke"}
+
+	if err := backend.ClickElement(context.Background(), snapshot, 1, computeruse.ClickOptions{}); err != nil {
+		t.Fatalf("ClickElement: %v", err)
+	}
+	want := []automationAction{{
+		Kind:    automationInvoke,
+		Element: 1234,
+	}}
+	if !reflect.DeepEqual(rec.actions, want) {
+		t.Fatalf("actions = %#v, want %#v", rec.actions, want)
+	}
+}
+
+func TestBackendPerformSecondaryActionUsesUIAPattern(t *testing.T) {
+	rec := &recordingAutomation{}
+	backend := Backend{uiaAction: rec.run}
+
+	if err := backend.PerformSecondaryAction(context.Background(), winInputSnapshot(), 1, "toggle"); err != nil {
+		t.Fatalf("PerformSecondaryAction: %v", err)
+	}
+	want := []automationAction{{
+		Kind:    automationToggle,
+		Element: 1234,
+	}}
+	if !reflect.DeepEqual(rec.actions, want) {
+		t.Fatalf("actions = %#v, want %#v", rec.actions, want)
+	}
+}
+
+func TestBackendSetValueUsesUIAPattern(t *testing.T) {
+	rec := &recordingAutomation{}
+	backend := Backend{uiaAction: rec.run}
+
+	if err := backend.SetValue(context.Background(), winInputSnapshot(), 1, "42"); err != nil {
+		t.Fatalf("SetValue: %v", err)
+	}
+	want := []automationAction{{
+		Kind:    automationSetValue,
+		Element: 1234,
+		Value:   "42",
+	}}
+	if !reflect.DeepEqual(rec.actions, want) {
+		t.Fatalf("actions = %#v, want %#v", rec.actions, want)
+	}
+}
+
+func TestParseAutomationAction(t *testing.T) {
+	tests := []struct {
+		action string
+		want   automationActionKind
+	}{
+		{action: "invoke", want: automationInvoke},
+		{action: "click", want: automationInvoke},
+		{action: "toggle", want: automationToggle},
+		{action: "select", want: automationSelect},
+		{action: "expand", want: automationExpand},
+		{action: "collapse", want: automationCollapse},
+		{action: "expand_collapse", want: automationExpandCollapse},
+	}
+	for _, tt := range tests {
+		got, err := parseAutomationAction(tt.action)
+		if err != nil {
+			t.Fatalf("parseAutomationAction(%q): %v", tt.action, err)
+		}
+		if got != tt.want {
+			t.Fatalf("parseAutomationAction(%q) = %v, want %v", tt.action, got, tt.want)
+		}
+	}
+}
+
 func TestBackendWindowsInputUnsupportedPaths(t *testing.T) {
 	backend := Backend{input: (&recordingInput{}).run}
 	err := backend.ClickPoint(context.Background(), winInputSnapshot(), computeruse.Point{}, computeruse.ClickOptions{ForegroundHID: true})
 	if !errors.Is(err, computeruse.ErrPlatformUnsupported) {
 		t.Fatalf("ForegroundHID error = %v, want ErrPlatformUnsupported", err)
 	}
-	err = backend.SetValue(context.Background(), winInputSnapshot(), 1, "value")
+	err = backend.SetValue(context.Background(), winInputSnapshot(), 0, "value")
 	if !errors.Is(err, computeruse.ErrPlatformUnsupported) {
 		t.Fatalf("SetValue error = %v, want ErrPlatformUnsupported", err)
 	}
@@ -93,6 +171,15 @@ type recordingInput struct {
 }
 
 func (r *recordingInput) run(_ context.Context, action inputAction) error {
+	r.actions = append(r.actions, action)
+	return nil
+}
+
+type recordingAutomation struct {
+	actions []automationAction
+}
+
+func (r *recordingAutomation) run(_ context.Context, action automationAction) error {
 	r.actions = append(r.actions, action)
 	return nil
 }

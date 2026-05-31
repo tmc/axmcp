@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	"github.com/tmc/axmcp/internal/computeruse"
 	"golang.org/x/sys/windows"
 )
 
@@ -37,12 +38,13 @@ var (
 	clsidCUIAutomation = windows.GUID{Data1: 0xff48dba4, Data2: 0x60ef, Data3: 0x4201, Data4: [8]byte{0xaa, 0x87, 0x54, 0x10, 0x3e, 0xef, 0x59, 0x4e}}
 	iidIUIAutomation   = windows.GUID{Data1: 0x30cbe57d, Data2: 0xd9d0, Data3: 0x452a, Data4: [8]byte{0xab, 0x13, 0x7a, 0xc5, 0xac, 0x48, 0x25, 0xee}}
 
-	ole32                = windows.NewLazySystemDLL("ole32.dll")
-	oleaut32             = windows.NewLazySystemDLL("oleaut32.dll")
-	procCoCreateInstance = ole32.NewProc("CoCreateInstance")
-	procSysFreeString    = oleaut32.NewProc("SysFreeString")
-	procSysStringLen     = oleaut32.NewProc("SysStringLen")
-	procVariantClear     = oleaut32.NewProc("VariantClear")
+	ole32                 = windows.NewLazySystemDLL("ole32.dll")
+	oleaut32              = windows.NewLazySystemDLL("oleaut32.dll")
+	procCoCreateInstance  = ole32.NewProc("CoCreateInstance")
+	procSysAllocStringLen = oleaut32.NewProc("SysAllocStringLen")
+	procSysFreeString     = oleaut32.NewProc("SysFreeString")
+	procSysStringLen      = oleaut32.NewProc("SysStringLen")
+	procVariantClear      = oleaut32.NewProc("VariantClear")
 )
 
 type uiaReadResult struct {
@@ -430,6 +432,76 @@ type iUIAutomationElementVtbl struct {
 	GetClickablePoint           uintptr
 }
 
+type iUIAutomationInvokePattern struct {
+	lpVtbl *iUIAutomationInvokePatternVtbl
+}
+
+type iUIAutomationInvokePatternVtbl struct {
+	QueryInterface uintptr
+	AddRef         uintptr
+	Release        uintptr
+	Invoke         uintptr
+}
+
+type iUIAutomationTogglePattern struct {
+	lpVtbl *iUIAutomationTogglePatternVtbl
+}
+
+type iUIAutomationTogglePatternVtbl struct {
+	QueryInterface     uintptr
+	AddRef             uintptr
+	Release            uintptr
+	Toggle             uintptr
+	CurrentToggleState uintptr
+	CachedToggleState  uintptr
+}
+
+type iUIAutomationSelectionItemPattern struct {
+	lpVtbl *iUIAutomationSelectionItemPatternVtbl
+}
+
+type iUIAutomationSelectionItemPatternVtbl struct {
+	QueryInterface            uintptr
+	AddRef                    uintptr
+	Release                   uintptr
+	Select                    uintptr
+	AddToSelection            uintptr
+	RemoveFromSelection       uintptr
+	CurrentIsSelected         uintptr
+	CurrentSelectionContainer uintptr
+	CachedIsSelected          uintptr
+	CachedSelectionContainer  uintptr
+}
+
+type iUIAutomationExpandCollapsePattern struct {
+	lpVtbl *iUIAutomationExpandCollapsePatternVtbl
+}
+
+type iUIAutomationExpandCollapsePatternVtbl struct {
+	QueryInterface             uintptr
+	AddRef                     uintptr
+	Release                    uintptr
+	Expand                     uintptr
+	Collapse                   uintptr
+	CurrentExpandCollapseState uintptr
+	CachedExpandCollapseState  uintptr
+}
+
+type iUIAutomationValuePattern struct {
+	lpVtbl *iUIAutomationValuePatternVtbl
+}
+
+type iUIAutomationValuePatternVtbl struct {
+	QueryInterface    uintptr
+	AddRef            uintptr
+	Release           uintptr
+	SetValue          uintptr
+	CurrentValue      uintptr
+	CurrentIsReadOnly uintptr
+	CachedValue       uintptr
+	CachedIsReadOnly  uintptr
+}
+
 type oleVariant struct {
 	VT        uint16
 	Reserved1 uint16
@@ -619,6 +691,52 @@ func (el *iUIAutomationElement) actions() ([]string, bool) {
 }
 
 func (el *iUIAutomationElement) patternSupported(patternID int32) bool {
+	out, err := el.currentPattern(patternID, "")
+	if err != nil {
+		return false
+	}
+	releaseInterface(out)
+	return true
+}
+
+func performAutomationAction(ctx context.Context, action automationAction) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if action.Element == 0 {
+		return computeruse.PlatformUnsupported("perform UI Automation action")
+	}
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	releaseCOM, err := initializeCOM()
+	if err != nil {
+		return err
+	}
+	defer releaseCOM()
+
+	el := (*iUIAutomationElement)(unsafe.Pointer(action.Element))
+	switch action.Kind {
+	case automationInvoke:
+		return el.invoke()
+	case automationToggle:
+		return el.toggle()
+	case automationSelect:
+		return el.selectItem()
+	case automationExpand:
+		return el.expand()
+	case automationCollapse:
+		return el.collapse()
+	case automationExpandCollapse:
+		return el.toggleExpandCollapse()
+	case automationSetValue:
+		return el.setValue(action.Value)
+	default:
+		return fmt.Errorf("unknown UI Automation action %d", action.Kind)
+	}
+}
+
+func (el *iUIAutomationElement) currentPattern(patternID int32, name string) (uintptr, error) {
 	var out uintptr
 	hr, _, _ := syscall.SyscallN(
 		el.lpVtbl.GetCurrentPattern,
@@ -627,10 +745,148 @@ func (el *iUIAutomationElement) patternSupported(patternID int32) bool {
 		uintptr(unsafe.Pointer(&out)),
 	)
 	if failedHRESULT(hr) || out == 0 {
-		return false
+		feature := "UI Automation pattern"
+		if name != "" {
+			feature = "UI Automation " + name + " pattern"
+		}
+		if failedHRESULT(hr) {
+			return 0, fmt.Errorf("%s: %s: %w", feature, hresultString(hr), computeruse.ErrPlatformUnsupported)
+		}
+		return 0, computeruse.PlatformUnsupported(feature)
 	}
-	releaseInterface(out)
-	return true
+	return out, nil
+}
+
+func (el *iUIAutomationElement) invoke() error {
+	ptr, err := el.currentPattern(uiaInvokePatternID, "invoke")
+	if err != nil {
+		return err
+	}
+	defer releaseInterface(ptr)
+	p := (*iUIAutomationInvokePattern)(unsafe.Pointer(ptr))
+	hr, _, _ := syscall.SyscallN(p.lpVtbl.Invoke, ptr)
+	if failedHRESULT(hr) {
+		return fmt.Errorf("invoke UI Automation element: %s", hresultString(hr))
+	}
+	return nil
+}
+
+func (el *iUIAutomationElement) toggle() error {
+	ptr, err := el.currentPattern(uiaTogglePatternID, "toggle")
+	if err != nil {
+		return err
+	}
+	defer releaseInterface(ptr)
+	p := (*iUIAutomationTogglePattern)(unsafe.Pointer(ptr))
+	hr, _, _ := syscall.SyscallN(p.lpVtbl.Toggle, ptr)
+	if failedHRESULT(hr) {
+		return fmt.Errorf("toggle UI Automation element: %s", hresultString(hr))
+	}
+	return nil
+}
+
+func (el *iUIAutomationElement) selectItem() error {
+	ptr, err := el.currentPattern(uiaSelectionItemPatternID, "selection item")
+	if err != nil {
+		return err
+	}
+	defer releaseInterface(ptr)
+	p := (*iUIAutomationSelectionItemPattern)(unsafe.Pointer(ptr))
+	hr, _, _ := syscall.SyscallN(p.lpVtbl.Select, ptr)
+	if failedHRESULT(hr) {
+		return fmt.Errorf("select UI Automation element: %s", hresultString(hr))
+	}
+	return nil
+}
+
+func (el *iUIAutomationElement) expand() error {
+	ptr, err := el.currentPattern(uiaExpandCollapsePatternID, "expand/collapse")
+	if err != nil {
+		return err
+	}
+	defer releaseInterface(ptr)
+	p := (*iUIAutomationExpandCollapsePattern)(unsafe.Pointer(ptr))
+	return p.expand()
+}
+
+func (el *iUIAutomationElement) collapse() error {
+	ptr, err := el.currentPattern(uiaExpandCollapsePatternID, "expand/collapse")
+	if err != nil {
+		return err
+	}
+	defer releaseInterface(ptr)
+	p := (*iUIAutomationExpandCollapsePattern)(unsafe.Pointer(ptr))
+	return p.collapse()
+}
+
+func (el *iUIAutomationElement) toggleExpandCollapse() error {
+	ptr, err := el.currentPattern(uiaExpandCollapsePatternID, "expand/collapse")
+	if err != nil {
+		return err
+	}
+	defer releaseInterface(ptr)
+	p := (*iUIAutomationExpandCollapsePattern)(unsafe.Pointer(ptr))
+	state, ok := p.currentState()
+	if ok && state != 1 {
+		return p.collapse()
+	}
+	return p.expand()
+}
+
+func (p *iUIAutomationExpandCollapsePattern) expand() error {
+	hr, _, _ := syscall.SyscallN(p.lpVtbl.Expand, uintptr(unsafe.Pointer(p)))
+	if failedHRESULT(hr) {
+		return fmt.Errorf("expand UI Automation element: %s", hresultString(hr))
+	}
+	return nil
+}
+
+func (p *iUIAutomationExpandCollapsePattern) collapse() error {
+	hr, _, _ := syscall.SyscallN(p.lpVtbl.Collapse, uintptr(unsafe.Pointer(p)))
+	if failedHRESULT(hr) {
+		return fmt.Errorf("collapse UI Automation element: %s", hresultString(hr))
+	}
+	return nil
+}
+
+func (p *iUIAutomationExpandCollapsePattern) currentState() (int32, bool) {
+	var out int32
+	hr, _, _ := syscall.SyscallN(p.lpVtbl.CurrentExpandCollapseState, uintptr(unsafe.Pointer(p)), uintptr(unsafe.Pointer(&out)))
+	if failedHRESULT(hr) {
+		return 0, false
+	}
+	return out, true
+}
+
+func (el *iUIAutomationElement) setValue(value string) error {
+	ptr, err := el.currentPattern(uiaValuePatternID, "value")
+	if err != nil {
+		return err
+	}
+	defer releaseInterface(ptr)
+	bstr, err := allocBSTR(value)
+	if err != nil {
+		return err
+	}
+	defer procSysFreeString.Call(bstr)
+	p := (*iUIAutomationValuePattern)(unsafe.Pointer(ptr))
+	hr, _, _ := syscall.SyscallN(p.lpVtbl.SetValue, ptr, bstr)
+	if failedHRESULT(hr) {
+		return fmt.Errorf("set UI Automation value: %s", hresultString(hr))
+	}
+	return nil
+}
+
+func allocBSTR(s string) (uintptr, error) {
+	u16, err := windows.UTF16FromString(s)
+	if err != nil {
+		return 0, fmt.Errorf("encode BSTR: %w", err)
+	}
+	ptr, _, _ := procSysAllocStringLen.Call(uintptr(unsafe.Pointer(&u16[0])), uintptr(len(u16)-1))
+	if ptr == 0 && s != "" {
+		return 0, fmt.Errorf("allocate BSTR")
+	}
+	return ptr, nil
 }
 
 func (el *iUIAutomationElement) callBSTR(method uintptr) string {
