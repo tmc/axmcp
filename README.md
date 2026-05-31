@@ -51,7 +51,7 @@ xcmcp --enable-ui-tools      # just UI automation of the sim
 xcmcp --enable-asc-tools     # App Store Connect + altool
 ```
 
-Or turn toolsets on and off dynamically inside a session via `list_toolsets` and `enable_toolset`.
+Or list and enable toolsets dynamically inside a session via `list_toolsets` and `enable_toolset`.
 
 ## Requirements
 
@@ -239,7 +239,7 @@ Point it at the absolute binary path with stdio transport. Optional arguments fo
 - `--enable-asc-tools` — App Store Connect + altool
 - `--wait-for-xcode=0s` — skip waiting for Xcode at startup (for headless/CI use)
 
-Within a session, `list_toolsets` and `enable_toolset` turn optional `xcmcp` toolsets on and off without restarting.
+Within a session, `list_toolsets` and `enable_toolset` add optional `xcmcp` toolsets without restarting.
 
 ## Commands
 
