@@ -62,7 +62,8 @@ minimal window-metadata snapshot; UI Automation trees are still missing. Linux
 uses `internal/computeruse/linuxstate` for X11 window metadata through
 `wmctrl -lpG`; AT-SPI trees, screenshots, input, and Wayland support are still
 missing. Action tools remain registered but return explicit unsupported errors
-until input backends land.
+until input backends land. Non-Darwin servers expose `mcp://platform/status`
+so clients can inspect the compiled backend and prerequisite probes.
 
 ## Implementation Slice
 
@@ -81,9 +82,10 @@ implemented. The next slice is to replace those stubs with real backends one
 subsystem at a time.
 
 `computeruse.PlatformStatus` reports the compiled backend and the capabilities
-that are present or missing. Windows and Linux state backends currently surface
-missing prerequisites, such as `wmctrl`, through `list_apps` and
-`get_app_state` errors instead of silently returning empty state.
+that are present or missing. Windows and Linux expose that report through
+`mcp://platform/status`. State backends currently surface missing prerequisites,
+such as `wmctrl`, through `list_apps` and `get_app_state` errors instead of
+silently returning empty state.
 
 `computeruse.Backend` is the package-level contract for native
 implementations. It separates app/window state, input, screenshots, and
