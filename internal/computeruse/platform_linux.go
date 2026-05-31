@@ -15,9 +15,14 @@ func PlatformStatus() PlatformReport {
 	wmctrlPath, wmctrlErr := exec.LookPath("wmctrl")
 	importPath, importErr := exec.LookPath("import")
 	xdotoolPath, xdotoolErr := exec.LookPath("xdotool")
+	gdbusPath, gdbusErr := exec.LookPath("gdbus")
 	caps := []PlatformCapability{
-		{Name: "app_state", Message: "AT-SPI accessibility tree backend is not implemented"},
 		{Name: "intervention", Message: "Linux physical-intervention monitor is not implemented"},
+	}
+	if display != "" && wmctrlErr == nil && importErr == nil {
+		caps = append(caps, PlatformCapability{Name: "app_state", Available: true, Message: "X11 window state and screenshots are available; AT-SPI enriches element trees when reachable"})
+	} else {
+		caps = append(caps, PlatformCapability{Name: "app_state", Message: "requires DISPLAY, wmctrl, and ImageMagick import"})
 	}
 	switch {
 	case display == "":
@@ -65,13 +70,15 @@ func PlatformStatus() PlatformReport {
 		caps = append(caps, PlatformCapability{Name: "atspi", Message: "DBUS_SESSION_BUS_ADDRESS is not set"})
 	case noATBridge == "1" || strings.EqualFold(noATBridge, "true"):
 		caps = append(caps, PlatformCapability{Name: "atspi", Message: "NO_AT_BRIDGE disables the AT-SPI bridge"})
+	case gdbusErr != nil:
+		caps = append(caps, PlatformCapability{Name: "atspi", Message: "gdbus is not available on PATH"})
 	default:
-		caps = append(caps, PlatformCapability{Name: "atspi", Available: true, Message: "DBUS session bus is set and AT-SPI bridge is not disabled"})
+		caps = append(caps, PlatformCapability{Name: "atspi", Available: true, Message: "DBUS session bus is set and gdbus is available at " + gdbusPath})
 	}
 	return PlatformReport{
 		OS:           runtime.GOOS,
 		Backend:      "linux-x11-partial",
 		Capabilities: caps,
-		Message:      "Linux native desktop automation is partially scaffolded; AT-SPI element actions are not implemented",
+		Message:      "Linux native desktop automation has X11 state, screenshots, root-window input, and a bounded AT-SPI reader; element actions beyond the root window are not implemented",
 	}
 }

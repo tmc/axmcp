@@ -31,6 +31,7 @@ type Window struct {
 // NativeElement identifies a Linux UI element retained in a snapshot.
 type NativeElement struct {
 	WindowID   string
+	BusName    string
 	ObjectPath string
 }
 
@@ -248,16 +249,6 @@ func (s *Snapshot) NativeElement(index int) (NativeElement, computeruse.ElementN
 
 func (s *Snapshot) Close() error {
 	return nil
-}
-
-func readAccessibilityTree(ctx context.Context, win Window) (AccessibilityNode, error) {
-	if err := ctx.Err(); err != nil {
-		return AccessibilityNode{}, err
-	}
-	if strings.TrimSpace(win.ID) == "" {
-		return AccessibilityNode{}, fmt.Errorf("missing X11 window id")
-	}
-	return AccessibilityNode{}, computeruse.PlatformUnsupported("read AT-SPI tree")
 }
 
 func fallbackAccessibilityRoot(win Window) AccessibilityNode {

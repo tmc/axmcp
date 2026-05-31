@@ -84,6 +84,8 @@ func TestBackendResolveAppMatchesPIDTitleAndWindowID(t *testing.T) {
 }
 
 func TestBackendBuildStateReturnsWindowSnapshot(t *testing.T) {
+	disableATSPI(t)
+
 	runner := fakeRunner{png: testPNG(t, 320, 200)}
 	backend := Backend{run: runner.run}
 	snapshot, err := backend.BuildState(context.Background(), computeruse.StateRequest{
@@ -123,6 +125,8 @@ func TestBackendBuildStateReturnsWindowSnapshot(t *testing.T) {
 }
 
 func TestBackendBuildStateCapsScreenshotLongSide(t *testing.T) {
+	disableATSPI(t)
+
 	runner := fakeRunner{png: testPNG(t, 3136, 1960)}
 	backend := Backend{run: runner.run}
 	snapshot, err := backend.BuildState(context.Background(), computeruse.StateRequest{App: "calculator"})
@@ -264,6 +268,12 @@ func (fakeInstructions) Instructions(app computeruse.AppInfo) string {
 }
 
 var errFakeAccessibility = errors.New("fake accessibility tree")
+
+func disableATSPI(t *testing.T) {
+	t.Helper()
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "")
+	t.Setenv("NO_AT_BRIDGE", "")
+}
 
 func testPNG(t *testing.T, width, height int) []byte {
 	t.Helper()
