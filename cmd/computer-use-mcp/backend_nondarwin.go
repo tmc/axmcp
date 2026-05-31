@@ -23,7 +23,9 @@ func newNonDarwinBackend() computeruse.Backend {
 	var input computeruse.InputBackend
 	switch runtime.GOOS {
 	case "windows":
-		state = winstate.NewBackend()
+		backend := winstate.NewBackend()
+		state = backend
+		input = backend
 	case "linux":
 		backend := linuxstate.NewBackend()
 		state = backend

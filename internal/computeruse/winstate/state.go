@@ -56,9 +56,11 @@ type Backend struct {
 	windows    func(context.Context) ([]Window, error)
 	screenshot func(context.Context, Window) ([]byte, error)
 	automation func(context.Context, Window) (AutomationNode, error)
+	input      inputRunner
 }
 
 var _ computeruse.StateBackend = Backend{}
+var _ computeruse.InputBackend = Backend{}
 
 // NewBackend returns a Windows state backend.
 func NewBackend() Backend {

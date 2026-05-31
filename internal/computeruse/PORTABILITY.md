@@ -58,10 +58,10 @@ packages, so the package set can compile without pulling in the Apple
 dependency chain. `cmd/computer-use-mcp` starts as an MCP server on Windows and
 Linux with state tools wired to platform window metadata. Windows uses
 `internal/computeruse/winstate` to enumerate visible Win32 windows and build a
-minimal window-metadata snapshot with a PrintWindow/GDI screenshot. The
-Windows snapshot now has the retained native-handle/index scaffold needed for
-UI Automation trees, but the live UIA COM reader is still missing and the
-default runtime falls back to the root window node. Linux uses
+window snapshot with a PrintWindow/GDI screenshot and bounded UIA control-view
+tree when available. The Windows input slice routes pixel clicks and drags
+through background Win32 mouse messages; UIA pattern actions, keyboard input,
+and foreground SendInput remain missing. Linux uses
 `internal/computeruse/linuxstate`
 for X11 window metadata through `wmctrl -lpG` and captures screenshots through
 ImageMagick `import`; root-window pixel/key input uses `xdotool`. AT-SPI trees,
@@ -82,9 +82,8 @@ unsupported stubs:
 - intervention monitoring: start, stop, and report user-intervention state.
 
 Darwin files carry `//go:build darwin`, and non-Darwin stubs return one shared
-unsupported platform error. Windows and Linux native automation backends are not
-implemented. The next slice is to replace those stubs with real backends one
-subsystem at a time.
+unsupported platform error where a platform backend has not landed. Windows and
+Linux native automation backends are being filled in one subsystem at a time.
 
 `computeruse.PlatformStatus` reports the compiled backend and the capabilities
 that are present or missing. Windows and Linux expose that report through
@@ -113,7 +112,11 @@ bounded UI Automation control-view subtree through COM, retain UIA element
 handles only inside the snapshot lifetime, and fall back to the root window
 node when UIA is unavailable. Tests can still inject a tree to lock the
 indexing and geometry contract. The Windows command now serves that state
-through the normal MCP `list_apps` and `get_app_state` tools.
+through the normal MCP `list_apps` and `get_app_state` tools. Windows also
+routes root-window pixel clicks and drags through background Win32 mouse
+messages using the returned screenshot coordinate contract. Element clicks use
+retained native HWNDs when present, but UIA pattern invocation, keyboard input,
+and foreground SendInput remain explicit unsupported paths.
 `internal/computeruse/linuxstate` mirrors that boundary
 for X11: it resolves apps from `wmctrl -lpG` output, captures a PNG screenshot
 with ImageMagick `import`, and returns a root window node while AT-SPI and
@@ -138,12 +141,12 @@ contract and replace the unsupported stubs behind it.
    DirectComposition/XAML hosts, DWM frame cropping, and explicit occlusion
    warnings when only BitBlt is available. Preserve the existing 1568 px
    long-side cap and returned-dimension coordinate contract.
-3. Add Windows input dispatch. Prefer element-index UIA patterns
+3. Expand Windows input dispatch. Prefer element-index UIA patterns
    (`Invoke`, `Value`, `Toggle`, `SelectionItem`, `ExpandCollapse`) for
-   background actions. For pixel actions, hit-test UIA first, then PostMessage
-   to the target HWND. Return a structured `background_unavailable` result when
-   background dispatch is known to drop, and require an explicit foreground
-   option before using SendInput.
+   background actions. Harden the current PostMessage pixel path with
+   hit-testing and drop detection. Return a structured `background_unavailable`
+   result when background dispatch is known to drop, and require an explicit
+   foreground option before using SendInput.
 4. Expand the Linux backend in narrower phases. Replace or supplement the
    current injected-tree/live fallback boundary with a real AT-SPI reader,
    replace or supplement the `wmctrl` and ImageMagick dependencies when direct
