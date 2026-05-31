@@ -48,7 +48,7 @@ func (d SimDevice) ConnectToHID() (*SimDeviceLegacyClient, error) {
 		initIndigo()
 		cls = objc.GetClass("SimDeviceLegacyClient")
 		if cls == 0 {
-			return nil, fmt.Errorf("SimDeviceLegacyClient class not found")
+			return nil, fmt.Errorf("sim device legacy client class not found")
 		}
 	}
 
@@ -57,7 +57,7 @@ func (d SimDevice) ConnectToHID() (*SimDeviceLegacyClient, error) {
 	var errPtr objc.ID
 	client := objc.Send[objc.ID](alloc, objc.Sel("initWithDevice:error:"), d.id, unsafe.Pointer(&errPtr))
 	if errPtr != 0 {
-		return nil, fmt.Errorf("failed to init HID client")
+		return nil, fmt.Errorf("failed to init hid client")
 	}
 
 	return &SimDeviceLegacyClient{id: client}, nil
@@ -78,7 +78,7 @@ func (c *SimDeviceLegacyClient) SendMessage(msg []byte) error {
 	block := objc.NewBlock(func(_ objc.Block, err objc.ID) {
 		if err != 0 {
 			desc := objc.Send[objc.ID](err, objc.Sel("localizedDescription"))
-			done <- fmt.Errorf("HID error: %s", objc.GoString(desc))
+			done <- fmt.Errorf("hid error: %s", objc.GoString(desc))
 		} else {
 			done <- nil
 		}
@@ -94,7 +94,7 @@ func (c *SimDeviceLegacyClient) SendMessage(msg []byte) error {
 func (d SimDevice) Tap(x, y float64) error {
 	initIndigo()
 	if indigoCalls.MessageForMouseNSEvent == 0 {
-		return fmt.Errorf("IndigoHIDMessageForMouseNSEvent symbol not found")
+		return fmt.Errorf("indigo hid mouse event symbol not found")
 	}
 
 	pt := struct{ X, Y float64 }{x, y}
