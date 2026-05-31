@@ -47,6 +47,10 @@ func readAccessibilityTree(ctx context.Context, win Window) (AccessibilityNode, 
 	return defaultATSPIReader().readWindow(ctx, win)
 }
 
+func performATSPIAction(ctx context.Context, action accessibilityAction) error {
+	return defaultATSPIReader().performAction(ctx, action)
+}
+
 func defaultATSPIReader() *atspiReader {
 	return &atspiReader{
 		env:      os.Getenv,
@@ -180,6 +184,38 @@ func (r *atspiReader) readNode(ctx context.Context, win Window, ref atspiRef, de
 	return node, nil
 }
 
+func (r *atspiReader) performAction(ctx context.Context, action accessibilityAction) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	ref := atspiRef{
+		Bus:  strings.TrimSpace(action.Native.BusName),
+		Path: strings.TrimSpace(action.Native.ObjectPath),
+	}
+	if ref.Bus == "" || ref.Path == "" {
+		return computeruse.PlatformUnsupported("perform AT-SPI action")
+	}
+	action.Name = strings.TrimSpace(action.Name)
+	if action.Name == "" {
+		return fmt.Errorf("missing AT-SPI action")
+	}
+	if err := r.configure(ctx); err != nil {
+		return err
+	}
+	index, err := r.actionIndex(ctx, ref, action.Name)
+	if err != nil {
+		return err
+	}
+	out, err := r.call(ctx, r.address, ref.Bus, ref.Path, atspiAction+".DoAction", strconv.Itoa(index))
+	if err != nil {
+		return fmt.Errorf("perform AT-SPI action %q: %w", action.Name, err)
+	}
+	if gvariantIsFalse(out) {
+		return fmt.Errorf("perform AT-SPI action %q: action returned false", action.Name)
+	}
+	return nil
+}
+
 func (r *atspiReader) readNodeMetadata(ctx context.Context, win Window, ref atspiRef) AccessibilityNode {
 	interfaces := r.interfaces(ctx, ref)
 	states := r.states(ctx, ref)
@@ -203,6 +239,31 @@ func (r *atspiReader) readNodeMetadata(ctx context.Context, win Window, ref atsp
 		node.Value = r.value(ctx, ref)
 	}
 	return node
+}
+
+func (r *atspiReader) actionIndex(ctx context.Context, ref atspiRef, name string) (int, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return 0, fmt.Errorf("missing AT-SPI action")
+	}
+	n, ok := r.intProperty(ctx, ref, atspiAction, "NActions")
+	if !ok || n <= 0 {
+		return 0, computeruse.PlatformUnsupported("perform AT-SPI action")
+	}
+	if n > 32 {
+		n = 32
+	}
+	want := atspiActionNameKey(name)
+	for i := range n {
+		out, err := r.call(ctx, r.address, ref.Bus, ref.Path, atspiAction+".GetName", strconv.Itoa(i))
+		if err != nil {
+			continue
+		}
+		if atspiActionNameKey(firstGVariantString(out)) == want {
+			return i, nil
+		}
+	}
+	return 0, computeruse.PlatformUnsupported("perform AT-SPI action " + strconv.Quote(name))
 }
 
 func (r *atspiReader) call(ctx context.Context, address, dest, path, method string, args ...string) ([]byte, error) {
@@ -339,7 +400,8 @@ func (r *atspiReader) actions(ctx context.Context, ref atspiRef, interfaces atsp
 		if name == "" {
 			continue
 		}
-		if strings.EqualFold(name, "set value") || strings.EqualFold(name, "settext") {
+		switch atspiActionNameKey(name) {
+		case "set value", "settext":
 			settable = true
 		}
 		actions = append(actions, name)
@@ -492,6 +554,17 @@ func gvariantFloats(out []byte) []float64 {
 	return values
 }
 
+func gvariantIsFalse(out []byte) bool {
+	for _, token := range strings.FieldsFunc(strings.ToLower(string(out)), func(r rune) bool {
+		return !unicode.IsLetter(r)
+	}) {
+		if token == "false" {
+			return true
+		}
+	}
+	return false
+}
+
 func gvariantNumberTokens(s string) []string {
 	var tokens []string
 	for i := 0; i < len(s); {
@@ -541,6 +614,12 @@ func isIdentifierByte(b byte) bool {
 
 func quoteGVariantString(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "\\'") + "'"
+}
+
+func atspiActionNameKey(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	name = strings.NewReplacer("_", " ", "-", " ").Replace(name)
+	return strings.Join(strings.Fields(name), " ")
 }
 
 func atspiUnavailable(action string, err error) error {

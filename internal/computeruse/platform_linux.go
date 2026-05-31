@@ -79,6 +79,6 @@ func PlatformStatus() PlatformReport {
 		OS:           runtime.GOOS,
 		Backend:      "linux-x11-partial",
 		Capabilities: caps,
-		Message:      "Linux native desktop automation has X11 state, screenshots, root-window input, and a bounded AT-SPI reader; element actions beyond the root window are not implemented",
+		Message:      "Linux native desktop automation has X11 state, screenshots, root-window input, a bounded AT-SPI reader, and AT-SPI element action dispatch; text/value element editing remains incomplete",
 	}
 }

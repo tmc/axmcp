@@ -59,13 +59,57 @@ func TestBackendDragKeyAndTypeUseXDoToolWindow(t *testing.T) {
 	}
 }
 
+func TestBackendClickElementUsesATSPIAction(t *testing.T) {
+	rec := &recordingAccessibilityActions{}
+	backend := Backend{atspiAction: rec.run}
+
+	if err := backend.ClickElement(context.Background(), linuxATSPISnapshot(), 1, computeruse.ClickOptions{}); err != nil {
+		t.Fatalf("ClickElement: %v", err)
+	}
+	want := []accessibilityAction{{
+		Native: NativeElement{
+			WindowID:   "0x03e00007",
+			BusName:    ":1.10",
+			ObjectPath: "/org/a11y/atspi/accessible/button",
+		},
+		Name: "click",
+	}}
+	if !reflect.DeepEqual(rec.actions, want) {
+		t.Fatalf("actions = %#v, want %#v", rec.actions, want)
+	}
+}
+
+func TestBackendPerformSecondaryActionUsesATSPIAction(t *testing.T) {
+	rec := &recordingAccessibilityActions{}
+	backend := Backend{atspiAction: rec.run}
+
+	if err := backend.PerformSecondaryAction(context.Background(), linuxATSPISnapshot(), 1, "toggle"); err != nil {
+		t.Fatalf("PerformSecondaryAction: %v", err)
+	}
+	want := []accessibilityAction{{
+		Native: NativeElement{
+			WindowID:   "0x03e00007",
+			BusName:    ":1.10",
+			ObjectPath: "/org/a11y/atspi/accessible/button",
+		},
+		Name: "toggle",
+	}}
+	if !reflect.DeepEqual(rec.actions, want) {
+		t.Fatalf("actions = %#v, want %#v", rec.actions, want)
+	}
+}
+
 func TestBackendElementActionsRequireATSPI(t *testing.T) {
 	backend := Backend{run: (&recordingRunner{}).run}
-	err := backend.ClickElement(context.Background(), linuxInputSnapshot(), 7, computeruse.ClickOptions{})
+	err := backend.ClickElement(context.Background(), linuxInputSnapshot(), 1, computeruse.ClickOptions{})
 	if !errors.Is(err, computeruse.ErrPlatformUnsupported) {
 		t.Fatalf("ClickElement error = %v, want ErrPlatformUnsupported", err)
 	}
-	err = backend.SetValue(context.Background(), linuxInputSnapshot(), 7, "value")
+	err = backend.PerformSecondaryAction(context.Background(), linuxInputSnapshot(), 1, "click")
+	if !errors.Is(err, computeruse.ErrPlatformUnsupported) {
+		t.Fatalf("PerformSecondaryAction error = %v, want ErrPlatformUnsupported", err)
+	}
+	err = backend.SetValue(context.Background(), linuxInputSnapshot(), 1, "value")
 	if !errors.Is(err, computeruse.ErrPlatformUnsupported) {
 		t.Fatalf("SetValue error = %v, want ErrPlatformUnsupported", err)
 	}
@@ -80,6 +124,15 @@ func (r *recordingRunner) run(_ context.Context, name string, args ...string) ([
 	return nil, nil
 }
 
+type recordingAccessibilityActions struct {
+	actions []accessibilityAction
+}
+
+func (r *recordingAccessibilityActions) run(_ context.Context, action accessibilityAction) error {
+	r.actions = append(r.actions, action)
+	return nil
+}
+
 func linuxInputSnapshot() *Snapshot {
 	win := Window{
 		ID:     "0x03e00007",
@@ -90,6 +143,8 @@ func linuxInputSnapshot() *Snapshot {
 		Width:  300,
 		Height: 200,
 	}
+	root := computeruse.ElementNode{Index: 0, ParentIndex: -1, Role: "Window", Title: "Calculator", Width: win.Width, Height: win.Height, Enabled: true}
+	button := computeruse.ElementNode{Index: 1, ParentIndex: 0, Role: "push button", Title: "Seven", X: 20, Y: 40, Width: 50, Height: 20, Enabled: true, SecondaryActions: []string{"click"}}
 	return &Snapshot{
 		window: win,
 		state: computeruse.AppState{
@@ -104,14 +159,30 @@ func linuxInputSnapshot() *Snapshot {
 				ScreenshotWidth:  150,
 				ScreenshotHeight: 100,
 			},
-			Tree: []computeruse.ElementNode{{
-				Index:   0,
-				Role:    "Window",
-				Title:   "Calculator",
-				Width:   win.Width,
-				Height:  win.Height,
-				Enabled: true,
-			}},
+			Tree: []computeruse.ElementNode{root, button},
+		},
+		nodes: map[int]computeruse.ElementNode{
+			0: root,
+			1: button,
+		},
+		elements: map[int]NativeElement{
+			0: {WindowID: win.ID},
+			1: {WindowID: win.ID},
 		},
 	}
+}
+
+func linuxATSPISnapshot() *Snapshot {
+	s := linuxInputSnapshot()
+	native := NativeElement{
+		WindowID:   "0x03e00007",
+		BusName:    ":1.10",
+		ObjectPath: "/org/a11y/atspi/accessible/button",
+	}
+	node := s.nodes[1]
+	node.SecondaryActions = []string{"click", "toggle"}
+	s.nodes[1] = node
+	s.state.Tree[1] = node
+	s.elements[1] = native
+	return s
 }

@@ -62,10 +62,18 @@ type Rect struct {
 type Backend struct {
 	run           func(context.Context, string, ...string) ([]byte, error)
 	accessibility func(context.Context, Window) (AccessibilityNode, error)
+	atspiAction   accessibilityActionRunner
 }
 
 var _ computeruse.StateBackend = Backend{}
 var _ computeruse.InputBackend = Backend{}
+
+type accessibilityActionRunner func(context.Context, accessibilityAction) error
+
+type accessibilityAction struct {
+	Native NativeElement
+	Name   string
+}
 
 // NewBackend returns a Linux state backend.
 func NewBackend() Backend {
@@ -341,7 +349,15 @@ func (b Backend) ClickElement(ctx context.Context, snapshot computeruse.Snapshot
 		return err
 	}
 	if index != 0 {
-		return computeruse.PlatformUnsupported("click element with AT-SPI")
+		native, node, err := s.NativeElement(index)
+		if err != nil {
+			return err
+		}
+		action, err := clickElementAction(node, opts)
+		if err != nil {
+			return err
+		}
+		return b.runAccessibilityAction(ctx, accessibilityAction{Native: native, Name: action})
 	}
 	point := computeruse.Point{
 		X: s.state.Window.ScreenshotWidth / 2,
@@ -426,8 +442,20 @@ func (b Backend) ScrollElement(ctx context.Context, snapshot computeruse.Snapsho
 	return nil
 }
 
-func (b Backend) PerformSecondaryAction(context.Context, computeruse.Snapshot, int, string) error {
-	return computeruse.PlatformUnsupported("perform secondary action with AT-SPI")
+func (b Backend) PerformSecondaryAction(ctx context.Context, snapshot computeruse.Snapshot, index int, action string) error {
+	s, err := linuxSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	action = strings.TrimSpace(action)
+	if action == "" {
+		return fmt.Errorf("missing secondary action")
+	}
+	native, _, err := s.NativeElement(index)
+	if err != nil {
+		return err
+	}
+	return b.runAccessibilityAction(ctx, accessibilityAction{Native: native, Name: action})
 }
 
 func (b Backend) SetValue(context.Context, computeruse.Snapshot, int, string) error {
@@ -455,6 +483,24 @@ func (b Backend) TypeText(ctx context.Context, snapshot computeruse.Snapshot, el
 		return computeruse.PlatformUnsupported("type into element with AT-SPI")
 	}
 	return b.runXDoTool(ctx, s.window, "type", "--window", s.window.ID, "--", text)
+}
+
+func (b Backend) runAccessibilityAction(ctx context.Context, action accessibilityAction) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	action.Name = strings.TrimSpace(action.Name)
+	if action.Name == "" {
+		return fmt.Errorf("missing AT-SPI action")
+	}
+	if strings.TrimSpace(action.Native.BusName) == "" || strings.TrimSpace(action.Native.ObjectPath) == "" {
+		return computeruse.PlatformUnsupported("perform AT-SPI action")
+	}
+	run := b.atspiAction
+	if run == nil {
+		run = performATSPIAction
+	}
+	return run(ctx, action)
 }
 
 func linuxSnapshot(snapshot computeruse.Snapshot) (*Snapshot, error) {
@@ -493,6 +539,33 @@ func normalizeClickCount(clickCount int) int {
 		return 1
 	}
 	return clickCount
+}
+
+func clickElementAction(node computeruse.ElementNode, opts computeruse.ClickOptions) (string, error) {
+	if _, err := xdotoolButton(opts.Button); err != nil {
+		return "", err
+	}
+	if normalizeClickCount(opts.ClickCount) != 1 {
+		return "", computeruse.PlatformUnsupported("multi-click element with AT-SPI")
+	}
+	if button := strings.TrimSpace(opts.Button); button != "" && !strings.EqualFold(button, "left") {
+		return "", computeruse.PlatformUnsupported("non-left element click with AT-SPI")
+	}
+	for _, action := range node.SecondaryActions {
+		if atspiActionIsClick(action) {
+			return strings.TrimSpace(action), nil
+		}
+	}
+	return "", computeruse.PlatformUnsupported("click element with AT-SPI")
+}
+
+func atspiActionIsClick(action string) bool {
+	switch atspiActionNameKey(action) {
+	case "activate", "click", "invoke", "press":
+		return true
+	default:
+		return false
+	}
 }
 
 func xdotoolButton(button string) (string, error) {

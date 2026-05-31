@@ -134,6 +134,55 @@ func TestATSPIReaderReadsInjectedTree(t *testing.T) {
 	}
 }
 
+func TestATSPIReaderPerformsActionByName(t *testing.T) {
+	bus := fakeATSPIBus{}
+	reader := &atspiReader{
+		env: func(name string) string {
+			if name == "DBUS_SESSION_BUS_ADDRESS" {
+				return "unix:path=/tmp/session"
+			}
+			return ""
+		},
+		lookPath: func(name string) (string, error) {
+			if name != "gdbus" {
+				t.Fatalf("LookPath(%q), want gdbus", name)
+			}
+			return "/usr/bin/gdbus", nil
+		},
+		run: bus.run,
+	}
+
+	err := reader.performAction(context.Background(), accessibilityAction{
+		Native: NativeElement{
+			BusName:    ":1.10",
+			ObjectPath: "/org/a11y/atspi/accessible/button",
+		},
+		Name: "Click",
+	})
+	if err != nil {
+		t.Fatalf("performAction: %v", err)
+	}
+	want := []atspiCall{{
+		path:   "/org/a11y/atspi/accessible/button",
+		method: atspiAction + ".DoAction",
+		extra:  []string{"0"},
+	}}
+	if !reflect.DeepEqual(bus.actionCalls, want) {
+		t.Fatalf("actionCalls = %#v, want %#v", bus.actionCalls, want)
+	}
+
+	err = reader.performAction(context.Background(), accessibilityAction{
+		Native: NativeElement{
+			BusName:    ":1.10",
+			ObjectPath: "/org/a11y/atspi/accessible/button",
+		},
+		Name: "missing",
+	})
+	if !errors.Is(err, computeruse.ErrPlatformUnsupported) {
+		t.Fatalf("missing action error = %v, want ErrPlatformUnsupported", err)
+	}
+}
+
 func TestATSPIParsers(t *testing.T) {
 	refs := parseATSPIRefs([]byte("([(':1.1', objectpath '/org/a11y/atspi/accessible/1'), (':1.2', objectpath '/org/a11y/atspi/accessible/null')],)"))
 	wantRefs := []atspiRef{{Bus: ":1.1", Path: "/org/a11y/atspi/accessible/1"}}
@@ -147,7 +196,8 @@ func TestATSPIParsers(t *testing.T) {
 }
 
 type fakeATSPIBus struct {
-	calls []string
+	calls       []string
+	actionCalls []atspiCall
 }
 
 func (b *fakeATSPIBus) run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -180,6 +230,15 @@ func (b *fakeATSPIBus) run(_ context.Context, name string, args ...string) ([]by
 			return []byte("('click',)"), nil
 		}
 		return nil, fmt.Errorf("missing action")
+	case atspiAction + ".DoAction":
+		if call.path != "/org/a11y/atspi/accessible/button" {
+			return nil, fmt.Errorf("missing action target")
+		}
+		if !reflect.DeepEqual(call.extra, []string{"0"}) {
+			return nil, fmt.Errorf("DoAction args = %#v, want [0]", call.extra)
+		}
+		b.actionCalls = append(b.actionCalls, call)
+		return []byte("(true,)"), nil
 	default:
 		return nil, fmt.Errorf("unexpected method %q", call.method)
 	}
