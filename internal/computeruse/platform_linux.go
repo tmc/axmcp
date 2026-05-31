@@ -4,19 +4,29 @@ package computeruse
 
 import (
 	"os"
+	"os/exec"
 	"runtime"
 )
 
 // PlatformStatus reports the compiled native automation backend.
 func PlatformStatus() PlatformReport {
+	display := os.Getenv("DISPLAY")
+	wmctrlPath, wmctrlErr := exec.LookPath("wmctrl")
 	caps := []PlatformCapability{
-		{Name: "x11_window_enumeration", Available: true, Message: "compiled wmctrl-backed X11 top-level window enumeration backend"},
 		{Name: "app_state", Message: "AT-SPI accessibility tree backend is not implemented"},
 		{Name: "input", Message: "X11, Wayland, or portal input backend is not implemented"},
 		{Name: "screenshot", Message: "X11, Wayland, or portal screenshot backend is not implemented"},
 		{Name: "intervention", Message: "Linux physical-intervention monitor is not implemented"},
 	}
-	if os.Getenv("DISPLAY") == "" {
+	switch {
+	case display == "":
+		caps = append(caps, PlatformCapability{Name: "x11_window_enumeration", Message: "DISPLAY is not set"})
+	case wmctrlErr != nil:
+		caps = append(caps, PlatformCapability{Name: "x11_window_enumeration", Message: "wmctrl is not available on PATH"})
+	default:
+		caps = append(caps, PlatformCapability{Name: "x11_window_enumeration", Available: true, Message: "wmctrl-backed X11 top-level window enumeration is available at " + wmctrlPath})
+	}
+	if display == "" {
 		caps = append(caps, PlatformCapability{Name: "x11", Message: "DISPLAY is not set"})
 	} else {
 		caps = append(caps, PlatformCapability{Name: "x11", Available: true, Message: "DISPLAY is set"})

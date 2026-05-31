@@ -83,9 +83,10 @@ subsystem at a time.
 
 `computeruse.PlatformStatus` reports the compiled backend and the capabilities
 that are present or missing. Windows and Linux expose that report through
-`mcp://platform/status`. State backends currently surface missing prerequisites,
-such as `wmctrl`, through `list_apps` and `get_app_state` errors instead of
-silently returning empty state.
+`mcp://platform/status`. Linux reports both `DISPLAY` and `wmctrl` availability
+because the current X11 state backend shells out to `wmctrl -lpG`. State
+backends still surface missing prerequisites through `list_apps` and
+`get_app_state` errors instead of silently returning empty state.
 
 `computeruse.Backend` is the package-level contract for native
 implementations. It separates app/window state, input, screenshots, and
