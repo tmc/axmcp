@@ -390,6 +390,9 @@ func (s *server) dispatch(method string, params map[string]any) (map[string]any,
 	if params == nil {
 		params = map[string]any{}
 	}
+	if err := axAvailable(); err != nil {
+		return nil, err
+	}
 	switch method {
 	case "AX.getVersion":
 		return map[string]any{"version": "0.1.0", "domains": []string{"AX"}, "methods": supportedMethods()}, nil
@@ -1044,7 +1047,9 @@ func writeJSON(w io.Writer, v any) error {
 	return nil
 }
 
-var ax = loadAX()
+var ax, axLoadErr = loadAX(applicationServicesPath)
+
+const applicationServicesPath = "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
 
 type axAPI struct {
 	systemWideElement               func() axuiautomation.AXUIElementRef
@@ -1063,10 +1068,10 @@ type axAPI struct {
 	observerCreateWithInfoCallback  func(int32, axuiautomation.AXObserverCallback, *axuiautomation.AXObserverRef) axuiautomation.AXError
 }
 
-func loadAX() axAPI {
-	lib, err := purego.Dlopen("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices", purego.RTLD_LAZY|purego.RTLD_GLOBAL)
+func loadAX(path string) (axAPI, error) {
+	lib, err := purego.Dlopen(path, purego.RTLD_LAZY|purego.RTLD_GLOBAL)
 	if err != nil {
-		panic(err)
+		return axAPI{}, err
 	}
 	var api axAPI
 	purego.RegisterLibFunc(&api.systemWideElement, lib, "AXUIElementCreateSystemWide")
@@ -1083,7 +1088,14 @@ func loadAX() axAPI {
 	purego.RegisterLibFunc(&api.dictionaryCreate, lib, "CFDictionaryCreate")
 	purego.RegisterLibFunc(&api.removeNotification, lib, "AXObserverRemoveNotification")
 	purego.RegisterLibFunc(&api.observerCreateWithInfoCallback, lib, "AXObserverCreateWithInfoCallback")
-	return api
+	return api, nil
+}
+
+func axAvailable() error {
+	if axLoadErr != nil {
+		return fmt.Errorf("load ApplicationServices AX: %w", axLoadErr)
+	}
+	return nil
 }
 
 var (

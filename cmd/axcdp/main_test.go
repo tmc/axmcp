@@ -25,6 +25,27 @@ func TestWriteJSONReportsWriteError(t *testing.T) {
 	}
 }
 
+func TestLoadAXReportsError(t *testing.T) {
+	if _, err := loadAX("/no/such/ApplicationServices"); err == nil {
+		t.Fatal("loadAX succeeded for missing framework path")
+	}
+}
+
+func TestDispatchReportsAXLoadError(t *testing.T) {
+	oldErr := axLoadErr
+	axLoadErr = errors.New("missing framework")
+	defer func() { axLoadErr = oldErr }()
+
+	s := &server{}
+	_, err := s.dispatch("AX.getVersion", nil)
+	if err == nil {
+		t.Fatal("dispatch succeeded with AX load error")
+	}
+	if !strings.Contains(err.Error(), "load ApplicationServices AX") || !strings.Contains(err.Error(), "missing framework") {
+		t.Fatalf("dispatch error = %v, want wrapped AX load error", err)
+	}
+}
+
 func TestParseCommand(t *testing.T) {
 	method, params, err := parseCommand(`AX.copyAttributeValue {"element":"element-1","attribute":"AXRole"}`)
 	if err != nil {
