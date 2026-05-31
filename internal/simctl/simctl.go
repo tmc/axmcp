@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 )
 
 type State string
@@ -114,7 +113,7 @@ func UninstallApp(ctx context.Context, udid, bundleID string) error {
 func Launch(_ context.Context, udid, bundleID string) error {
 	// Use plain Command (not CommandContext) to avoid context cancellation killing the process
 	cmd := exec.Command("/usr/bin/xcrun", "simctl", "launch", udid, bundleID)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setLaunchSysProcAttr(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to launch app: %w, output: %s", err, string(out))

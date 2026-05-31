@@ -18,7 +18,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -57,7 +56,7 @@ func Evaluate(ctx context.Context, opts EvaluateOptions) (EvalResult, error) {
 		opts.Timeout = 2 * time.Second
 	}
 	if opts.PID > 0 {
-		_ = syscall.Kill(opts.PID, syscall.SIGUSR1)
+		_ = startInspector(opts.PID)
 	}
 	target, err := waitForTarget(ctx, opts)
 	if err != nil {
