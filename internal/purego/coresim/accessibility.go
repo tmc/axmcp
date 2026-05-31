@@ -9,12 +9,8 @@ import (
 	"github.com/tmc/axmcp/internal/purego/objc"
 )
 
-// fallbackBridgeDelegateToken is sent to CoreSimulator's accessibility
-// bridge when an element arrives without a token of its own — typically
-// during deep recursion where token propagation broke. The string isn't
-// interpreted by macOS; it's just used to satisfy the delegate API. Kept
-// binary-neutral so internal/purego can be vendored across multiple tools
-// without one of them claiming a sibling's name.
+// fallbackBridgeDelegateToken is used when an accessibility request has no
+// element token to pass back through the CoreSimulator bridge delegate.
 const fallbackBridgeDelegateToken = "coresim-fallback-token"
 
 var (
@@ -70,8 +66,6 @@ type AccessibilityElement struct {
 	Token        string                  `json:"-"` // Token for AXPDelegate session
 }
 
-// ... (Constants)
-
 // GetFrontmostApplicationElement retrieves the frontmost application element.
 func (d SimDevice) GetFrontmostApplicationElement(token string) (*AccessibilityElement, error) {
 	if d.id == 0 {
@@ -81,18 +75,8 @@ func (d SimDevice) GetFrontmostApplicationElement(token string) (*AccessibilityE
 	if result := RegisterDeviceForToken(&d); token == "" {
 		token = result
 		defer UnregisterToken(token)
-	} else if token != result {
-		// If caller provided token, ensure it's registered?
-		// Caller is responsible for registration if they provide a string.
 	}
 
-	// Ensure we are registered if token provided
-	// Actually RegisterDeviceForToken returns a new token.
-	// If caller passes token, we assume it's valid.
-
-	// ...
-	// Use token
-	// ...
 	return nil, fmt.Errorf("GetFrontmostApplicationElement deprecated, use GetAccessibilityElements")
 }
 
@@ -106,8 +90,6 @@ func (d SimDevice) GetAccessibilityElements() ([]*AccessibilityElement, error) {
 		return nil, fmt.Errorf("device is not booted")
 	}
 
-	// 1. Register Session Token
-	// Create persistent device copy
 	deviceRef := new(SimDevice)
 	*deviceRef = d
 
@@ -122,16 +104,14 @@ func (d SimDevice) GetAccessibilityElements() ([]*AccessibilityElement, error) {
 		return nil, nil
 	}
 
-	// Create Synthetic Root
 	root := &AccessibilityElement{
 		AXUniqueId: "0",
 		Role:       "application",
 		PID:        hitElement.PID,
 		AXLabel:    "Frontmost App (Synthetic)",
-		Token:      token, // Bind token to root
+		Token:      token,
 	}
 
-	// Perform recursive fetch
 	d.RecursivelyFetchChildren(root, 0)
 
 	return []*AccessibilityElement{root}, nil
@@ -139,14 +119,12 @@ func (d SimDevice) GetAccessibilityElements() ([]*AccessibilityElement, error) {
 
 // GetAccessibilityElementsForPID retrieves the accessibility tree for a specific PID.
 func (d SimDevice) GetAccessibilityElementsForPID(pid int) ([]*AccessibilityElement, error) {
-	// Create persistent device copy
 	deviceRef := new(SimDevice)
 	*deviceRef = d
 
 	token := RegisterDeviceForToken(deviceRef)
 	defer UnregisterToken(token)
 
-	// Direct Root Creation
 	root := &AccessibilityElement{
 		AXUniqueId: "0",
 		Role:       "application",
@@ -155,13 +133,10 @@ func (d SimDevice) GetAccessibilityElementsForPID(pid int) ([]*AccessibilityElem
 		Token:      token,
 	}
 
-	// Perform recursive fetch
 	d.RecursivelyFetchChildren(root, 0)
 
 	return []*AccessibilityElement{root}, nil
 }
-
-// ...
 
 // FetchChildren retrieves the children of an accessibility element.
 func (d SimDevice) FetchChildren(element *AccessibilityElement) ([]*AccessibilityElement, error) {
@@ -169,7 +144,6 @@ func (d SimDevice) FetchChildren(element *AccessibilityElement) ([]*Accessibilit
 		return nil, fmt.Errorf("device is nil")
 	}
 
-	// Start Request
 	reqClass := objc.GetClass("AXPTranslatorRequest")
 	alloc := objc.Send[objc.ID](objc.ID(reqClass), objc.Sel("alloc"))
 	request := objc.Send[objc.ID](alloc, objc.Sel("init"))
@@ -188,17 +162,12 @@ func (d SimDevice) FetchChildren(element *AccessibilityElement) ([]*Accessibilit
 		objc.Send[objc.ID](trans, objc.Sel("setIsApplicationElement:"), true)
 	}
 
-	// Use Element Token
 	token := element.Token
 	if token == "" {
-		// Fallback? Or error?
-		// If we are deep in recursion, token should be present.
-		// If not, we might fail delegate usage.
 		token = fallbackBridgeDelegateToken
 	}
 	objc.Send[objc.ID](trans, objc.Sel("setBridgeDelegateToken:"), objc.NSString(token))
 
-	// Set raw data
 	if len(element.RawData) > 0 {
 		nsDataClass := objc.GetClass("NSData")
 		dataObj := objc.Send[objc.ID](objc.ID(nsDataClass), objc.Sel("dataWithBytes:length:"),
@@ -215,7 +184,6 @@ func (d SimDevice) FetchChildren(element *AccessibilityElement) ([]*Accessibilit
 		return nil, err
 	}
 
-	// Propagate Token to children
 	for _, child := range children {
 		child.Token = token
 	}
@@ -251,9 +219,8 @@ func (d SimDevice) recursivelyFetchChildren(element *AccessibilityElement, depth
 	}
 }
 
-// UpgradeElement fetches full data
+// UpgradeElement fetches full data.
 func (d SimDevice) UpgradeElement(element *AccessibilityElement) (*AccessibilityElement, error) {
-	// ... (Setup Request)
 	reqClass := objc.GetClass("AXPTranslatorRequest")
 	request := objc.Send[objc.ID](objc.Send[objc.ID](objc.ID(reqClass), objc.Sel("alloc")), objc.Sel("init"))
 	objc.Send[objc.ID](request, objc.Sel("setRequestType:"), AXPRequestTypeElement)
@@ -278,22 +245,19 @@ func (d SimDevice) UpgradeElement(element *AccessibilityElement) (*Accessibility
 	if err != nil || len(elements) == 0 {
 		return nil, err
 	}
-	// Propagate token
 	elements[0].Token = token
 	return elements[0], nil
 }
 
-// GetAccessibilityElementAtPoint with Token
+// GetAccessibilityElementAtPoint returns the accessibility element at a point.
 func (d SimDevice) GetAccessibilityElementAtPoint(x, y float64, token string) (*AccessibilityElement, error) {
 	if token == "" {
-		// Register ephemeral
 		devRef := new(SimDevice)
 		*devRef = d
 		token = RegisterDeviceForToken(devRef)
 		defer UnregisterToken(token)
 	}
 
-	// ... Request setup ...
 	reqClass := objc.GetClass("AXPTranslatorRequest")
 	request := objc.Send[objc.ID](objc.Send[objc.ID](objc.ID(reqClass), objc.Sel("alloc")), objc.Sel("init"))
 
@@ -330,16 +294,13 @@ func (d SimDevice) PerformAction(element *AccessibilityElement, actionType uint6
 		return fmt.Errorf("device is not booted")
 	}
 
-	// Create Request
 	reqClass := objc.GetClass("AXPTranslatorRequest")
 	alloc := objc.Send[objc.ID](objc.ID(reqClass), objc.Sel("alloc"))
 	request := objc.Send[objc.ID](alloc, objc.Sel("init"))
 
-	// RequestType 2 = Action
 	objc.Send[objc.ID](request, objc.Sel("setRequestType:"), 2)
 	objc.Send[objc.ID](request, objc.Sel("setActionType:"), actionType)
 
-	// Create Translation Object from element data
 	transClass := objc.GetClass("AXPTranslationObject")
 	transAlloc := objc.Send[objc.ID](objc.ID(transClass), objc.Sel("alloc"))
 	trans := objc.Send[objc.ID](transAlloc, objc.Sel("init"))
@@ -355,11 +316,8 @@ func (d SimDevice) PerformAction(element *AccessibilityElement, actionType uint6
 	}
 	objc.Send[objc.ID](trans, objc.Sel("setBridgeDelegateToken:"), objc.NSString(token))
 
-	// Set Translation on Request
 	objc.Send[objc.ID](request, objc.Sel("setTranslation:"), trans)
 
-	// Send Request
-	// Actions usually don't return elements, but we wait for completion
 	_, err := d.sendAccessibilityRequest(request)
 	return err
 }
