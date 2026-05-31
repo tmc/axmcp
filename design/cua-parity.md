@@ -58,10 +58,11 @@ background delivery.
 
 CUA Driver caps returned PNGs at a 1568 px long side by default so the
 image and pixel-click coordinate space match without client scaling.
-axmcp currently returns the captured screenshot size for
-`get_app_state`; pixel coordinates are interpreted in that returned image
-space. Clients that downscale screenshots before model input must remap
-coordinates before calling pixel actions.
+`cmd/computer-use-mcp` applies the same long-side cap to
+`get_app_state` screenshots and reports the capped `screenshot_width`
+and `screenshot_height`; pixel coordinates are interpreted in that
+returned image space. Clients that downscale screenshots further before
+model input must remap coordinates before calling pixel actions.
 
 ## Known gaps
 
@@ -70,7 +71,6 @@ coordinates before calling pixel actions.
 - No claim that every action preserves the user's foreground app.
 - No built-in executor for arbitrary OpenAI `computer_call.actions`
   batches.
-- No built-in 1568 px screenshot long-side cap for Computer Use snapshots.
 - `SLEventPostToPid` support is present in `internal/skylightinput`,
   but app coverage still depends on target behavior and fallback paths.
 - `internal/axpump` exists to keep Chromium-family AX trees populated,
