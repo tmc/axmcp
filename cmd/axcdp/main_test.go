@@ -25,6 +25,17 @@ func TestWriteJSONReportsWriteError(t *testing.T) {
 	}
 }
 
+func TestServeParseErrorReportsWriteError(t *testing.T) {
+	s := &server{}
+	err := s.serve(strings.NewReader("AX {}\n"), failingWriter{})
+	if err == nil {
+		t.Fatal("serve succeeded with failing writer")
+	}
+	if !strings.Contains(err.Error(), "write response") || !strings.Contains(err.Error(), "write failed") {
+		t.Fatalf("serve error = %v, want wrapped write failure", err)
+	}
+}
+
 func TestLoadAXReportsError(t *testing.T) {
 	if _, err := loadAX("/no/such/ApplicationServices"); err == nil {
 		t.Fatal("loadAX succeeded for missing framework path")

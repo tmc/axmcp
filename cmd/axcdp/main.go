@@ -366,7 +366,9 @@ func (s *server) serve(r io.Reader, w io.Writer) error {
 		if err := json.Unmarshal([]byte(line), &req); err != nil {
 			method, params, parseErr := parseCommand(line)
 			if parseErr != nil {
-				enc.Encode(response{Error: &protocolError{Code: -32700, Message: parseErr.Error()}})
+				if err := enc.Encode(response{Error: &protocolError{Code: -32700, Message: parseErr.Error()}}); err != nil {
+					return fmt.Errorf("write response: %w", err)
+				}
 				continue
 			}
 			req.Method = method
