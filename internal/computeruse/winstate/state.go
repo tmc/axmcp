@@ -3,6 +3,7 @@ package winstate
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -28,10 +29,32 @@ type Window struct {
 	Rect        Rect
 }
 
+// NativeElement identifies a Windows UI element retained in a snapshot.
+type NativeElement struct {
+	WindowHandle     uintptr
+	AutomationHandle uintptr
+}
+
+// AutomationNode is one node read from a Windows automation tree.
+type AutomationNode struct {
+	Native           NativeElement
+	Role             string
+	Title            string
+	Value            string
+	Description      string
+	Identifier       string
+	Rect             Rect
+	Enabled          bool
+	Settable         bool
+	SecondaryActions []string
+	Children         []AutomationNode
+}
+
 // Backend builds app state from top-level Win32 windows.
 type Backend struct {
 	windows    func(context.Context) ([]Window, error)
 	screenshot func(context.Context, Window) ([]byte, error)
+	automation func(context.Context, Window) (AutomationNode, error)
 }
 
 var _ computeruse.StateBackend = Backend{}
@@ -80,17 +103,12 @@ func (b Backend) BuildState(ctx context.Context, req computeruse.StateRequest) (
 	state := computeruse.AppState{
 		App:    appInfo(win),
 		Window: windowInfo(win),
-		Tree: []computeruse.ElementNode{{
-			Index:   0,
-			Role:    "Window",
-			Title:   win.Title,
-			X:       win.Rect.X,
-			Y:       win.Rect.Y,
-			Width:   win.Rect.Width,
-			Height:  win.Rect.Height,
-			Enabled: true,
-		}},
 	}
+	tree, nodes, elements, err := b.buildTree(ctx, win)
+	if err != nil {
+		return nil, err
+	}
+	state.Tree = tree
 	if req.Instructions != nil {
 		state.Instructions = req.Instructions.Instructions(state.App)
 	}
@@ -105,7 +123,7 @@ func (b Backend) BuildState(ctx context.Context, req computeruse.StateRequest) (
 	state.ScreenshotPNGBase64 = base64.StdEncoding.EncodeToString(pngData)
 	state.Window.ScreenshotWidth = cfg.Width
 	state.Window.ScreenshotHeight = cfg.Height
-	return &Snapshot{state: state, window: win}, nil
+	return &Snapshot{state: state, window: win, nodes: nodes, elements: elements}, nil
 }
 
 func (b Backend) listWindows(ctx context.Context) ([]Window, error) {
@@ -120,6 +138,28 @@ func (b Backend) captureScreenshot(ctx context.Context, win Window) ([]byte, err
 		return b.screenshot(ctx, win)
 	}
 	return captureWindowPNG(ctx, win)
+}
+
+func (b Backend) buildTree(ctx context.Context, win Window) ([]computeruse.ElementNode, map[int]computeruse.ElementNode, map[int]NativeElement, error) {
+	root, err := b.automationTree(ctx, win)
+	if err != nil {
+		if b.automation != nil || ctx.Err() != nil || !errors.Is(err, computeruse.ErrPlatformUnsupported) {
+			return nil, nil, nil, fmt.Errorf("read UI Automation tree: %w", err)
+		}
+		root = fallbackAutomationRoot(win)
+	}
+	if root.isEmpty() {
+		root = fallbackAutomationRoot(win)
+	}
+	tree, nodes, elements := flattenAutomationTree(win, root)
+	return tree, nodes, elements, nil
+}
+
+func (b Backend) automationTree(ctx context.Context, win Window) (AutomationNode, error) {
+	if b.automation != nil {
+		return b.automation(ctx, win)
+	}
+	return readAutomationTree(ctx, win)
 }
 
 func (b Backend) resolveWindow(ctx context.Context, selector string) (Window, error) {
@@ -149,8 +189,10 @@ func (b Backend) resolveWindow(ctx context.Context, selector string) (Window, er
 
 // Snapshot is a Windows state snapshot.
 type Snapshot struct {
-	state  computeruse.AppState
-	window Window
+	state    computeruse.AppState
+	window   Window
+	nodes    map[int]computeruse.ElementNode
+	elements map[int]NativeElement
 }
 
 func (s *Snapshot) State() computeruse.AppState {
@@ -160,8 +202,113 @@ func (s *Snapshot) State() computeruse.AppState {
 	return s.state
 }
 
+func (s *Snapshot) NativeElement(index int) (NativeElement, computeruse.ElementNode, error) {
+	if s == nil {
+		return NativeElement{}, computeruse.ElementNode{}, fmt.Errorf("nil snapshot")
+	}
+	node, ok := s.nodes[index]
+	if !ok {
+		return NativeElement{}, computeruse.ElementNode{}, fmt.Errorf("unknown element_index %d", index)
+	}
+	return s.elements[index], node, nil
+}
+
 func (s *Snapshot) Close() error {
 	return nil
+}
+
+func readAutomationTree(ctx context.Context, win Window) (AutomationNode, error) {
+	if err := ctx.Err(); err != nil {
+		return AutomationNode{}, err
+	}
+	if win.Handle == 0 {
+		return AutomationNode{}, fmt.Errorf("missing window handle")
+	}
+	return AutomationNode{}, computeruse.PlatformUnsupported("read UI Automation tree")
+}
+
+func fallbackAutomationRoot(win Window) AutomationNode {
+	return AutomationNode{
+		Native: NativeElement{
+			WindowHandle: win.Handle,
+		},
+		Role:    "Window",
+		Title:   win.Title,
+		Rect:    win.Rect,
+		Enabled: true,
+	}
+}
+
+func (n AutomationNode) isEmpty() bool {
+	return n.Native == (NativeElement{}) &&
+		strings.TrimSpace(n.Role) == "" &&
+		strings.TrimSpace(n.Title) == "" &&
+		n.Rect == (Rect{}) &&
+		len(n.Children) == 0
+}
+
+func flattenAutomationTree(win Window, root AutomationNode) ([]computeruse.ElementNode, map[int]computeruse.ElementNode, map[int]NativeElement) {
+	type queueItem struct {
+		parent int
+		node   AutomationNode
+	}
+	queue := []queueItem{{parent: -1, node: root}}
+	tree := make([]computeruse.ElementNode, 0, 128)
+	nodes := make(map[int]computeruse.ElementNode)
+	elements := make(map[int]NativeElement)
+
+	for len(queue) > 0 {
+		item := queue[0]
+		queue = queue[1:]
+		index := len(tree)
+		node := elementNode(win, item.node, item.parent, index)
+		tree = append(tree, node)
+		nodes[index] = node
+		elements[index] = nativeElement(win, item.node)
+		for _, child := range item.node.Children {
+			queue = append(queue, queueItem{parent: index, node: child})
+		}
+	}
+	return tree, nodes, elements
+}
+
+func elementNode(win Window, src AutomationNode, parent, index int) computeruse.ElementNode {
+	rect := src.Rect
+	if rect.Width <= 0 || rect.Height <= 0 {
+		rect = win.Rect
+	}
+	role := strings.TrimSpace(src.Role)
+	if role == "" && index == 0 {
+		role = "Window"
+	}
+	title := strings.TrimSpace(src.Title)
+	if title == "" && index == 0 {
+		title = win.Title
+	}
+	return computeruse.ElementNode{
+		Index:            index,
+		ParentIndex:      parent,
+		Role:             role,
+		Title:            title,
+		Value:            strings.TrimSpace(src.Value),
+		Description:      strings.TrimSpace(src.Description),
+		Identifier:       strings.TrimSpace(src.Identifier),
+		X:                rect.X - win.Rect.X,
+		Y:                rect.Y - win.Rect.Y,
+		Width:            rect.Width,
+		Height:           rect.Height,
+		Enabled:          src.Enabled,
+		Settable:         src.Settable,
+		SecondaryActions: append([]string(nil), src.SecondaryActions...),
+	}
+}
+
+func nativeElement(win Window, node AutomationNode) NativeElement {
+	native := node.Native
+	if native.WindowHandle == 0 {
+		native.WindowHandle = win.Handle
+	}
+	return native
 }
 
 func appInfo(win Window) computeruse.AppInfo {

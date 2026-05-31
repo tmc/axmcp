@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"image"
 	"image/png"
 	"reflect"
@@ -76,8 +77,11 @@ func TestBackendBuildStateReturnsWindowSnapshot(t *testing.T) {
 	if _, err := base64.StdEncoding.DecodeString(state.ScreenshotPNGBase64); err != nil {
 		t.Fatalf("ScreenshotPNGBase64 is not base64 PNG: %v", err)
 	}
-	if len(state.Tree) != 1 || state.Tree[0].Role != "Window" || state.Tree[0].Title != "Calculator" {
+	if len(state.Tree) != 1 || state.Tree[0].ParentIndex != -1 || state.Tree[0].Role != "Window" || state.Tree[0].Title != "Calculator" {
 		t.Fatalf("state.Tree = %#v, want root window node", state.Tree)
+	}
+	if state.Tree[0].X != 0 || state.Tree[0].Y != 0 {
+		t.Fatalf("root geometry = (%d,%d), want window-local origin", state.Tree[0].X, state.Tree[0].Y)
 	}
 	if state.Instructions != "use calc.exe" {
 		t.Fatalf("Instructions = %q, want app instructions", state.Instructions)
@@ -104,6 +108,104 @@ func TestBackendBuildStateCapsScreenshotLongSide(t *testing.T) {
 	}
 	if cfg.Width != 1568 || cfg.Height != 980 {
 		t.Fatalf("encoded screenshot = %dx%d, want 1568x980", cfg.Width, cfg.Height)
+	}
+}
+
+func TestBackendBuildStateUsesAutomationTree(t *testing.T) {
+	backend := Backend{
+		windows:    fakeWindows,
+		screenshot: fakeScreenshot(320, 200),
+		automation: func(_ context.Context, win Window) (AutomationNode, error) {
+			return AutomationNode{
+				Native: NativeElement{
+					WindowHandle:     win.Handle,
+					AutomationHandle: 10,
+				},
+				Role:    "Window",
+				Title:   win.Title,
+				Rect:    win.Rect,
+				Enabled: true,
+				Children: []AutomationNode{
+					{
+						Native: NativeElement{
+							WindowHandle:     win.Handle,
+							AutomationHandle: 11,
+						},
+						Role:             "Button",
+						Title:            "Seven",
+						Rect:             Rect{X: 20, Y: 40, Width: 50, Height: 20},
+						Enabled:          true,
+						SecondaryActions: []string{"invoke"},
+					},
+					{
+						Native: NativeElement{
+							WindowHandle:     win.Handle,
+							AutomationHandle: 12,
+						},
+						Role:       "Edit",
+						Value:      "42",
+						Identifier: "display",
+						Rect:       Rect{X: 30, Y: 70, Width: 100, Height: 30},
+						Enabled:    true,
+						Settable:   true,
+						Children: []AutomationNode{{
+							Native: NativeElement{
+								WindowHandle:     win.Handle,
+								AutomationHandle: 13,
+							},
+							Role:    "Text",
+							Title:   "result",
+							Rect:    Rect{X: 35, Y: 75, Width: 40, Height: 10},
+							Enabled: true,
+						}},
+					},
+				},
+			}, nil
+		},
+	}
+	snapshot, err := backend.BuildState(context.Background(), computeruse.StateRequest{App: "calc.exe"})
+	if err != nil {
+		t.Fatalf("BuildState: %v", err)
+	}
+	state := snapshot.State()
+	want := []computeruse.ElementNode{
+		{Index: 0, ParentIndex: -1, Role: "Window", Title: "Calculator", X: 0, Y: 0, Width: 300, Height: 200, Enabled: true},
+		{Index: 1, ParentIndex: 0, Role: "Button", Title: "Seven", X: 10, Y: 20, Width: 50, Height: 20, Enabled: true, SecondaryActions: []string{"invoke"}},
+		{Index: 2, ParentIndex: 0, Role: "Edit", Value: "42", Identifier: "display", X: 20, Y: 50, Width: 100, Height: 30, Enabled: true, Settable: true},
+		{Index: 3, ParentIndex: 2, Role: "Text", Title: "result", X: 25, Y: 55, Width: 40, Height: 10, Enabled: true},
+	}
+	if !reflect.DeepEqual(state.Tree, want) {
+		t.Fatalf("state.Tree = %#v, want %#v", state.Tree, want)
+	}
+	winSnapshot, ok := snapshot.(*Snapshot)
+	if !ok {
+		t.Fatalf("snapshot = %T, want *Snapshot", snapshot)
+	}
+	native, node, err := winSnapshot.NativeElement(2)
+	if err != nil {
+		t.Fatalf("NativeElement: %v", err)
+	}
+	if native.WindowHandle != 1 || native.AutomationHandle != 12 {
+		t.Fatalf("native element = %#v, want hwnd 1 automation 12", native)
+	}
+	if !reflect.DeepEqual(node, want[2]) {
+		t.Fatalf("node = %#v, want %#v", node, want[2])
+	}
+	if _, _, err := winSnapshot.NativeElement(99); err == nil {
+		t.Fatalf("NativeElement missing = nil, want error")
+	}
+}
+
+func TestBackendBuildStateReportsInjectedAutomationError(t *testing.T) {
+	backend := Backend{
+		windows:    fakeWindows,
+		screenshot: fakeScreenshot(320, 200),
+		automation: func(context.Context, Window) (AutomationNode, error) {
+			return AutomationNode{}, errFakeAutomation
+		},
+	}
+	if _, err := backend.BuildState(context.Background(), computeruse.StateRequest{App: "calc.exe"}); err == nil {
+		t.Fatalf("BuildState automation error = nil, want error")
 	}
 }
 
@@ -138,6 +240,8 @@ type fakeInstructions struct{}
 func (fakeInstructions) Instructions(app computeruse.AppInfo) string {
 	return "use " + app.Name
 }
+
+var errFakeAutomation = errors.New("fake automation tree")
 
 func fakeScreenshot(width, height int) func(context.Context, Window) ([]byte, error) {
 	return func(context.Context, Window) ([]byte, error) {
