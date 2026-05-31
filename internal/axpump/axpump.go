@@ -32,6 +32,8 @@ type observerHold struct {
 // Ensure asks a target app to keep its accessibility tree populated while it
 // is backgrounded. It is best-effort: native apps commonly reject the Chromium
 // AX attributes, and callers should still proceed with a normal snapshot.
+// Successful observers are retained for the process lifetime so the target
+// keeps sending AX notifications.
 func Ensure(pid int32) (bool, error) {
 	if pid <= 0 {
 		return false, fmt.Errorf("invalid pid %d", pid)
