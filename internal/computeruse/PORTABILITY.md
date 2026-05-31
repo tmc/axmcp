@@ -1,8 +1,8 @@
 # Computer Use Portability
 
-This package is currently a Darwin implementation. The exported model types are
-portable, but the command and the runtime packages that build state, send input,
-and watch for interventions call macOS APIs directly.
+This package has a Darwin implementation plus non-Darwin unsupported stubs. The
+exported model types and helper packages are portable; live app state, native
+input, and physical-intervention monitoring still require platform backends.
 
 ## Public Evidence
 
@@ -25,7 +25,7 @@ isolation, and Linux input depends on the display server and permissions.
 
 ## Current Boundary
 
-These repo packages are not build-tagged as Darwin-only, but they import Darwin
+These repo packages are Darwin-only implementations because they import Darwin
 or Apple-specific APIs:
 
 - `internal/computeruse/appstate`: Accessibility, CoreFoundation, axpump,
@@ -35,10 +35,10 @@ or Apple-specific APIs:
 - `internal/computeruse/intervention`: CoreFoundation, CoreGraphics, and kernel
   event APIs.
 
-As a result, `GOOS=linux go test ./internal/computeruse/... ./cmd/computer-use-mcp`
-and the equivalent Windows command fail before package tests run because the
-Apple dependency chain reaches `github.com/ebitengine/purego/objc`, whose files
-are excluded on those targets.
+Non-Darwin builds now get unsupported stubs for these packages and for
+`cmd/computer-use-mcp`, so the package set can compile without pulling in the
+Apple dependency chain. Runtime native automation remains unavailable until
+Windows and Linux backends replace those stubs.
 
 ## Small Implementation Slice
 
@@ -51,10 +51,9 @@ interfaces and keep the Darwin implementation as the first backend:
   coordinate;
 - intervention monitoring: start, stop, and report user-intervention state.
 
-After that split, Darwin files should carry `//go:build darwin` and Linux and
-Windows should get stub implementations that return one shared unsupported
-platform error. That would let cross-platform builds compile while preserving a
-clear runtime failure until UIA and AT-SPI backends are implemented.
+The first split is in place: Darwin files carry `//go:build darwin`, and Linux
+and Windows stubs return one shared unsupported platform error. The next slice
+is to replace those stubs with real backends one subsystem at a time.
 
 ## Verification Targets
 
@@ -64,7 +63,7 @@ The compatibility gate for the current implementation is:
 GOOS=darwin go test ./internal/computeruse/... ./cmd/computer-use-mcp
 ```
 
-After the stub layer exists, these should also compile and run package tests:
+The stub layer should keep these compile-oriented checks passing:
 
 ```sh
 GOOS=linux go test ./internal/computeruse/... ./cmd/computer-use-mcp

@@ -1,3 +1,5 @@
+//go:build darwin
+
 // Package intervention detects recent physical user input.
 package intervention
 
