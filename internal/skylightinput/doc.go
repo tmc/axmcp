@@ -1,5 +1,6 @@
-// Package skylightinput posts synthetic mouse events to a target process via
-// SkyLight's per-pid SPI, bypassing the public CGEvent HID-tap pipeline.
+// Package skylightinput posts synthetic mouse and keyboard events to a target
+// process via SkyLight's per-pid SPI, bypassing the public CGEvent HID-tap
+// pipeline.
 //
 // Three problems this package solves that CGEventPost cannot:
 //
@@ -10,8 +11,8 @@
 //     those filters accept.
 //
 //  2. Cursor-warp-on-click. CGEventPost(kCGHIDEventTap, ...) updates the
-//     real on-screen cursor. The SkyLight per-pid path delivers to the
-//     target's mach port without moving the user's pointer.
+//     real on-screen cursor for mouse events. The SkyLight per-pid path
+//     delivers to the target's mach port without moving the user's pointer.
 //
 //  3. Focus-on-click. Activating a target via NSRunningApplication.activate
 //     or SLPSSetFrontProcessWithOptions raises the window AND on multi-Space
@@ -27,5 +28,5 @@
 // Status: this package speaks to private Apple SPIs that are not in any
 // public header and are not API-stable. Symbols are resolved lazily; if any
 // SPI is missing on the running OS, the corresponding helper returns
-// ErrUnavailable and callers should fall back to CGEventPost.
+// ErrUnavailable and callers should fall back to a public CGEvent path.
 package skylightinput
