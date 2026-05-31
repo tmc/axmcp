@@ -13,10 +13,15 @@ internal packages. The Accessibility surface walks live AX trees, posts
 pointer and keyboard events, captures and OCRs screen regions, and
 drives windows with explicit raise / move / drag actions. The Codex
 Computer Use server wraps the same primitives in the 9-tool contract
-with per-session app state. The Xcode surface drives `xcodebuild`,
+with per-session app state, best-effort `internal/axpump` support for
+Chromium-family AX trees, and optional private SkyLight input posting
+through `internal/skylightinput`; see `design/cua-parity.md` for the
+current CUA-driver/OpenAI compatibility boundary. The Xcode surface
+drives `xcodebuild`,
 simulators, devices, App Store Connect, and the File > New > Target
-wizard. The CDP surface exposes a supported AX-backed subset, real
-screenshots and screencast frames, explicit unsupported-method failures,
+wizard. The CDP surface exposes a supported AX-backed subset,
+screen-capture-backed screenshots and screencast frames, explicit
+unsupported-method failures,
 and an optional proxy to real browser DevTools targets. As of v0.2.x +
 two follow-up PRs, off-Space windows are detected via a private
 SkyLight binding (`internal/spacedetect`) and surfaced as `off_space:
@@ -28,32 +33,10 @@ leakage). Ghost cursor rendering for click and drag actions lives in
 
 ## Near-term (v0.3.x)
 
-- `internal/axpump` to keep backgrounded Electron AX trees populated
-  by registering a no-op `AXObserver` per inspected pid. Medium scope,
-  not the originally-projected one-line dlsym swap: a
-  `runtime.LockOSThread` run-loop pump, per-pid `Ensure` that creates
-  the observer and subscribes to a broad notification set, and an
-  `Active(pid)` query stamped as `ax_pump_active` metadata on
-  `ax_tree` / `ax_snapshot` payloads. The originally-projected
-  `_AXObserverAddNotificationAndCheckRemote` private SPI is absent on
-  macOS 26.4.x (verified by `purego.Dlsym` and `dyld_info -exports`)
-  and was always best-effort upstream — the load-bearing piece is
-  observer presence itself, not the private call. See
-  `design/axpump.md` for the full design and graceful-degrade contract
-  parallel to `spacedetect`'s `ErrSkyLightUnavailable`.
-- Upstream `AXObserver*` wrappers in `tmc/apple/x/axuiautomation`
-  (`AXObserverCreateWithInfoCallback`, `AXObserverGetRunLoopSource`,
-  `AXObserverAddNotification`, `AXObserverRemoveNotification`). Today
-  the package exports only `AXObserverCreate`. `internal/axpump` needs
-  the other three; binding them upstream first is the path that keeps
-  axpump free of the ad-hoc `purego.Dlopen` pattern that
-  `cmd/axmcp/tools.go` just retired. See `design/axpump.md` §"Upstream
-  prerequisite".
-- `SLEventPostToPid` + auth-message envelope + primer click for
-  Chromium-family pointer delivery. Concentrates in
-  `internal/computeruse/input/input.go`. Highest user-visible payoff
-  of the cua-driver adoption set; also the most invasive — wants the
-  most integration-test investment.
+- Harden the `internal/axpump` and `internal/skylightinput` adoption
+  paths against more app classes, especially Chromium-family pointer
+  delivery. The remaining work is coverage and fallback behavior, not
+  a new public API.
 - `internal/ghostcursor` split: separate the input-event side from the
   overlay rendering side so the cursor animation can be reused outside
   the click/drag paths without dragging the input dependencies.

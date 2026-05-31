@@ -1,7 +1,7 @@
 # axpump: keep Chromium AX trees populated via observer presence
 
-`internal/axpump` is the planned v0.3.x package that registers a no-op
-`AXObserver` per process pid axmcp inspects, so Chromium-family targets
+`internal/axpump` registers a no-op `AXObserver` per process pid axmcp
+inspects, so Chromium-family targets
 (VS Code, Slack, Chrome, Discord, every Electron shell) keep their
 renderer-side AX pipeline engaged. Without an observer registered,
 Blink short-circuits AX-tree generation when the window isn't focused
@@ -9,8 +9,9 @@ and `ax_tree` / `ax_snapshot` against the backgrounded target return a
 chrome-only stub. `axpump` is the smallest fix that closes that gap; it
 is *not* a switch from synchronous walk to event-driven observation.
 
-The package does not exist yet — this doc precedes the implementation
-and pins design decisions made during the v0.3 research dispatch.
+The package exists as best-effort helper code. This note records the
+design boundary and the remaining limitations around event streams and
+daemon lifetime.
 
 ## Why observer presence, not events
 
@@ -175,7 +176,7 @@ because of axpump.
 
 ## Non-goals
 
-`axpump` is opt-in metadata-stamp scaffolding for the tools that
+`axpump` is opt-in scaffolding for the tools that
 already exist; it is not a structural change to those tools.
 
 - **axmcp does not switch synchronous walk to event-driven in v0.3.**
