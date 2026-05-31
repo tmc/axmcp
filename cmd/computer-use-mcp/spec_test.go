@@ -388,6 +388,31 @@ func TestTrajectoryRecorderRecordsActionArgs(t *testing.T) {
 	}
 }
 
+func TestDecodeReplayClickArgsIgnoresStateAndCaptureFields(t *testing.T) {
+	step := trajectoryStep{
+		Tool: "click",
+		Args: map[string]any{
+			"app":             "Finder",
+			"state_id":        "stale",
+			"element_index":   "7",
+			"click_count":     2,
+			"capture_mode":    "vision",
+			"omit_screenshot": true,
+		},
+	}
+	var args clickInput
+	if err := decodeStepArgs(step, &args); err != nil {
+		t.Fatalf("decodeStepArgs: %v", err)
+	}
+	if args.StateID != "stale" {
+		t.Fatalf("decoded StateID = %q, want stale before replay overwrite", args.StateID)
+	}
+	args.StateID = "fresh"
+	if args.App != "Finder" || args.StateID != "fresh" || args.ElementIndex == nil || *args.ElementIndex != "7" || args.ClickCount != 2 {
+		t.Fatalf("decoded click args = %#v", args)
+	}
+}
+
 func TestStateForActionRequiresFreshStateID(t *testing.T) {
 	rt := &runtimeState{sessions: session.NewStore()}
 	if _, err := stateForAction(rt, "click", "Finder", ""); err == nil {
