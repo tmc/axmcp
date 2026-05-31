@@ -59,6 +59,24 @@ func TestBackendDragKeyAndTypeUseXDoToolWindow(t *testing.T) {
 	}
 }
 
+func TestBackendTypeTextElementFocusesThenTypes(t *testing.T) {
+	runner := &recordingRunner{}
+	backend := Backend{run: runner.run}
+	index := 2
+
+	if err := backend.TypeText(context.Background(), linuxInputSnapshot(), &index, "99"); err != nil {
+		t.Fatalf("TypeText: %v", err)
+	}
+	want := [][]string{
+		{"xdotool", "mousemove", "--window", "0x03e00007", "80", "85"},
+		{"xdotool", "click", "--window", "0x03e00007", "1"},
+		{"xdotool", "type", "--window", "0x03e00007", "--", "99"},
+	}
+	if !reflect.DeepEqual(runner.commands, want) {
+		t.Fatalf("commands = %#v, want %#v", runner.commands, want)
+	}
+}
+
 func TestBackendScrollElementUsesXDoToolWindow(t *testing.T) {
 	runner := &recordingRunner{}
 	backend := Backend{run: runner.run}

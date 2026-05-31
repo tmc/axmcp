@@ -46,7 +46,7 @@ func PlatformStatus() PlatformReport {
 	case xdotoolErr != nil:
 		caps = append(caps, PlatformCapability{Name: "input", Message: "xdotool is not available on PATH"})
 	default:
-		caps = append(caps, PlatformCapability{Name: "input", Available: true, Message: "xdotool-backed X11 pixel, scroll, key, and text input is available at " + xdotoolPath})
+		caps = append(caps, PlatformCapability{Name: "input", Available: true, Message: "xdotool-backed X11 pixel, scroll, key, and element-centered text input is available at " + xdotoolPath})
 	}
 	if display == "" {
 		caps = append(caps, PlatformCapability{Name: "x11", Message: "DISPLAY is not set"})

@@ -66,8 +66,9 @@ background Win32 messages, and opt-in foreground clicks use SendInput. Linux use
 `internal/computeruse/linuxstate`
 for X11 window metadata through `wmctrl -lpG` and captures screenshots through
 ImageMagick `import`; window-targeted pixel, scroll, key, and text input uses
-`xdotool`; and a bounded AT-SPI reader enriches element trees and dispatches retained element
-actions when DBus, `gdbus`, and the AT-SPI bridge are reachable. AT-SPI
+`xdotool`, including element-centered focus before text entry; and a bounded
+AT-SPI reader enriches element trees and dispatches retained element actions
+when DBus, `gdbus`, and the AT-SPI bridge are reachable. AT-SPI
 set-value support covers `EditableText.SetTextContents` and numeric
 `Value.CurrentValue`; richer text/value editing and Wayland support are still
 missing. Non-Darwin servers expose `mcp://platform/status` so clients can
@@ -127,10 +128,10 @@ window and use SendInput for apps that reject background messages.
 apps from `wmctrl -lpG` output, captures a PNG screenshot with ImageMagick
 `import`, and reads a bounded AT-SPI subtree through `gdbus` when available,
 falling back to the root window node when AT-SPI is unavailable. It also routes
-pixel clicks, drags, key presses, window-level typing, and element-centered
-scrolls through `xdotool`; retained element clicks and secondary actions
-dispatch through AT-SPI `Action.DoAction` when the snapshot has a bus name and
-object path, and set-value dispatches through AT-SPI
+pixel clicks, drags, key presses, window-level typing, element-centered typing,
+and element-centered scrolls through `xdotool`; retained element clicks and
+secondary actions dispatch through AT-SPI `Action.DoAction` when the snapshot
+has a bus name and object path, and set-value dispatches through AT-SPI
 `EditableText.SetTextContents` or the `Value.CurrentValue` property when those
 interfaces are exposed.
 Tests can inject an accessibility tree or fake `gdbus` calls to lock stable

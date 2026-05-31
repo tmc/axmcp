@@ -504,7 +504,20 @@ func (b Backend) TypeText(ctx context.Context, snapshot computeruse.Snapshot, el
 		return err
 	}
 	if elementIndex != nil && *elementIndex != 0 {
-		return computeruse.PlatformUnsupported("type into element with AT-SPI")
+		_, node, err := s.NativeElement(*elementIndex)
+		if err != nil {
+			return err
+		}
+		if node.Width <= 0 || node.Height <= 0 {
+			return fmt.Errorf("element has empty bounds")
+		}
+		local := coords.Point{X: node.X + node.Width/2, Y: node.Y + node.Height/2}
+		if err := b.runXDoTool(ctx, s.window, "mousemove", "--window", s.window.ID, strconv.Itoa(local.X), strconv.Itoa(local.Y)); err != nil {
+			return err
+		}
+		if err := b.runXDoTool(ctx, s.window, "click", "--window", s.window.ID, "1"); err != nil {
+			return err
+		}
 	}
 	return b.runXDoTool(ctx, s.window, "type", "--window", s.window.ID, "--", text)
 }
