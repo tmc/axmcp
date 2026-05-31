@@ -161,13 +161,8 @@ func main() {
 		Version: "0.1.0",
 	}, serverOpts)
 
-	// Detect context (Phase 2)
-	// For now, we assume CWD is the root, or use a flag in future
-	ctx := &resources.Context{
-		ProjectRoot: ".",
-	}
+	ctx := resourceContextFromCWD()
 
-	// Register resources (Phase 2)
 	if *enableResources {
 		resources.Register(server, ctx)
 	}
@@ -306,6 +301,14 @@ func ensureUIPermissions() error {
 		}
 	}
 	return nil
+}
+
+func resourceContextFromCWD() *resources.Context {
+	root, err := os.Getwd()
+	if err != nil {
+		root = "."
+	}
+	return &resources.Context{ProjectRoot: root}
 }
 
 func permissionName(req permissions.Requirement) string {
