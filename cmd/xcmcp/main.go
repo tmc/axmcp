@@ -9,9 +9,11 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -219,11 +221,19 @@ func main() {
 		}
 	}
 
+	serverCtx, stopServer := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopServer()
+
 	runServer := func() {
 		if permissionReady != nil {
-			if err := <-permissionReady; err != nil {
-				log.Printf("permission onboarding failed: %v", err)
-				os.Exit(1)
+			select {
+			case err := <-permissionReady:
+				if err != nil {
+					log.Printf("permission onboarding failed: %v", err)
+					os.Exit(1)
+				}
+			case <-serverCtx.Done():
+				return
 			}
 		}
 		if *waitForXcode > 0 {
@@ -235,10 +245,14 @@ func main() {
 				log.Println("Xcode bridge ready, starting MCP server")
 			case <-time.After(*waitForXcode):
 				log.Println("Xcode bridge timeout, starting MCP server without bridge tools")
+			case <-serverCtx.Done():
+				return
 			}
 		}
-		if err := server.Run(context.TODO(), transport); err != nil {
-			log.Printf("Server error: %v", err)
+		if err := server.Run(serverCtx, transport); err != nil {
+			if serverCtx.Err() == nil {
+				log.Printf("Server error: %v", err)
+			}
 		}
 		ui.WaitForWindows()
 		os.Exit(0)
