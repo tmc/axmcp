@@ -149,8 +149,8 @@ Tests can inject an accessibility tree or fake `gdbus` calls to lock stable
 `element_index` values, window-local geometry, retained native handles, and
 action dispatch. On Windows and Linux, `cmd/computer-use-mcp` exposes the
 state-bound click, secondary action, set-value, scroll, drag, key, and text
-tools through the same MCP contract as Darwin; browser JavaScript evaluation
-remains unsupported outside Darwin.
+tools, including trajectory recording and replay, through the same MCP contract
+as Darwin; browser JavaScript evaluation remains unsupported outside Darwin.
 
 ## Upstream-Backed Backlog
 

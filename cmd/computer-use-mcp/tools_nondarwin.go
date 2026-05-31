@@ -105,7 +105,7 @@ func registerReplayTrajectory(s *mcp.Server, rt *runtimeState) {
 			"dry_run":   booleanProperty("Return recorded steps without executing them"),
 			"from_step": integerProperty("First 1-based recorded step to replay. Defaults to 1"),
 		}),
-	}, func(_ context.Context, _ *mcp.CallToolRequest, args replayTrajectoryInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args replayTrajectoryInput) (*mcp.CallToolResult, any, error) {
 		if rt.recording == nil {
 			return &mcp.CallToolResult{}, replayTrajectoryOutput{}, nil
 		}
@@ -117,8 +117,22 @@ func registerReplayTrajectory(s *mcp.Server, rt *runtimeState) {
 		if args.DryRun {
 			return &mcp.CallToolResult{}, replayTrajectoryOutput{Steps: steps}, nil
 		}
-		err := computeruse.PlatformUnsupported("replay trajectory")
-		return toolError(err), replayTrajectoryOutput{Steps: steps}, nil
+		var out []trajectoryStep
+		err := rt.recording.replayingMode(func() error {
+			for _, step := range steps {
+				result, err := rt.replayTrajectoryStep(ctx, step)
+				if err != nil {
+					return fmt.Errorf("replay step %d %s: %w", step.Index, step.Tool, err)
+				}
+				step.Result = result
+				out = append(out, step)
+			}
+			return nil
+		})
+		if err != nil {
+			return toolError(err), nil, nil
+		}
+		return &mcp.CallToolResult{}, replayTrajectoryOutput{Replayed: len(out), Steps: out}, nil
 	})
 }
 
