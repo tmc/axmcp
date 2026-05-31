@@ -273,6 +273,42 @@ func TestBackendSetValueUsesATSPIValue(t *testing.T) {
 	}
 }
 
+func TestBackendSetValueFallsBackToXDoToolTextReplacement(t *testing.T) {
+	runner := &recordingRunner{}
+	backend := Backend{run: runner.run}
+
+	if err := backend.SetValue(context.Background(), linuxInputSnapshot(), 2, "49"); err != nil {
+		t.Fatalf("SetValue: %v", err)
+	}
+	want := [][]string{
+		{"xdotool", "mousemove", "--window", "0x03e00007", "80", "85"},
+		{"xdotool", "click", "--window", "0x03e00007", "1"},
+		{"xdotool", "key", "--window", "0x03e00007", "ctrl+a"},
+		{"xdotool", "type", "--window", "0x03e00007", "--", "49"},
+	}
+	if !reflect.DeepEqual(runner.commands, want) {
+		t.Fatalf("commands = %#v, want %#v", runner.commands, want)
+	}
+}
+
+func TestBackendSetValueFallsBackToXDoToolEmptyReplacement(t *testing.T) {
+	runner := &recordingRunner{}
+	backend := Backend{run: runner.run}
+
+	if err := backend.SetValue(context.Background(), linuxInputSnapshot(), 2, ""); err != nil {
+		t.Fatalf("SetValue: %v", err)
+	}
+	want := [][]string{
+		{"xdotool", "mousemove", "--window", "0x03e00007", "80", "85"},
+		{"xdotool", "click", "--window", "0x03e00007", "1"},
+		{"xdotool", "key", "--window", "0x03e00007", "ctrl+a"},
+		{"xdotool", "key", "--window", "0x03e00007", "BackSpace"},
+	}
+	if !reflect.DeepEqual(runner.commands, want) {
+		t.Fatalf("commands = %#v, want %#v", runner.commands, want)
+	}
+}
+
 func TestBackendElementActionsRequireATSPI(t *testing.T) {
 	backend := Backend{run: (&recordingRunner{}).run}
 	err := backend.PerformSecondaryAction(context.Background(), linuxInputSnapshot(), 1, "click")

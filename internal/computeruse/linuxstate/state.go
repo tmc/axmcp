@@ -518,11 +518,18 @@ func (b Backend) SetValue(ctx context.Context, snapshot computeruse.Snapshot, in
 	if err != nil {
 		return err
 	}
-	native, _, err := s.NativeElement(index)
+	native, node, err := s.NativeElement(index)
 	if err != nil {
 		return err
 	}
-	return b.runAccessibilityValue(ctx, accessibilityValue{Native: native, Value: value})
+	err = b.runAccessibilityValue(ctx, accessibilityValue{Native: native, Value: value})
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, computeruse.ErrPlatformUnsupported) {
+		return err
+	}
+	return b.setValueByKeyboard(ctx, s, node, value)
 }
 
 func (b Backend) PressKey(ctx context.Context, snapshot computeruse.Snapshot, key string) error {
@@ -559,6 +566,29 @@ func (b Backend) TypeText(ctx context.Context, snapshot computeruse.Snapshot, el
 		}
 	}
 	return b.runXDoTool(ctx, s.window, "type", "--window", s.window.ID, "--", text)
+}
+
+func (b Backend) setValueByKeyboard(ctx context.Context, s *Snapshot, node computeruse.ElementNode, value string) error {
+	if !node.Settable {
+		return computeruse.PlatformUnsupported("set value with AT-SPI")
+	}
+	if node.Width <= 0 || node.Height <= 0 {
+		return fmt.Errorf("element has empty bounds")
+	}
+	local := coords.Point{X: node.X + node.Width/2, Y: node.Y + node.Height/2}
+	if err := b.runXDoTool(ctx, s.window, "mousemove", "--window", s.window.ID, strconv.Itoa(local.X), strconv.Itoa(local.Y)); err != nil {
+		return err
+	}
+	if err := b.runXDoTool(ctx, s.window, "click", "--window", s.window.ID, "1"); err != nil {
+		return err
+	}
+	if err := b.runXDoTool(ctx, s.window, "key", "--window", s.window.ID, "ctrl+a"); err != nil {
+		return err
+	}
+	if value == "" {
+		return b.runXDoTool(ctx, s.window, "key", "--window", s.window.ID, "BackSpace")
+	}
+	return b.runXDoTool(ctx, s.window, "type", "--window", s.window.ID, "--", value)
 }
 
 func (b Backend) runAccessibilityAction(ctx context.Context, action accessibilityAction) error {

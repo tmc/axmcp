@@ -69,12 +69,13 @@ ImageMagick `import`; window-targeted pixel, scroll, key, and text input uses
 `xdotool`, including element-centered clicks and focus before text entry, and
 `foreground_hid` clicks activate the target window before global xdotool
 delivery. A bounded AT-SPI reader enriches element trees and dispatches retained
-element actions
-when DBus, `gdbus`, and the AT-SPI bridge are reachable. AT-SPI
+element actions when DBus, `gdbus`, and the AT-SPI bridge are reachable. AT-SPI
 set-value support covers `EditableText.SetTextContents` and numeric
-`Value.CurrentValue`; richer text/value editing and Wayland support are still
-missing. Non-Darwin servers expose `mcp://platform/status` so clients can
-inspect the compiled backend and prerequisite probes.
+`Value.CurrentValue`; xdotool falls back to focused text replacement for
+settable fields when AT-SPI value dispatch is unavailable. Richer text/value
+editing and Wayland support are still missing. Non-Darwin servers expose
+`mcp://platform/status` so clients can inspect the compiled backend and
+prerequisite probes.
 
 ## Implementation Slice
 
@@ -139,7 +140,8 @@ absolute screen coordinate, and click without `--window` for apps that reject
 window-targeted delivery. Secondary actions dispatch through AT-SPI
 `Action.DoAction`, and set-value dispatches through AT-SPI
 `EditableText.SetTextContents` or the `Value.CurrentValue` property when those
-interfaces are exposed.
+interfaces are exposed, then falls back to focused xdotool text replacement for
+settable fields.
 Tests can inject an accessibility tree or fake `gdbus` calls to lock stable
 `element_index` values, window-local geometry, retained native handles, and
 action dispatch. The Linux command serves that state through the same MCP tools.
