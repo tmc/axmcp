@@ -8,11 +8,11 @@
 | --- | --- | --- |
 | `cmd/axmcp` | Any running macOS app via AX tree, OCR, pointer, keyboard, windows | Open primitive surface |
 | `cmd/xcmcp` | Xcode, simulators, physical devices, previews, App Store Connect | Toolset-gated, ~40 tools on demand |
-| `cmd/computer-use-mcp` | Codex Computer Use contract on top of axmcp primitives | Exactly the 9-tool spec, session-stateful |
+| `cmd/computer-use-mcp` | Codex Computer Use contract on top of axmcp primitives | Core contract plus extensions, session-stateful |
 | `cmd/iphonemirror-mcp` | Apple's iPhone Mirroring app through OCR, focus, and synthetic input | iOS remote-control surface |
 | `cmd/axcdp` | macOS Accessibility exposed through a CDP remote-debugging endpoint | AX-backed CDP subset, plus optional browser-CDP proxy |
 
-If you want an LLM to click through a real app: `axmcp`. If you want it to build, test, boot a simulator, or add an Xcode target via the File > New UI: `xcmcp`. If you need a drop-in for the Codex Computer Use tool contract: `computer-use-mcp`. If you need a CDP-shaped endpoint for native macOS UI: `axcdp`. If you need to drive a mirrored iPhone whose UI is opaque to macOS Accessibility: `iphonemirror-mcp`.
+If you want an LLM to click through a real app: `axmcp`. If you want it to build, test, boot a simulator, or add an Xcode target via the File > New UI: `xcmcp`. If you need the Codex Computer Use core contract plus recording, replay, and browser-evaluation helpers: `computer-use-mcp`. If you need a CDP-shaped endpoint for native macOS UI: `axcdp`. If you need to drive a mirrored iPhone whose UI is opaque to macOS Accessibility: `iphonemirror-mcp`.
 
 ## Why this exists
 
@@ -172,7 +172,7 @@ xcmcp --enable-all
 computer-use-mcp
 ```
 
-Exposes exactly `list_apps`, `get_app_state`, `click`, `perform_secondary_action`, `set_value`, `scroll`, `drag`, `press_key`, `type_text`. Call `get_app_state` once per turn, then act against `element_index` strings from the snapshot. `capture_mode` accepts `som` (screenshot plus AX tree), `ax` (AX tree without screenshot), or `vision` (screenshot/window/app state without AX tree). Set `omit_screenshot=true` when logs only need metadata and element IDs.
+Exposes the Codex-compatible core tools: `list_apps`, `get_app_state`, `click`, `perform_secondary_action`, `set_value`, `scroll`, `drag`, `press_key`, and `type_text`. It also exposes `set_recording`, `replay_trajectory`, `evaluate_javascript`, and `evaluate_cdp_javascript` extensions. Call `get_app_state` once per turn, then act against `element_index` strings from the snapshot. `capture_mode` accepts `som` (screenshot plus AX tree), `ax` (AX tree without screenshot), or `vision` (screenshot/window/app state without AX tree). Set `omit_screenshot=true` when logs only need metadata and element IDs.
 
 ## MCP client configuration
 
@@ -251,7 +251,7 @@ Primitive tools cover element discovery, pointer and keyboard input, window mani
 
 ### `computer-use-mcp`
 
-`computer-use-mcp` is the stateful, session-oriented compatibility server. It holds the narrow Codex Computer Use tool contract on top of the same accessibility and screenshot primitives.
+`computer-use-mcp` is the stateful, session-oriented compatibility server. It holds the Codex Computer Use core contract and extension tools on top of the same accessibility and screenshot primitives.
 
 It is tools-only — no MCP resources, no resource templates. The tool surface is app-scoped: call `get_app_state` first, then pass returned `element_index` strings to the action tools. Use `capture_mode=som`, `ax`, or `vision` to choose screenshot/tree shape; use `omit_screenshot=true` for compact snapshots without the base64 PNG payload.
 

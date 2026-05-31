@@ -7,7 +7,8 @@
 //   - cmd/xcmcp, for Xcode, simulators, devices, previews, and App Store
 //     Connect workflows
 //   - cmd/computer-use-mcp, a stateful server that implements the Codex
-//     Computer Use tool contract on top of the same primitives
+//     Computer Use core contract plus extension tools on top of the same
+//     primitives
 //   - cmd/iphonemirror-mcp, an OCR and input surface for Apple's iPhone
 //     Mirroring app
 //   - cmd/axcdp, a CDP remote-debugging endpoint backed by macOS
@@ -23,8 +24,9 @@
 //   - cmd/axmcp, a stdio MCP server for macOS Accessibility automation
 //   - cmd/xcmcp, a stdio MCP server for project inspection, build and test,
 //     simulator control, device control, UI inspection, and Xcode integration
-//   - cmd/computer-use-mcp, a stdio MCP server implementing the 9-tool Codex
-//     Computer Use contract with per-session application state
+//   - cmd/computer-use-mcp, a stdio MCP server implementing the Codex
+//     Computer Use core contract with per-session application state and
+//     extension tools
 //   - cmd/iphonemirror-mcp, a stdio MCP server for controlling iPhone
 //     Mirroring through OCR, focus, and synthetic input
 //   - cmd/axcdp, a Chrome DevTools Protocol endpoint for native macOS UI

@@ -12,9 +12,11 @@ This note records the current compatibility boundary against:
 ## Current match
 
 - `cmd/computer-use-mcp` is the Codex-compatible MCP surface in this
-  repo. It exposes `list_apps`, `get_app_state`, `click`,
+  repo. It exposes the core `list_apps`, `get_app_state`, `click`,
   `perform_secondary_action`, `set_value`, `scroll`, `drag`,
-  `press_key`, and `type_text` over stdio.
+  `press_key`, and `type_text` tools over stdio, plus
+  `set_recording`, `replay_trajectory`, `evaluate_javascript`, and
+  `evaluate_cdp_javascript` extensions.
 - The action loop is stateful: call `get_app_state` each turn, pass the
   returned `state_id` to actions, and refresh state when an action
   reports stale or missing state.
@@ -26,6 +28,10 @@ This note records the current compatibility boundary against:
   can target screenshot coordinates, with `foreground_hid=true` as an
   explicit fallback for opaque canvas, WebGL, Metal, and game-like views
   that reject background events.
+- OpenAI's first-party Computer Use tool can return multiple low-level
+  actions in one `computer_call.actions` batch. This MCP surface exposes
+  single action tools and uses `replay_trajectory` for recorded multi-step
+  replay rather than accepting arbitrary model-emitted action batches.
 
 ## CUA Driver comparison
 
@@ -50,11 +56,21 @@ equivalent. `click.foreground_hid` intentionally activates the target
 application and may steal focus; it exists for targets that reject
 background delivery.
 
+CUA Driver caps returned PNGs at a 1568 px long side by default so the
+image and pixel-click coordinate space match without client scaling.
+axmcp currently returns the captured screenshot size for
+`get_app_state`; pixel coordinates are interpreted in that returned image
+space. Clients that downscale screenshots before model input must remap
+coordinates before calling pixel actions.
+
 ## Known gaps
 
 - No cross-platform CUA parity. This repo targets macOS; non-darwin
   builds are for installability, not functional desktop automation.
 - No claim that every action preserves the user's foreground app.
+- No built-in executor for arbitrary OpenAI `computer_call.actions`
+  batches.
+- No built-in 1568 px screenshot long-side cap for Computer Use snapshots.
 - `SLEventPostToPid` support is present in `internal/skylightinput`,
   but app coverage still depends on target behavior and fallback paths.
 - `internal/axpump` exists to keep Chromium-family AX trees populated,
