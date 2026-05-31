@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
 	"image/color"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -493,6 +495,39 @@ func TestCDPHTTPJSONSetsContentLength(t *testing.T) {
 		t.Fatal("Content-Length is empty")
 	} else if n, err := strconv.Atoi(got); err != nil || n <= 0 {
 		t.Fatalf("Content-Length = %q, want positive integer", got)
+	}
+}
+
+type failingHTTPJSONWriter struct {
+	header http.Header
+}
+
+func (w *failingHTTPJSONWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *failingHTTPJSONWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write failed")
+}
+
+func (w *failingHTTPJSONWriter) WriteHeader(int) {}
+
+func TestWriteHTTPJSONLogsWriteError(t *testing.T) {
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() {
+		slog.SetDefault(old)
+	})
+
+	writeHTTPJSON(&failingHTTPJSONWriter{}, map[string]string{"status": "ok"})
+
+	got := buf.String()
+	if !strings.Contains(got, "write http json failed") || !strings.Contains(got, "write failed") {
+		t.Fatalf("log output = %q, want write failure", got)
 	}
 }
 

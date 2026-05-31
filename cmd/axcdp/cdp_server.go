@@ -4294,8 +4294,13 @@ func writeHTTPJSON(w http.ResponseWriter, v any) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)+1))
-	_, _ = w.Write(data)
-	_, _ = w.Write([]byte("\n"))
+	if _, err := w.Write(data); err != nil {
+		slog.Warn("write http json failed", "err", err)
+		return
+	}
+	if _, err := w.Write([]byte("\n")); err != nil {
+		slog.Warn("write http json newline failed", "err", err)
+	}
 }
 
 func safeString(s string) string { return strings.TrimSpace(s) }
