@@ -79,20 +79,23 @@ that are present or missing. The non-Darwin command prints that report before
 exiting so missing Windows or Linux prerequisites can become explicit backend
 probes instead of silent no-op behavior.
 
-`computeruse.Backend` is the package-level contract for the next native
+`computeruse.Backend` is the package-level contract for native
 implementations. It separates app/window state, input, screenshots, and
 intervention monitoring while keeping native element handles inside
-state-bound snapshots. Windows and Linux backends should implement that
-interface instead of exposing UIA, MSAA, AT-SPI, X11, WGC, or portal handles
-through tool responses.
+state-bound snapshots. `cmd/computer-use-mcp` now routes Darwin app-state
+capture and replay state binding through that backend, and exposes a Darwin
+input adapter over the existing Accessibility, CoreGraphics, and SkyLight
+paths. Windows and Linux backends should implement the same interface instead
+of exposing UIA, MSAA, AT-SPI, X11, WGC, or portal handles through tool
+responses.
 
 ## Upstream-Backed Backlog
 
 The next code milestones should keep the current `cmd/computer-use-mcp`
 contract and replace the unsupported stubs behind it.
 
-1. Wire the existing Darwin implementation through `computeruse.Backend` while
-   keeping the current MCP schema and state_id behavior unchanged.
+1. Finish routing Darwin action handlers through `computeruse.Backend.Input`
+   while keeping the current MCP schema and state_id behavior unchanged.
 2. Add a Windows state backend. Use Win32 process/window enumeration, HWND as
    the native window id, UI Automation for the tree, and a retained per-state
    element cache. Add an MSAA fallback for apps whose UIA providers hang or lose

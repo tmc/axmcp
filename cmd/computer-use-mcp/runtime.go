@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/tmc/axmcp/internal/computeruse"
 	"github.com/tmc/axmcp/internal/computeruse/approval"
 	"github.com/tmc/axmcp/internal/computeruse/appstate"
 	"github.com/tmc/axmcp/internal/computeruse/instruction"
@@ -17,6 +18,7 @@ import (
 
 type runtimeState struct {
 	approvals    *approval.Store
+	backend      computeruse.Backend
 	builder      *appstate.Builder
 	instructions *instruction.Provider
 	intervention *intervention.Monitor
@@ -49,13 +51,47 @@ func newRuntimeState(opts ...runtimeOptions) (*runtimeState, error) {
 	if err := monitor.Start(); err != nil {
 		return nil, fmt.Errorf("human intervention monitor: %w", err)
 	}
+	builder := appstate.NewBuilder()
 	return &runtimeState{
 		approvals:    approvals,
-		builder:      appstate.NewBuilder(),
+		backend:      newDarwinBackend(builder, monitor),
+		builder:      builder,
 		instructions: instruction.New(),
 		intervention: monitor,
 		recording:    newTrajectoryRecorder(),
 		urlPolicy:    policy.NewURLPolicy(opt.blockedURLs),
 		sessions:     session.NewStore(),
 	}, nil
+}
+
+func (rt *runtimeState) stateBackend() computeruse.StateBackend {
+	if rt != nil && rt.backend != nil && rt.backend.State() != nil {
+		return rt.backend.State()
+	}
+	if rt != nil && rt.builder != nil {
+		return (&darwinStateBackend{builder: rt.builder})
+	}
+	return newDarwinBackend(nil, nil).State()
+}
+
+func (rt *runtimeState) bindSnapshot(snapshot computeruse.Snapshot) (computeruse.AppState, error) {
+	if rt == nil || rt.sessions == nil {
+		if snapshot != nil {
+			_ = snapshot.Close()
+		}
+		return computeruse.AppState{}, fmt.Errorf("runtime is missing session store")
+	}
+	actionSnapshot, err := requireActionSnapshot(snapshot)
+	if err != nil {
+		if snapshot != nil {
+			_ = snapshot.Close()
+		}
+		return computeruse.AppState{}, err
+	}
+	state, err := rt.sessions.Bind(actionSnapshot)
+	if err != nil {
+		_ = actionSnapshot.Close()
+		return computeruse.AppState{}, err
+	}
+	return state, nil
 }

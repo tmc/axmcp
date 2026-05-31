@@ -88,19 +88,17 @@ func decodeStepArgs(step trajectoryStep, out any) error {
 }
 
 func (rt *runtimeState) bindReplayState(ctx context.Context, app string) (computeruse.AppState, error) {
-	if rt.builder == nil || rt.sessions == nil {
-		return computeruse.AppState{}, fmt.Errorf("runtime is missing app-state builder")
+	if rt == nil || rt.sessions == nil {
+		return computeruse.AppState{}, fmt.Errorf("runtime is missing session store")
 	}
-	snapshot, err := rt.builder.Build(ctx, app, "", rt.instructions)
+	snapshot, err := rt.stateBackend().BuildState(ctx, computeruse.StateRequest{
+		App:          app,
+		Instructions: rt.instructions,
+	})
 	if err != nil {
 		return computeruse.AppState{}, err
 	}
-	state, err := rt.sessions.Bind(snapshot)
-	if err != nil {
-		_ = snapshot.Close()
-		return computeruse.AppState{}, err
-	}
-	return state, nil
+	return rt.bindSnapshot(snapshot)
 }
 
 func (rt *runtimeState) replayClick(ctx context.Context, args clickInput) (computeruse.ActionResult, error) {

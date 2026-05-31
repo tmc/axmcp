@@ -14,7 +14,6 @@ import (
 	"github.com/tmc/apple/appkit"
 	"github.com/tmc/axmcp/internal/cdp"
 	"github.com/tmc/axmcp/internal/computeruse"
-	"github.com/tmc/axmcp/internal/computeruse/appstate"
 	"github.com/tmc/axmcp/internal/computeruse/coords"
 	"github.com/tmc/axmcp/internal/computeruse/input"
 	"github.com/tmc/axmcp/internal/computeruse/session"
@@ -50,7 +49,7 @@ func registerListApps(s *mcp.Server, rt *runtimeState) {
 		Annotations: readOnlyToolAnnotations(),
 		InputSchema: exactObjectSchema(map[string]any{}),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ listAppsInput) (*mcp.CallToolResult, any, error) {
-		apps, err := appstate.ListApps(ctx)
+		apps, err := rt.stateBackend().ListApps(ctx)
 		if err != nil {
 			return toolError(err), nil, nil
 		}
@@ -73,7 +72,7 @@ func registerGetAppState(s *mcp.Server, rt *runtimeState) {
 		if err != nil {
 			return toolError(err), nil, nil
 		}
-		info, err := appstate.ResolveApp(ctx, args.App)
+		info, err := rt.stateBackend().ResolveApp(ctx, args.App)
 		if err != nil {
 			return toolError(err), nil, nil
 		}
@@ -106,11 +105,14 @@ func registerGetAppState(s *mcp.Server, rt *runtimeState) {
 			}
 		}
 
-		snapshot, err := rt.builder.Build(ctx, args.App, "", rt.instructions)
+		snapshot, err := rt.stateBackend().BuildState(ctx, computeruse.StateRequest{
+			App:          args.App,
+			Instructions: rt.instructions,
+		})
 		if err != nil {
 			return toolError(err), nil, nil
 		}
-		state, err := rt.sessions.Bind(snapshot)
+		state, err := rt.bindSnapshot(snapshot)
 		if err != nil {
 			return toolError(err), nil, nil
 		}

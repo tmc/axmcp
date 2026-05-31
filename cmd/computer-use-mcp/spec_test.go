@@ -415,6 +415,30 @@ func TestDecodeReplayClickArgsIgnoresStateAndCaptureFields(t *testing.T) {
 	}
 }
 
+func TestBindReplayStateUsesBackend(t *testing.T) {
+	backend := &fakeRuntimeBackend{}
+	rt := &runtimeState{
+		backend:  backend,
+		sessions: session.NewStore(),
+	}
+	state, err := rt.bindReplayState(context.Background(), "Finder")
+	if err != nil {
+		t.Fatalf("bindReplayState: %v", err)
+	}
+	if backend.state.builds != 1 {
+		t.Fatalf("backend BuildState calls = %d, want 1", backend.state.builds)
+	}
+	if state.App.Name != "Finder" {
+		t.Fatalf("state.App.Name = %q, want Finder", state.App.Name)
+	}
+	if state.StateID == "" {
+		t.Fatalf("state.StateID is empty")
+	}
+	if _, _, err := rt.sessions.Resolve(state.StateID, 0); err != nil {
+		t.Fatalf("Resolve bound backend snapshot: %v", err)
+	}
+}
+
 func TestStateForActionRequiresFreshStateID(t *testing.T) {
 	rt := &runtimeState{sessions: session.NewStore()}
 	if _, err := stateForAction(rt, "click", "Finder", ""); err == nil {
@@ -481,6 +505,54 @@ func (f fakeActionSnapshot) Resolve(index int) (*axuiautomation.Element, compute
 
 func (f fakeActionSnapshot) Close() error {
 	return nil
+}
+
+type fakeRuntimeBackend struct {
+	state fakeRuntimeStateBackend
+}
+
+func (b *fakeRuntimeBackend) Platform() computeruse.PlatformReport {
+	return computeruse.PlatformReport{OS: "test", Backend: "fake"}
+}
+
+func (b *fakeRuntimeBackend) State() computeruse.StateBackend {
+	return &b.state
+}
+
+func (b *fakeRuntimeBackend) Input() computeruse.InputBackend {
+	return computeruse.NewUnsupportedBackend(b.Platform()).Input()
+}
+
+func (b *fakeRuntimeBackend) Screenshots() computeruse.ScreenshotBackend {
+	return computeruse.NewUnsupportedBackend(b.Platform()).Screenshots()
+}
+
+func (b *fakeRuntimeBackend) Intervention() computeruse.InterventionBackend {
+	return computeruse.NewUnsupportedBackend(b.Platform()).Intervention()
+}
+
+type fakeRuntimeStateBackend struct {
+	builds int
+}
+
+func (b *fakeRuntimeStateBackend) ListApps(context.Context) ([]computeruse.AppInfo, error) {
+	return []computeruse.AppInfo{{Name: "Finder"}}, nil
+}
+
+func (b *fakeRuntimeStateBackend) ResolveApp(context.Context, string) (computeruse.AppInfo, error) {
+	return computeruse.AppInfo{Name: "Finder", BundleID: "com.apple.finder", PID: 123}, nil
+}
+
+func (b *fakeRuntimeStateBackend) BuildState(_ context.Context, req computeruse.StateRequest) (computeruse.Snapshot, error) {
+	b.builds++
+	return fakeActionSnapshot{state: computeruse.AppState{
+		App: computeruse.AppInfo{Name: req.App, BundleID: "com.apple.finder", PID: 123},
+		Tree: []computeruse.ElementNode{{
+			Index: 0,
+			Role:  "AXWindow",
+			Title: "Finder",
+		}},
+	}}, nil
 }
 
 func newTestClientSession(t *testing.T, ctx context.Context) *mcp.ClientSession {
