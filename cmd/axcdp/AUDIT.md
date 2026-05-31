@@ -89,6 +89,9 @@ go run ./cmd/axcdp -verify-cdp http://127.0.0.1:9221
 go run ./cmd/axcdp -verify-target http://127.0.0.1:9221 -target <target-title-or-id>
 ```
 
+`-verify-target` requires `-target`; the selector may match a target title, id,
+or URL substring.
+
 Run the browser verifier only against a combined server started with
 `-browser-cdp`:
 

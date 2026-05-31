@@ -2,6 +2,12 @@ package main
 
 import "testing"
 
+func TestVerifyCDPTargetRequiresSelector(t *testing.T) {
+	if err := verifyCDPTarget("http://127.0.0.1:1", ""); err == nil {
+		t.Fatal("verifyCDPTarget succeeded without -target selector")
+	}
+}
+
 func TestVerifyDOMHasWindowChildrenAcceptsWindowDocument(t *testing.T) {
 	result := map[string]any{
 		"root": map[string]any{

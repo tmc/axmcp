@@ -97,7 +97,6 @@ Verify a running endpoint:
 
 ```sh
 go run ./cmd/axcdp -verify-cdp http://127.0.0.1:9221
-go run ./cmd/axcdp -verify-browser-cdp http://127.0.0.1:9221
 ```
 
 The live verifier checks discovery, protocol coverage, HTTP compatibility
@@ -115,7 +114,8 @@ browser-backed target close against a combined server started with
 The target verifier checks one concrete app target end to end: the target URL
 must be an HTTP preview page with a PNG screenshot endpoint, the DOM tree must
 include an `AXApplication` with an `AXWindow` that has children, and
-`Page.startScreencast` must emit a real frame.
+`Page.startScreencast` must emit a real frame. It requires `-target` so it does
+not silently pick the first page when multiple windows are visible.
 
 ```sh
 go run ./cmd/axcdp -verify-target http://127.0.0.1:9221 -target app/11527

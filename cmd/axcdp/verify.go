@@ -13,6 +13,9 @@ import (
 )
 
 func verifyCDPTarget(endpoint, selector string) error {
+	if strings.TrimSpace(selector) == "" {
+		return fmt.Errorf("-verify-target requires -target with a target title, id, or URL substring")
+	}
 	base, err := url.Parse(strings.TrimRight(endpoint, "/"))
 	if err != nil {
 		return fmt.Errorf("parse endpoint: %w", err)
