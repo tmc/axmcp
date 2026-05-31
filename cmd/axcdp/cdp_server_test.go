@@ -266,7 +266,7 @@ func TestCDPBrowserBackendListAndWebSocketProxy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newBrowserBackend: %v", err)
 	}
-	s := &cdpServer{addr: "127.0.0.1:0", browser: backend}
+	s := &cdpServer{addr: "127.0.0.1:0", browser: backend, staticList: true}
 	ts := httptest.NewServer(s.mux())
 	defer ts.Close()
 
