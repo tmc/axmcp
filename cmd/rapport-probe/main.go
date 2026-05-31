@@ -1,3 +1,5 @@
+//go:build darwin
+
 // rapport-probe: investigate the Rapport.framework private API surface without
 // loading or driving any actual session. Reports which classes are reachable,
 // which selectors resolve, and what minimal instantiation looks like.

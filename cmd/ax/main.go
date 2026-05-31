@@ -1,3 +1,5 @@
+//go:build darwin
+
 // Command ax is a CLI for macOS Accessibility API navigation with dynamic tab completion.
 package main
 
@@ -12,8 +14,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/tmc/apple/x/axuiautomation"
-	"github.com/tmc/macgo"
 	"github.com/tmc/axmcp/internal/ui"
+	"github.com/tmc/macgo"
 )
 
 func main() {

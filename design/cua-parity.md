@@ -66,8 +66,9 @@ model input must remap coordinates before calling pixel actions.
 
 ## Known gaps
 
-- No cross-platform CUA parity. This repo targets macOS; non-darwin
-  builds are for installability, not functional desktop automation.
+- No cross-platform CUA parity yet. Non-darwin builds compile through
+  unsupported stubs for installability; functional Windows and Linux
+  desktop automation backends are not implemented.
 - No claim that every action preserves the user's foreground app.
 - No built-in executor for arbitrary OpenAI `computer_call.actions`
   batches.

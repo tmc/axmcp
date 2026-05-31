@@ -1,3 +1,5 @@
+//go:build darwin
+
 package main
 
 // AX pipeline execution for axmcp.

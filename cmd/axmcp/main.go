@@ -1,3 +1,5 @@
+//go:build darwin
+
 // Command axmcp is an MCP server for macOS Accessibility API automation.
 //
 // It exposes the AX element tree, querying, and interaction tools over the

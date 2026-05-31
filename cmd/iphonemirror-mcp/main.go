@@ -1,3 +1,5 @@
+//go:build darwin
+
 // Command iphonemirror-mcp is an MCP server that drives Apple's iPhone
 // Mirroring app on macOS via screen capture, OCR, and synthetic input.
 //

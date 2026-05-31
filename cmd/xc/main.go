@@ -1,3 +1,5 @@
+//go:build darwin
+
 package main
 
 import (
@@ -12,7 +14,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tmc/apple/appkit"
 	"github.com/tmc/apple/x/axuiautomation"
-	"github.com/tmc/macgo"
 	"github.com/tmc/axmcp/internal/crash"
 	"github.com/tmc/axmcp/internal/devicectl"
 	"github.com/tmc/axmcp/internal/project"
@@ -22,6 +23,7 @@ import (
 	"github.com/tmc/axmcp/internal/ui"
 	"github.com/tmc/axmcp/internal/xcodebuild"
 	"github.com/tmc/axmcp/internal/xcodewizard"
+	"github.com/tmc/macgo"
 )
 
 func main() {

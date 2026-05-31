@@ -55,7 +55,10 @@ Or list and enable toolsets dynamically inside a session via `list_toolsets` and
 
 ## Requirements
 
-- macOS with Xcode installed.
+- macOS with Xcode installed to run native automation. Non-Darwin hosts can
+  build and install the command packages, but macOS-only automation commands
+  exit with an unsupported-platform message until Windows and Linux backends are
+  implemented.
 - Command Line Tools available through `xcrun`.
 - Go 1.26 or newer to build from source.
 - Accessibility permission for commands that drive the UI: `axmcp`, `ax`, `xcmcp`, `xc`, `computer-use-mcp`, `iphonemirror-mcp`, and `axcdp`.

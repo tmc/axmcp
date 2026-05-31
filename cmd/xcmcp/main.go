@@ -1,3 +1,5 @@
+//go:build darwin
+
 // Command xcmcp is a MCP server that exposes various tools for interacting with Xcode projects, simulators, devices, and related resources. It is designed to be used as a companion process for development tools that need to perform operations on Xcode projects or simulators without directly invoking xcodebuild or simctl from the client side.
 package main
 

@@ -1,3 +1,5 @@
+//go:build darwin
+
 // Command axcdp exposes macOS Accessibility as CDP-style JSON commands.
 //
 // Commands are written as Domain.method followed by an optional JSON object:
