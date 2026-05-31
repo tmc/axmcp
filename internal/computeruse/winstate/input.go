@@ -17,6 +17,8 @@ type inputActionKind int
 const (
 	inputClick inputActionKind = iota + 1
 	inputDrag
+	inputKey
+	inputText
 )
 
 type inputAction struct {
@@ -26,6 +28,8 @@ type inputAction struct {
 	ClickCount int
 	Start      coords.ScreenPoint
 	End        coords.ScreenPoint
+	Key        string
+	Text       string
 }
 
 type mouseButton int
@@ -170,12 +174,34 @@ func (b Backend) SetValue(ctx context.Context, snapshot computeruse.Snapshot, in
 	return b.runAutomationAction(ctx, automationAction{Kind: automationSetValue, Element: native.AutomationHandle, Value: value})
 }
 
-func (b Backend) PressKey(context.Context, computeruse.Snapshot, string) error {
-	return computeruse.PlatformUnsupported("press key with Win32 messages")
+func (b Backend) PressKey(ctx context.Context, snapshot computeruse.Snapshot, key string) error {
+	s, err := windowsSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return fmt.Errorf("missing key")
+	}
+	return b.runInput(ctx, inputAction{Kind: inputKey, Target: s.window.Handle, Key: key})
 }
 
-func (b Backend) TypeText(context.Context, computeruse.Snapshot, *int, string) error {
-	return computeruse.PlatformUnsupported("type text with Win32 messages")
+func (b Backend) TypeText(ctx context.Context, snapshot computeruse.Snapshot, elementIndex *int, text string) error {
+	s, err := windowsSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	target := s.window.Handle
+	if elementIndex != nil {
+		native, _, err := s.NativeElement(*elementIndex)
+		if err != nil {
+			return err
+		}
+		if native.WindowHandle != 0 {
+			target = native.WindowHandle
+		}
+	}
+	return b.runInput(ctx, inputAction{Kind: inputText, Target: target, Text: text})
 }
 
 func (b Backend) clickWindowLocal(ctx context.Context, s *Snapshot, target uintptr, local coords.Point, opts computeruse.ClickOptions) error {

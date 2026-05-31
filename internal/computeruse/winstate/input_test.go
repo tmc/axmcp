@@ -109,6 +109,41 @@ func TestBackendPerformSecondaryActionUsesUIAPattern(t *testing.T) {
 	}
 }
 
+func TestBackendPressKeyUsesWindowInput(t *testing.T) {
+	rec := &recordingInput{}
+	backend := Backend{input: rec.run}
+
+	if err := backend.PressKey(context.Background(), winInputSnapshot(), "Return"); err != nil {
+		t.Fatalf("PressKey: %v", err)
+	}
+	want := []inputAction{{
+		Kind:   inputKey,
+		Target: 1,
+		Key:    "Return",
+	}}
+	if !reflect.DeepEqual(rec.actions, want) {
+		t.Fatalf("actions = %#v, want %#v", rec.actions, want)
+	}
+}
+
+func TestBackendTypeTextUsesElementWindowHandle(t *testing.T) {
+	rec := &recordingInput{}
+	backend := Backend{input: rec.run}
+	index := 1
+
+	if err := backend.TypeText(context.Background(), winInputSnapshot(), &index, "42"); err != nil {
+		t.Fatalf("TypeText: %v", err)
+	}
+	want := []inputAction{{
+		Kind:   inputText,
+		Target: 77,
+		Text:   "42",
+	}}
+	if !reflect.DeepEqual(rec.actions, want) {
+		t.Fatalf("actions = %#v, want %#v", rec.actions, want)
+	}
+}
+
 func TestBackendSetValueUsesUIAPattern(t *testing.T) {
 	rec := &recordingAutomation{}
 	backend := Backend{uiaAction: rec.run}
@@ -159,10 +194,6 @@ func TestBackendWindowsInputUnsupportedPaths(t *testing.T) {
 	err = backend.SetValue(context.Background(), winInputSnapshot(), 0, "value")
 	if !errors.Is(err, computeruse.ErrPlatformUnsupported) {
 		t.Fatalf("SetValue error = %v, want ErrPlatformUnsupported", err)
-	}
-	err = backend.PressKey(context.Background(), winInputSnapshot(), "Return")
-	if !errors.Is(err, computeruse.ErrPlatformUnsupported) {
-		t.Fatalf("PressKey error = %v, want ErrPlatformUnsupported", err)
 	}
 }
 

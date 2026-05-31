@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"unicode/utf16"
 	"unsafe"
 
 	"github.com/tmc/axmcp/internal/computeruse/coords"
@@ -19,10 +20,16 @@ const (
 	wmRButtonUp   = 0x0205
 	wmMButtonDown = 0x0207
 	wmMButtonUp   = 0x0208
+	wmKeyDown     = 0x0100
+	wmKeyUp       = 0x0101
+	wmChar        = 0x0102
 
 	mkLButton = 0x0001
 	mkRButton = 0x0002
 	mkMButton = 0x0010
+
+	keyDownLParam = 1
+	keyUpLParam   = 1 | 1<<30 | 1<<31
 )
 
 var (
@@ -44,6 +51,10 @@ func sendWindowInput(ctx context.Context, action inputAction) error {
 		return postClick(ctx, action)
 	case inputDrag:
 		return postDrag(ctx, action)
+	case inputKey:
+		return postKey(ctx, action)
+	case inputText:
+		return postText(ctx, action)
 	default:
 		return fmt.Errorf("unknown input action %d", action.Kind)
 	}
@@ -97,6 +108,50 @@ func postDrag(ctx context.Context, action inputAction) error {
 	return postMouseMessage(ctx, action.Target, up, 0, end)
 }
 
+func postKey(ctx context.Context, action inputAction) error {
+	key, err := parseWindowsKey(action.Key)
+	if err != nil {
+		return err
+	}
+	for _, mod := range key.Modifiers {
+		if err := postKeyMessage(ctx, action.Target, wmKeyDown, mod, keyDownLParam); err != nil {
+			return err
+		}
+	}
+	releaseModifiers := func() error {
+		for i := len(key.Modifiers) - 1; i >= 0; i-- {
+			if err := postKeyMessage(ctx, action.Target, wmKeyUp, key.Modifiers[i], keyUpLParam); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := postKeyMessage(ctx, action.Target, wmKeyDown, key.VK, keyDownLParam); err != nil {
+		_ = releaseModifiers()
+		return err
+	}
+	if key.Char != 0 && len(key.Modifiers) == 0 {
+		if err := postKeyMessage(ctx, action.Target, wmChar, uint16(key.Char), keyDownLParam); err != nil {
+			_ = releaseModifiers()
+			return err
+		}
+	}
+	if err := postKeyMessage(ctx, action.Target, wmKeyUp, key.VK, keyUpLParam); err != nil {
+		_ = releaseModifiers()
+		return err
+	}
+	return releaseModifiers()
+}
+
+func postText(ctx context.Context, action inputAction) error {
+	for _, unit := range utf16.Encode([]rune(action.Text)) {
+		if err := postKeyMessage(ctx, action.Target, wmChar, unit, keyDownLParam); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func clientPoint(hwnd uintptr, point coords.ScreenPoint) (winPoint, error) {
 	if point.X < math.MinInt32 || point.X > math.MaxInt32 || point.Y < math.MinInt32 || point.Y > math.MaxInt32 {
 		return winPoint{}, fmt.Errorf("screen point outside Win32 range")
@@ -119,6 +174,17 @@ func postMouseMessage(ctx context.Context, hwnd uintptr, msg uint32, wparam uint
 	r1, _, err := procPostMessageW.Call(hwnd, uintptr(msg), wparam, mouseLParam(point))
 	if r1 == 0 {
 		return winCallError("post mouse message", err)
+	}
+	return nil
+}
+
+func postKeyMessage(ctx context.Context, hwnd uintptr, msg uint32, wparam uint16, lparam uintptr) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r1, _, err := procPostMessageW.Call(hwnd, uintptr(msg), uintptr(wparam), lparam)
+	if r1 == 0 {
+		return winCallError("post key message", err)
 	}
 	return nil
 }
