@@ -56,6 +56,11 @@ unsupported platform error. Windows and Linux native automation backends are not
 implemented. The next slice is to replace those stubs with real backends one
 subsystem at a time.
 
+`computeruse.PlatformStatus` reports the compiled backend and the capabilities
+that are present or missing. The non-Darwin command prints that report before
+exiting so missing Windows or Linux prerequisites can become explicit backend
+probes instead of silent no-op behavior.
+
 ## Verification Targets
 
 The compatibility gate for the current implementation is:
