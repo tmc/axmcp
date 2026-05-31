@@ -212,12 +212,16 @@ func TestBackendClickElementFallsBackWhenATSPIUnavailable(t *testing.T) {
 
 func TestBackendClickElementUsesForegroundHIDFallback(t *testing.T) {
 	runner := &recordingRunner{}
-	backend := Backend{run: runner.run}
+	rec := &recordingAccessibilityActions{}
+	backend := Backend{run: runner.run, atspiAction: rec.run}
 
-	if err := backend.ClickElement(context.Background(), linuxInputSnapshot(), 1, computeruse.ClickOptions{
+	if err := backend.ClickElement(context.Background(), linuxATSPISnapshot(), 1, computeruse.ClickOptions{
 		ForegroundHID: true,
 	}); err != nil {
 		t.Fatalf("ClickElement: %v", err)
+	}
+	if len(rec.actions) != 0 {
+		t.Fatalf("actions = %#v, want none", rec.actions)
 	}
 	want := [][]string{
 		{"xdotool", "windowactivate", "--sync", "0x03e00007"},

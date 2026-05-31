@@ -304,6 +304,9 @@ func windowsSnapshot(snapshot computeruse.Snapshot) (*Snapshot, error) {
 }
 
 func canInvokeElement(node computeruse.ElementNode, native NativeElement, opts computeruse.ClickOptions) bool {
+	if opts.ForegroundHID {
+		return false
+	}
 	if native.AutomationHandle == 0 || normalizeClickCount(opts.ClickCount) != 1 {
 		return false
 	}

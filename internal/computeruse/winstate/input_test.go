@@ -145,13 +145,22 @@ func TestBackendClickElementUsesNativeWindowHandle(t *testing.T) {
 
 func TestBackendClickElementUsesForegroundInput(t *testing.T) {
 	rec := &recordingInput{}
-	backend := Backend{input: rec.run}
+	automation := &recordingAutomation{}
+	backend := Backend{input: rec.run, uiaAction: automation.run}
+	snapshot := winInputSnapshot()
+	node := snapshot.nodes[1]
+	node.SecondaryActions = []string{"invoke"}
+	snapshot.nodes[1] = node
+	snapshot.state.Tree[1].SecondaryActions = []string{"invoke"}
 
-	err := backend.ClickElement(context.Background(), winInputSnapshot(), 1, computeruse.ClickOptions{
+	err := backend.ClickElement(context.Background(), snapshot, 1, computeruse.ClickOptions{
 		ForegroundHID: true,
 	})
 	if err != nil {
 		t.Fatalf("ClickElement: %v", err)
+	}
+	if len(automation.actions) != 0 {
+		t.Fatalf("automation actions = %#v, want none", automation.actions)
 	}
 	want := []inputAction{{
 		Kind:       inputClick,

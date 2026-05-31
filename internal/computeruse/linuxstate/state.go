@@ -635,6 +635,9 @@ func clickElementAction(node computeruse.ElementNode, opts computeruse.ClickOpti
 	if _, err := xdotoolButton(opts.Button); err != nil {
 		return "", false, err
 	}
+	if opts.ForegroundHID {
+		return "", false, nil
+	}
 	if normalizeClickCount(opts.ClickCount) != 1 {
 		return "", false, nil
 	}
