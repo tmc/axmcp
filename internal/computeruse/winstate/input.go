@@ -24,6 +24,7 @@ const (
 type inputAction struct {
 	Kind       inputActionKind
 	Target     uintptr
+	Foreground bool
 	Button     mouseButton
 	ClickCount int
 	Start      coords.ScreenPoint
@@ -59,9 +60,6 @@ type automationAction struct {
 }
 
 func (b Backend) ClickElement(ctx context.Context, snapshot computeruse.Snapshot, index int, opts computeruse.ClickOptions) error {
-	if opts.ForegroundHID {
-		return computeruse.PlatformUnsupported("foreground SendInput click")
-	}
 	s, err := windowsSnapshot(snapshot)
 	if err != nil {
 		return err
@@ -84,13 +82,13 @@ func (b Backend) ClickElement(ctx context.Context, snapshot computeruse.Snapshot
 		X: node.X + node.Width/2,
 		Y: node.Y + node.Height/2,
 	}
+	if opts.ForegroundHID {
+		return b.clickWindowLocal(ctx, s, s.window.Handle, local, opts)
+	}
 	return b.clickWindowLocal(ctx, s, target, local, opts)
 }
 
 func (b Backend) ClickPoint(ctx context.Context, snapshot computeruse.Snapshot, point computeruse.Point, opts computeruse.ClickOptions) error {
-	if opts.ForegroundHID {
-		return computeruse.PlatformUnsupported("foreground SendInput click")
-	}
 	s, err := windowsSnapshot(snapshot)
 	if err != nil {
 		return err
@@ -216,6 +214,7 @@ func (b Backend) clickWindowLocal(ctx context.Context, s *Snapshot, target uintp
 	return b.runInput(ctx, inputAction{
 		Kind:       inputClick,
 		Target:     target,
+		Foreground: opts.ForegroundHID,
 		Button:     button,
 		ClickCount: normalizeClickCount(opts.ClickCount),
 		Start:      screen,

@@ -13,6 +13,8 @@ import (
 )
 
 const (
+	winInputMouse = 0
+
 	wmMouseMove   = 0x0200
 	wmLButtonDown = 0x0201
 	wmLButtonUp   = 0x0202
@@ -28,18 +30,42 @@ const (
 	mkRButton = 0x0002
 	mkMButton = 0x0010
 
+	mouseEventFLeftDown   = 0x0002
+	mouseEventFLeftUp     = 0x0004
+	mouseEventFRightDown  = 0x0008
+	mouseEventFRightUp    = 0x0010
+	mouseEventFMiddleDown = 0x0020
+	mouseEventFMiddleUp   = 0x0040
+
 	keyDownLParam = 1
 	keyUpLParam   = 1 | 1<<30 | 1<<31
 )
 
 var (
-	procPostMessageW   = user32.NewProc("PostMessageW")
-	procScreenToClient = user32.NewProc("ScreenToClient")
+	procPostMessageW        = user32.NewProc("PostMessageW")
+	procScreenToClient      = user32.NewProc("ScreenToClient")
+	procSendInput           = user32.NewProc("SendInput")
+	procSetCursorPos        = user32.NewProc("SetCursorPos")
+	procSetForegroundWindow = user32.NewProc("SetForegroundWindow")
 )
 
 type winPoint struct {
 	X int32
 	Y int32
+}
+
+type winInput struct {
+	Type  uint32
+	Mouse winMouseInput
+}
+
+type winMouseInput struct {
+	DX        int32
+	DY        int32
+	MouseData uint32
+	Flags     uint32
+	Time      uint32
+	ExtraInfo uintptr
 }
 
 func sendWindowInput(ctx context.Context, action inputAction) error {
@@ -61,6 +87,9 @@ func sendWindowInput(ctx context.Context, action inputAction) error {
 }
 
 func postClick(ctx context.Context, action inputAction) error {
+	if action.Foreground {
+		return foregroundClick(ctx, action)
+	}
 	down, up, flag, err := mouseMessages(action.Button)
 	if err != nil {
 		return err
@@ -77,6 +106,28 @@ func postClick(ctx context.Context, action inputAction) error {
 			return err
 		}
 		if err := postMouseMessage(ctx, action.Target, up, 0, point); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func foregroundClick(ctx context.Context, action inputAction) error {
+	down, up, err := foregroundMouseFlags(action.Button)
+	if err != nil {
+		return err
+	}
+	if err := setForegroundWindow(ctx, action.Target); err != nil {
+		return err
+	}
+	if err := setCursorPos(ctx, action.Start); err != nil {
+		return err
+	}
+	for range normalizeClickCount(action.ClickCount) {
+		if err := sendMouseInput(ctx, down); err != nil {
+			return err
+		}
+		if err := sendMouseInput(ctx, up); err != nil {
 			return err
 		}
 	}
@@ -152,6 +203,52 @@ func postText(ctx context.Context, action inputAction) error {
 	return nil
 }
 
+func setForegroundWindow(ctx context.Context, hwnd uintptr) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r1, _, err := procSetForegroundWindow.Call(hwnd)
+	if r1 == 0 {
+		return winCallError("set foreground window", err)
+	}
+	return nil
+}
+
+func setCursorPos(ctx context.Context, point coords.ScreenPoint) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if point.X < math.MinInt32 || point.X > math.MaxInt32 || point.Y < math.MinInt32 || point.Y > math.MaxInt32 {
+		return fmt.Errorf("screen point outside Win32 range")
+	}
+	r1, _, err := procSetCursorPos.Call(winIntArg(point.X), winIntArg(point.Y))
+	if r1 == 0 {
+		return winCallError("set cursor position", err)
+	}
+	return nil
+}
+
+func sendMouseInput(ctx context.Context, flags uint32) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	inputs := []winInput{{
+		Type: winInputMouse,
+		Mouse: winMouseInput{
+			Flags: flags,
+		},
+	}}
+	r1, _, err := procSendInput.Call(
+		uintptr(len(inputs)),
+		uintptr(unsafe.Pointer(&inputs[0])),
+		unsafe.Sizeof(inputs[0]),
+	)
+	if r1 != uintptr(len(inputs)) {
+		return winCallError("send mouse input", err)
+	}
+	return nil
+}
+
 func clientPoint(hwnd uintptr, point coords.ScreenPoint) (winPoint, error) {
 	if point.X < math.MinInt32 || point.X > math.MaxInt32 || point.Y < math.MinInt32 || point.Y > math.MaxInt32 {
 		return winPoint{}, fmt.Errorf("screen point outside Win32 range")
@@ -199,6 +296,23 @@ func mouseMessages(button mouseButton) (down, up uint32, flag uintptr, err error
 		return wmMButtonDown, wmMButtonUp, mkMButton, nil
 	default:
 		return 0, 0, 0, fmt.Errorf("unknown mouse button %d", button)
+	}
+}
+
+func winIntArg(v int) uintptr {
+	return uintptr(uint32(int32(v)))
+}
+
+func foregroundMouseFlags(button mouseButton) (down, up uint32, err error) {
+	switch button {
+	case mouseLeft:
+		return mouseEventFLeftDown, mouseEventFLeftUp, nil
+	case mouseRight:
+		return mouseEventFRightDown, mouseEventFRightUp, nil
+	case mouseMiddle:
+		return mouseEventFMiddleDown, mouseEventFMiddleUp, nil
+	default:
+		return 0, 0, fmt.Errorf("unknown mouse button %d", button)
 	}
 }
 

@@ -33,6 +33,31 @@ func TestBackendClickPointUsesWindowScreenshotCoordinates(t *testing.T) {
 	}
 }
 
+func TestBackendClickPointUsesForegroundInput(t *testing.T) {
+	rec := &recordingInput{}
+	backend := Backend{input: rec.run}
+
+	err := backend.ClickPoint(context.Background(), winInputSnapshot(), computeruse.Point{X: 75, Y: 50}, computeruse.ClickOptions{
+		Button:        "right",
+		ClickCount:    2,
+		ForegroundHID: true,
+	})
+	if err != nil {
+		t.Fatalf("ClickPoint: %v", err)
+	}
+	want := []inputAction{{
+		Kind:       inputClick,
+		Target:     1,
+		Foreground: true,
+		Button:     mouseRight,
+		ClickCount: 2,
+		Start:      coords.ScreenPoint{X: 160, Y: 120},
+	}}
+	if !reflect.DeepEqual(rec.actions, want) {
+		t.Fatalf("actions = %#v, want %#v", rec.actions, want)
+	}
+}
+
 func TestBackendDragUsesWindowScreenshotCoordinates(t *testing.T) {
 	rec := &recordingInput{}
 	backend := Backend{input: rec.run}
@@ -63,6 +88,29 @@ func TestBackendClickElementUsesNativeWindowHandle(t *testing.T) {
 	want := []inputAction{{
 		Kind:       inputClick,
 		Target:     77,
+		Button:     mouseLeft,
+		ClickCount: 1,
+		Start:      coords.ScreenPoint{X: 55, Y: 70},
+	}}
+	if !reflect.DeepEqual(rec.actions, want) {
+		t.Fatalf("actions = %#v, want %#v", rec.actions, want)
+	}
+}
+
+func TestBackendClickElementUsesForegroundInput(t *testing.T) {
+	rec := &recordingInput{}
+	backend := Backend{input: rec.run}
+
+	err := backend.ClickElement(context.Background(), winInputSnapshot(), 1, computeruse.ClickOptions{
+		ForegroundHID: true,
+	})
+	if err != nil {
+		t.Fatalf("ClickElement: %v", err)
+	}
+	want := []inputAction{{
+		Kind:       inputClick,
+		Target:     1,
+		Foreground: true,
 		Button:     mouseLeft,
 		ClickCount: 1,
 		Start:      coords.ScreenPoint{X: 55, Y: 70},
@@ -187,11 +235,7 @@ func TestParseAutomationAction(t *testing.T) {
 
 func TestBackendWindowsInputUnsupportedPaths(t *testing.T) {
 	backend := Backend{input: (&recordingInput{}).run}
-	err := backend.ClickPoint(context.Background(), winInputSnapshot(), computeruse.Point{}, computeruse.ClickOptions{ForegroundHID: true})
-	if !errors.Is(err, computeruse.ErrPlatformUnsupported) {
-		t.Fatalf("ForegroundHID error = %v, want ErrPlatformUnsupported", err)
-	}
-	err = backend.SetValue(context.Background(), winInputSnapshot(), 0, "value")
+	err := backend.SetValue(context.Background(), winInputSnapshot(), 0, "value")
 	if !errors.Is(err, computeruse.ErrPlatformUnsupported) {
 		t.Fatalf("SetValue error = %v, want ErrPlatformUnsupported", err)
 	}

@@ -61,7 +61,8 @@ Linux with state tools wired to platform window metadata. Windows uses
 window snapshot with a PrintWindow/GDI screenshot and bounded UIA control-view
 tree when available. The Windows input slice routes pixel clicks and drags
 through background Win32 mouse messages and invokes common UIA patterns for
-element actions; keyboard input and foreground SendInput remain missing. Linux uses
+element actions; keyboard input and window-level text use background Win32
+messages, and opt-in foreground clicks use SendInput. Linux uses
 `internal/computeruse/linuxstate`
 for X11 window metadata through `wmctrl -lpG` and captures screenshots through
 ImageMagick `import`; root-window pixel/key input uses `xdotool`; and a
@@ -119,8 +120,9 @@ routes root-window pixel clicks and drags through background Win32 mouse
 messages using the returned screenshot coordinate contract. Element clicks
 prefer retained UIA invoke patterns when available and otherwise fall back to
 window messages; secondary actions and set-value route through retained UIA
-pattern handles. Keyboard input and foreground SendInput remain explicit
-unsupported paths.
+pattern handles. Keyboard input and window-level text route through background
+Win32 messages, while `foreground_hid` clicks activate the target window and use
+SendInput for apps that reject background messages.
 `internal/computeruse/linuxstate` mirrors that boundary for X11: it resolves
 apps from `wmctrl -lpG` output, captures a PNG screenshot with ImageMagick
 `import`, and reads a bounded AT-SPI subtree through `gdbus` when available,
@@ -151,8 +153,8 @@ contract and replace the unsupported stubs behind it.
 3. Expand Windows input dispatch. Harden the current UIA pattern and
    PostMessage pixel paths with provider timeouts, hit-testing, drop detection,
    and structured `background_unavailable` results when background dispatch is
-   known to drop. Add explicit foreground SendInput only behind an opt-in
-   foreground option.
+   known to drop. Extend the opt-in foreground SendInput path beyond clicks
+   only when the caller explicitly requests foreground interaction.
 4. Expand the Linux backend in narrower phases. Harden the current `gdbus`
    AT-SPI reader and action path with direct DBus calls, cache/batch requests,
    provider timeouts, and richer text/value handling; replace or supplement the
