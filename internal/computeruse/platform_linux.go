@@ -46,7 +46,7 @@ func PlatformStatus() PlatformReport {
 	case xdotoolErr != nil:
 		caps = append(caps, PlatformCapability{Name: "input", Message: "xdotool is not available on PATH"})
 	default:
-		caps = append(caps, PlatformCapability{Name: "input", Available: true, Message: "xdotool-backed X11 root-window pixel and key input is available at " + xdotoolPath})
+		caps = append(caps, PlatformCapability{Name: "input", Available: true, Message: "xdotool-backed X11 pixel, scroll, key, and text input is available at " + xdotoolPath})
 	}
 	if display == "" {
 		caps = append(caps, PlatformCapability{Name: "x11", Message: "DISPLAY is not set"})
@@ -79,6 +79,6 @@ func PlatformStatus() PlatformReport {
 		OS:           runtime.GOOS,
 		Backend:      "linux-x11-partial",
 		Capabilities: caps,
-		Message:      "Linux native desktop automation has X11 state, screenshots, root-window input, a bounded AT-SPI reader, AT-SPI element action dispatch, and limited AT-SPI set-value support; Wayland support is not implemented",
+		Message:      "Linux native desktop automation has X11 state, screenshots, window-targeted xdotool input, a bounded AT-SPI reader, AT-SPI element action dispatch, and limited AT-SPI set-value support; Wayland support is not implemented",
 	}
 }

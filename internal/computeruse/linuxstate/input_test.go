@@ -59,6 +59,48 @@ func TestBackendDragKeyAndTypeUseXDoToolWindow(t *testing.T) {
 	}
 }
 
+func TestBackendScrollElementUsesXDoToolWindow(t *testing.T) {
+	runner := &recordingRunner{}
+	backend := Backend{run: runner.run}
+
+	if err := backend.ScrollElement(context.Background(), linuxInputSnapshot(), 1, computeruse.ScrollOptions{
+		Direction: "up",
+		Pages:     0.4,
+	}); err != nil {
+		t.Fatalf("ScrollElement: %v", err)
+	}
+	want := [][]string{
+		{"xdotool", "mousemove", "--window", "0x03e00007", "45", "50"},
+		{"xdotool", "click", "--window", "0x03e00007", "4"},
+		{"xdotool", "click", "--window", "0x03e00007", "4"},
+	}
+	if !reflect.DeepEqual(runner.commands, want) {
+		t.Fatalf("commands = %#v, want %#v", runner.commands, want)
+	}
+}
+
+func TestBackendScrollRootUsesXDoToolWindowCenter(t *testing.T) {
+	runner := &recordingRunner{}
+	backend := Backend{run: runner.run}
+
+	if err := backend.ScrollElement(context.Background(), linuxInputSnapshot(), 0, computeruse.ScrollOptions{
+		Direction: "right",
+	}); err != nil {
+		t.Fatalf("ScrollElement: %v", err)
+	}
+	want := [][]string{
+		{"xdotool", "mousemove", "--window", "0x03e00007", "150", "100"},
+		{"xdotool", "click", "--window", "0x03e00007", "7"},
+		{"xdotool", "click", "--window", "0x03e00007", "7"},
+		{"xdotool", "click", "--window", "0x03e00007", "7"},
+		{"xdotool", "click", "--window", "0x03e00007", "7"},
+		{"xdotool", "click", "--window", "0x03e00007", "7"},
+	}
+	if !reflect.DeepEqual(runner.commands, want) {
+		t.Fatalf("commands = %#v, want %#v", runner.commands, want)
+	}
+}
+
 func TestBackendClickElementUsesATSPIAction(t *testing.T) {
 	rec := &recordingAccessibilityActions{}
 	backend := Backend{atspiAction: rec.run}

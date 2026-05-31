@@ -434,11 +434,19 @@ func (b Backend) ScrollElement(ctx context.Context, snapshot computeruse.Snapsho
 	if err != nil {
 		return err
 	}
-	if index != 0 {
-		return computeruse.PlatformUnsupported("scroll element with AT-SPI")
+	_, node, err := s.NativeElement(index)
+	if err != nil {
+		return err
+	}
+	if node.Width <= 0 || node.Height <= 0 {
+		return fmt.Errorf("element has empty bounds")
 	}
 	button, err := scrollButton(opts.Direction)
 	if err != nil {
+		return err
+	}
+	local := coords.Point{X: node.X + node.Width/2, Y: node.Y + node.Height/2}
+	if err := b.runXDoTool(ctx, s.window, "mousemove", "--window", s.window.ID, strconv.Itoa(local.X), strconv.Itoa(local.Y)); err != nil {
 		return err
 	}
 	count := scrollCount(opts.Pages)
