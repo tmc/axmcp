@@ -172,7 +172,7 @@ xcmcp --enable-all
 computer-use-mcp
 ```
 
-Exposes exactly `list_apps`, `get_app_state`, `click`, `perform_secondary_action`, `set_value`, `scroll`, `drag`, `press_key`, `type_text`. Call `get_app_state` once per turn, then act against `element_index` strings from the snapshot. Set `omit_screenshot=true` on `get_app_state` when logs only need metadata and element IDs.
+Exposes exactly `list_apps`, `get_app_state`, `click`, `perform_secondary_action`, `set_value`, `scroll`, `drag`, `press_key`, `type_text`. Call `get_app_state` once per turn, then act against `element_index` strings from the snapshot. `capture_mode` accepts `som` (screenshot plus AX tree), `ax` (AX tree without screenshot), or `vision` (screenshot/window/app state without AX tree). Set `omit_screenshot=true` when logs only need metadata and element IDs.
 
 ## MCP client configuration
 
@@ -253,7 +253,7 @@ Primitive tools cover element discovery, pointer and keyboard input, window mani
 
 `computer-use-mcp` is the stateful, session-oriented compatibility server. It holds the narrow Codex Computer Use tool contract on top of the same accessibility and screenshot primitives.
 
-It is tools-only — no MCP resources, no resource templates. The tool surface is app-scoped: call `get_app_state` first, then pass returned `element_index` strings to the action tools. Use `omit_screenshot=true` for compact state snapshots without the base64 PNG payload.
+It is tools-only — no MCP resources, no resource templates. The tool surface is app-scoped: call `get_app_state` first, then pass returned `element_index` strings to the action tools. Use `capture_mode=som`, `ax`, or `vision` to choose screenshot/tree shape; use `omit_screenshot=true` for compact snapshots without the base64 PNG payload.
 
 ### `iphonemirror-mcp`
 
