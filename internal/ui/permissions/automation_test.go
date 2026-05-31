@@ -62,6 +62,7 @@ func TestMatchesPermissionApp(t *testing.T) {
 		{name: "title", title: "axcdp", needle: "axcdp", want: true},
 		{name: "description", desc: "AXCDP Helper", needle: "axcdp", want: true},
 		{name: "dotted helper", desc: "AXCDP.Helper", needle: "axcdp", want: true},
+		{name: "hyphen helper", desc: "AXCDP-Helper", needle: "axcdp", want: true},
 		{name: "substring guard", item: "Terminal", needle: "term", want: false},
 		{name: "suffix guard", item: "my-axcdp", needle: "axcdp", want: false},
 		{name: "missing", item: "Terminal", title: "Terminal", desc: "", needle: "axcdp", want: false},

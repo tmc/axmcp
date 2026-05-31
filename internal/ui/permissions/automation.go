@@ -446,7 +446,8 @@ func permissionTextMatches(s, needle string) bool {
 	return s == needle ||
 		sApp == needleApp ||
 		strings.HasPrefix(sApp, needleApp+" ") ||
-		strings.HasPrefix(sApp, needleApp+".")
+		strings.HasPrefix(sApp, needleApp+".") ||
+		strings.HasPrefix(sApp, needleApp+"-")
 }
 
 func normalizePermissionText(s string) string {
