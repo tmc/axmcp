@@ -19,8 +19,9 @@ This note records the current compatibility boundary against:
   returned `state_id` to actions, and refresh state when an action
   reports stale or missing state.
 - `get_app_state` returns an accessibility tree plus a screenshot by
-  default. `omit_screenshot=true` suppresses the PNG when a caller only
-  needs metadata and element IDs.
+  default. `capture_mode` accepts `som`, `ax`, or `vision`;
+  `omit_screenshot=true` suppresses the PNG when a caller only needs
+  metadata and element IDs.
 - Element-index actions use Accessibility when available. Pixel actions
   can target screenshot coordinates, with `foreground_hid=true` as an
   explicit fallback for opaque canvas, WebGL, Metal, and game-like views
@@ -29,13 +30,16 @@ This note records the current compatibility boundary against:
 ## CUA Driver comparison
 
 CUA Driver documents three capture modes: `vision` for pixels, `ax` for
-the accessibility tree, and `som` for both. axmcp does not expose a
-single `capture_mode` switch today. Its current shape is:
+the accessibility tree, and `som` for both. axmcp exposes these as the
+optional `get_app_state.capture_mode` switch:
 
-- `get_app_state`: SOM-like by default, because it returns both the AX
-  tree and a screenshot.
-- `get_app_state` with `omit_screenshot=true`: AX-like, because it
-  keeps element metadata and IDs without the PNG payload.
+- `get_app_state` or `capture_mode="som"`: returns both the AX tree and
+  a screenshot.
+- `capture_mode="ax"` or `omit_screenshot=true`: keeps element metadata
+  and IDs without the PNG payload.
+- `capture_mode="vision"`: returns app/window/image state without the
+  AX tree in the response. The stored state keeps the AX snapshot so
+  actions using the returned `state_id` remain valid.
 - `ax_screenshot`, `ax_ocr`, and pixel-coordinate click paths:
   vision-oriented helper paths, not a separate Computer Use mode.
 
@@ -48,7 +52,6 @@ background delivery.
 
 ## Known gaps
 
-- No top-level CUA-compatible `capture_mode` setting.
 - No cross-platform CUA parity. This repo targets macOS; non-darwin
   builds are for installability, not functional desktop automation.
 - No claim that every action preserves the user's foreground app.

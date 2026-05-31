@@ -195,7 +195,7 @@ func TestClickToolExposesForegroundHIDFallback(t *testing.T) {
 	t.Fatalf("click tool missing")
 }
 
-func TestGetAppStateExposesOmitScreenshot(t *testing.T) {
+func TestGetAppStateExposesCaptureMode(t *testing.T) {
 	for _, tool := range orderedComputerUseTools() {
 		if tool.Name != "get_app_state" {
 			continue
@@ -205,28 +205,69 @@ func TestGetAppStateExposesOmitScreenshot(t *testing.T) {
 		if _, ok := props["omit_screenshot"]; !ok {
 			t.Fatalf("get_app_state schema missing omit_screenshot: %#v", props)
 		}
+		captureMode, ok := props["capture_mode"].(map[string]any)
+		if !ok {
+			t.Fatalf("get_app_state schema missing capture_mode: %#v", props)
+		}
+		if got := captureMode["enum"]; !reflect.DeepEqual(got, []any{"som", "ax", "vision"}) {
+			t.Fatalf("capture_mode enum = %#v, want som/ax/vision", got)
+		}
 		return
 	}
 	t.Fatalf("get_app_state tool missing")
 }
 
-func TestAppStateResponseOmitScreenshot(t *testing.T) {
+func TestAppStateResponseCaptureMode(t *testing.T) {
 	state := computeruse.AppState{
 		ScreenshotPNGBase64: "base64",
 		Window: computeruse.WindowInfo{
 			ScreenshotWidth:  100,
 			ScreenshotHeight: 50,
 		},
+		Tree: []computeruse.ElementNode{{Index: 1, Title: "OK"}},
 	}
-	got := appStateResponse(state, true)
-	if got.ScreenshotPNGBase64 != "" {
-		t.Fatalf("ScreenshotPNGBase64 = %q, want empty", got.ScreenshotPNGBase64)
+	if got := appStateResponse(state, captureModeSOM, false); got.ScreenshotPNGBase64 != "base64" || len(got.Tree) != 1 {
+		t.Fatalf("som response = %#v, want screenshot and tree", got)
 	}
-	if got.Window.ScreenshotWidth != 100 || got.Window.ScreenshotHeight != 50 {
-		t.Fatalf("Window dimensions = %#v, want preserved", got.Window)
+	ax := appStateResponse(state, captureModeAX, false)
+	if ax.ScreenshotPNGBase64 != "" || len(ax.Tree) != 1 {
+		t.Fatalf("ax response = %#v, want tree without screenshot", ax)
 	}
-	if full := appStateResponse(state, false); full.ScreenshotPNGBase64 != "base64" {
-		t.Fatalf("full ScreenshotPNGBase64 = %q, want preserved", full.ScreenshotPNGBase64)
+	vision := appStateResponse(state, captureModeVision, false)
+	if vision.ScreenshotPNGBase64 != "base64" || len(vision.Tree) != 0 {
+		t.Fatalf("vision response = %#v, want screenshot without tree", vision)
+	}
+	omitted := appStateResponse(state, captureModeVision, true)
+	if omitted.ScreenshotPNGBase64 != "" || len(omitted.Tree) != 0 {
+		t.Fatalf("vision omit response = %#v, want no screenshot or tree", omitted)
+	}
+	if omitted.Window.ScreenshotWidth != 100 || omitted.Window.ScreenshotHeight != 50 {
+		t.Fatalf("Window dimensions = %#v, want preserved", omitted.Window)
+	}
+}
+
+func TestParseCaptureMode(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want captureMode
+	}{
+		{name: "default", want: captureModeSOM},
+		{name: "som", raw: "som", want: captureModeSOM},
+		{name: "ax case", raw: " AX ", want: captureModeAX},
+		{name: "vision", raw: "vision", want: captureModeVision},
+	}
+	for _, tt := range tests {
+		got, err := parseCaptureMode(tt.raw)
+		if err != nil {
+			t.Fatalf("%s: parseCaptureMode error = %v", tt.name, err)
+		}
+		if got != tt.want {
+			t.Fatalf("%s: parseCaptureMode = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+	if _, err := parseCaptureMode("screen"); err == nil {
+		t.Fatalf("parseCaptureMode invalid = nil, want error")
 	}
 }
 

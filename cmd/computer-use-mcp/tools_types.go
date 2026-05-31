@@ -10,6 +10,7 @@ type listAppsInput struct{}
 
 type getAppStateInput struct {
 	App            string `json:"app"`
+	CaptureMode    string `json:"capture_mode,omitempty"`
 	OmitScreenshot bool   `json:"omit_screenshot,omitempty"`
 }
 

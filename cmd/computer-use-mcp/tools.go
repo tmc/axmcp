@@ -59,14 +59,19 @@ func registerListApps(s *mcp.Server, rt *runtimeState) {
 func registerGetAppState(s *mcp.Server, rt *runtimeState) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_app_state",
-		Description: "Start an app use session if needed, then get the state of the app's key window and return a screenshot and accessibility tree. This must be called once per assistant turn before interacting with the app. Set omit_screenshot=true for compact automation logs that only need app/window metadata and element IDs.",
+		Description: "Start an app use session if needed, then get the state of the app's key window. This must be called once per assistant turn before interacting with the app. capture_mode can be som, ax, or vision. Set omit_screenshot=true for compact automation logs that only need app/window metadata and element IDs.",
 		Annotations: readOnlyToolAnnotations(),
 		InputSchema: exactObjectSchema(map[string]any{
 			"app":             stringProperty("App name or bundle identifier"),
+			"capture_mode":    enumStringProperty("Capture response mode: som returns screenshot and AX tree, ax returns AX tree without screenshot, vision returns screenshot/window/app state without the AX tree. Defaults to som.", "som", "ax", "vision"),
 			"omit_screenshot": booleanProperty("Omit screenshot_png_base64 from the returned state. The state_id remains valid for element-index actions; pixel-coordinate actions still require coordinates derived from a screenshot."),
 		}, "app"),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args getAppStateInput) (*mcp.CallToolResult, any, error) {
 		info, err := appstate.ResolveApp(ctx, args.App)
+		if err != nil {
+			return toolError(err), nil, nil
+		}
+		mode, err := parseCaptureMode(args.CaptureMode)
 		if err != nil {
 			return toolError(err), nil, nil
 		}
@@ -111,13 +116,41 @@ func registerGetAppState(s *mcp.Server, rt *runtimeState) {
 		state.Permissions = permissions
 		if approvalErr != nil {
 			state.Approval.Message = approvalErr.Error()
-			return textResult(state.Approval.Message), appStateResponse(state, args.OmitScreenshot), nil
+			return textResult(state.Approval.Message), appStateResponse(state, mode, args.OmitScreenshot), nil
 		}
-		return &mcp.CallToolResult{}, appStateResponse(state, args.OmitScreenshot), nil
+		return &mcp.CallToolResult{}, appStateResponse(state, mode, args.OmitScreenshot), nil
 	})
 }
 
-func appStateResponse(state computeruse.AppState, omitScreenshot bool) computeruse.AppState {
+type captureMode string
+
+const (
+	captureModeSOM    captureMode = "som"
+	captureModeAX     captureMode = "ax"
+	captureModeVision captureMode = "vision"
+)
+
+func parseCaptureMode(raw string) (captureMode, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", string(captureModeSOM):
+		return captureModeSOM, nil
+	case string(captureModeAX):
+		return captureModeAX, nil
+	case string(captureModeVision):
+		return captureModeVision, nil
+	default:
+		return "", fmt.Errorf("invalid capture_mode %q; use som, ax, or vision", raw)
+	}
+}
+
+func appStateResponse(state computeruse.AppState, mode captureMode, omitScreenshot bool) computeruse.AppState {
+	switch mode {
+	case "", captureModeSOM:
+	case captureModeAX:
+		omitScreenshot = true
+	case captureModeVision:
+		state.Tree = nil
+	}
 	if omitScreenshot {
 		state.ScreenshotPNGBase64 = ""
 	}
