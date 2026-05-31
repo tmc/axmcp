@@ -47,6 +47,31 @@ var (
 	hidEventSource uintptr
 )
 
+type cursorPress struct {
+	released bool
+}
+
+func pressCursorAt(x, y int) *cursorPress {
+	ghostcursor.PressAt(x, y)
+	return &cursorPress{}
+}
+
+func (p *cursorPress) ReleaseAt(x, y int) {
+	if p == nil || p.released {
+		return
+	}
+	ghostcursor.ReleaseAt(x, y)
+	p.released = true
+}
+
+func (p *cursorPress) HideIfPressed() {
+	if p == nil || p.released {
+		return
+	}
+	ghostcursor.Hide()
+	p.released = true
+}
+
 const (
 	cgEventMouseMoved        = 5
 	cgEventLeftMouseDown     = 1
@@ -112,31 +137,31 @@ func ClickElement(el *axuiautomation.Element, button string, clickCount int) err
 	switch strings.ToLower(strings.TrimSpace(button)) {
 	case "", "left":
 		if clickCount <= 1 {
-			ghostcursor.PressAt(center.X, center.Y)
+			press := pressCursorAt(center.X, center.Y)
 			if err := withSyntheticFocus(el, el.Click); err != nil {
-				ghostcursor.Hide()
+				press.HideIfPressed()
 				return err
 			}
-			ghostcursor.ReleaseAt(center.X, center.Y)
+			press.ReleaseAt(center.X, center.Y)
 			return nil
 		}
 		if clickCount == 2 {
-			ghostcursor.PressAt(center.X, center.Y)
+			press := pressCursorAt(center.X, center.Y)
 			if err := el.DoubleClick(); err != nil {
-				ghostcursor.Hide()
+				press.HideIfPressed()
 				return err
 			}
-			ghostcursor.ReleaseAt(center.X, center.Y)
+			press.ReleaseAt(center.X, center.Y)
 			return nil
 		}
 		return fmt.Errorf("unsupported click_count %d", clickCount)
 	case "right":
-		ghostcursor.PressAt(center.X, center.Y)
+		press := pressCursorAt(center.X, center.Y)
 		if err := withSyntheticFocus(el, func() error { return el.PerformAction("AXShowMenu") }); err != nil {
-			ghostcursor.Hide()
+			press.HideIfPressed()
 			return err
 		}
-		ghostcursor.ReleaseAt(center.X, center.Y)
+		press.ReleaseAt(center.X, center.Y)
 		return nil
 	case "middle":
 		return clickScreenPoint(elementCenter(el), cgEventOtherMouseDown, cgEventOtherMouseUp, cgMouseButtonMiddle, clickCount)
@@ -289,13 +314,13 @@ func longPressScreenPoint(x, y int, duration time.Duration, withJitter bool) err
 		duration = 600 * time.Millisecond
 	}
 	point := LocalPoint{X: x, Y: y}
-	ghostcursor.PressAt(point.X, point.Y)
+	press := pressCursorAt(point.X, point.Y)
 	if cgWarpMouseCursorPosition != nil {
 		cgWarpMouseCursorPosition(float64(point.X), float64(point.Y))
 	}
 	mouseDown := cgEventCreateMouseEvent(hidEventSource, cgEventLeftMouseDown, float64(point.X), float64(point.Y), cgMouseButtonLeft)
 	if mouseDown == 0 {
-		ghostcursor.Hide()
+		press.HideIfPressed()
 		return fmt.Errorf("failed to create mouse down event")
 	}
 	if cgEventSetIntegerValueField != nil {
@@ -310,7 +335,7 @@ func longPressScreenPoint(x, y int, duration time.Duration, withJitter bool) err
 		upX++
 		mouseMove := cgEventCreateMouseEvent(hidEventSource, cgEventMouseMoved, float64(upX), float64(upY), cgMouseButtonLeft)
 		if mouseMove == 0 {
-			ghostcursor.Hide()
+			press.HideIfPressed()
 			return fmt.Errorf("failed to create mouse move event")
 		}
 		cgEventPost(cgHIDEventTap, mouseMove)
@@ -321,14 +346,14 @@ func longPressScreenPoint(x, y int, duration time.Duration, withJitter bool) err
 	}
 	mouseDragged := cgEventCreateMouseEvent(hidEventSource, cgEventLeftMouseDragged, float64(upX), float64(upY), cgMouseButtonLeft)
 	if mouseDragged == 0 {
-		ghostcursor.Hide()
+		press.HideIfPressed()
 		return fmt.Errorf("failed to create mouse drag event")
 	}
 	cgEventPost(cgHIDEventTap, mouseDragged)
 	corefoundation.CFRelease(corefoundation.CFTypeRef(mouseDragged))
 	mouseUp := cgEventCreateMouseEvent(hidEventSource, cgEventLeftMouseUp, float64(upX), float64(upY), cgMouseButtonLeft)
 	if mouseUp == 0 {
-		ghostcursor.Hide()
+		press.HideIfPressed()
 		return fmt.Errorf("failed to create mouse up event")
 	}
 	if cgEventSetIntegerValueField != nil {
@@ -336,7 +361,7 @@ func longPressScreenPoint(x, y int, duration time.Duration, withJitter bool) err
 	}
 	cgEventPost(cgHIDEventTap, mouseUp)
 	corefoundation.CFRelease(corefoundation.CFTypeRef(mouseUp))
-	ghostcursor.ReleaseAt(upX, upY)
+	press.ReleaseAt(upX, upY)
 	return nil
 }
 
@@ -426,7 +451,7 @@ func clickScreenPoint(point LocalPoint, downType, upType, button int32, clickCou
 		return fmt.Errorf("CGEventPost not available")
 	}
 	ghostcursor.SettleAt(point.X, point.Y, 180*time.Millisecond)
-	ghostcursor.PressAt(point.X, point.Y)
+	press := pressCursorAt(point.X, point.Y)
 	// Walk the cursor to the target with a short sequence of mouseMoved
 	// events before the down/up. iPhone Mirroring's input filter on macOS 26
 	// drops second-and-subsequent synthetic clicks that arrive without a
@@ -440,7 +465,7 @@ func clickScreenPoint(point LocalPoint, downType, upType, button int32, clickCou
 	for i := range clickCount {
 		mouseDown := cgEventCreateMouseEvent(hidEventSource, downType, float64(point.X), float64(point.Y), button)
 		if mouseDown == 0 {
-			ghostcursor.Hide()
+			press.HideIfPressed()
 			return fmt.Errorf("failed to create mouse down event")
 		}
 		if cgEventSetIntegerValueField != nil {
@@ -451,7 +476,7 @@ func clickScreenPoint(point LocalPoint, downType, upType, button int32, clickCou
 		time.Sleep(40 * time.Millisecond)
 		mouseUp := cgEventCreateMouseEvent(hidEventSource, upType, float64(point.X), float64(point.Y), button)
 		if mouseUp == 0 {
-			ghostcursor.Hide()
+			press.HideIfPressed()
 			return fmt.Errorf("failed to create mouse up event")
 		}
 		if cgEventSetIntegerValueField != nil {
@@ -463,7 +488,7 @@ func clickScreenPoint(point LocalPoint, downType, upType, button int32, clickCou
 			time.Sleep(40 * time.Millisecond)
 		}
 	}
-	ghostcursor.ReleaseAt(point.X, point.Y)
+	press.ReleaseAt(point.X, point.Y)
 	return nil
 }
 
@@ -530,7 +555,7 @@ func dragScreenPoint(start, end LocalPoint, button int32) error {
 			stepSleep = 10 * time.Millisecond
 		}
 	}
-	ghostcursor.PressAt(start.X, start.Y)
+	press := pressCursorAt(start.X, start.Y)
 	if mouseMove := cgEventCreateMouseEvent(hidEventSource, cgEventMouseMoved, float64(start.X), float64(start.Y), button); mouseMove != 0 {
 		cgEventPost(cgHIDEventTap, mouseMove)
 		corefoundation.CFRelease(corefoundation.CFTypeRef(mouseMove))
@@ -541,7 +566,7 @@ func dragScreenPoint(start, end LocalPoint, button int32) error {
 	time.Sleep(10 * time.Millisecond)
 	mouseDown := cgEventCreateMouseEvent(hidEventSource, downType, float64(start.X), float64(start.Y), button)
 	if mouseDown == 0 {
-		ghostcursor.Hide()
+		press.HideIfPressed()
 		return fmt.Errorf("failed to create mouse down event")
 	}
 	if cgEventSetIntegerValueField != nil {
@@ -555,7 +580,7 @@ func dragScreenPoint(start, end LocalPoint, button int32) error {
 		ghostcursor.DragTo(x, y)
 		dragged := cgEventCreateMouseEvent(hidEventSource, dragType, float64(x), float64(y), button)
 		if dragged == 0 {
-			ghostcursor.Hide()
+			press.HideIfPressed()
 			return fmt.Errorf("failed to create mouse drag event")
 		}
 		cgEventPost(cgHIDEventTap, dragged)
@@ -566,7 +591,7 @@ func dragScreenPoint(start, end LocalPoint, button int32) error {
 	}
 	mouseUp := cgEventCreateMouseEvent(hidEventSource, upType, float64(end.X), float64(end.Y), button)
 	if mouseUp == 0 {
-		ghostcursor.Hide()
+		press.HideIfPressed()
 		return fmt.Errorf("failed to create mouse up event")
 	}
 	if cgEventSetIntegerValueField != nil {
@@ -574,7 +599,7 @@ func dragScreenPoint(start, end LocalPoint, button int32) error {
 	}
 	cgEventPost(cgHIDEventTap, mouseUp)
 	corefoundation.CFRelease(corefoundation.CFTypeRef(mouseUp))
-	ghostcursor.ReleaseAt(end.X, end.Y)
+	press.ReleaseAt(end.X, end.Y)
 	return nil
 }
 
@@ -614,14 +639,14 @@ func longPressDragScreenPoint(start, end LocalPoint, holdDuration time.Duration)
 			stepSleep = 10 * time.Millisecond
 		}
 	}
-	ghostcursor.PressAt(start.X, start.Y)
+	press := pressCursorAt(start.X, start.Y)
 	if cgWarpMouseCursorPosition != nil {
 		cgWarpMouseCursorPosition(float64(start.X), float64(start.Y))
 	}
 	time.Sleep(10 * time.Millisecond)
 	mouseDown := cgEventCreateMouseEvent(hidEventSource, cgEventLeftMouseDown, float64(start.X), float64(start.Y), cgMouseButtonLeft)
 	if mouseDown == 0 {
-		ghostcursor.Hide()
+		press.HideIfPressed()
 		return fmt.Errorf("failed to create mouse down event")
 	}
 	if cgEventSetIntegerValueField != nil {
@@ -636,7 +661,7 @@ func longPressDragScreenPoint(start, end LocalPoint, holdDuration time.Duration)
 		ghostcursor.DragTo(x, y)
 		dragged := cgEventCreateMouseEvent(hidEventSource, cgEventLeftMouseDragged, float64(x), float64(y), cgMouseButtonLeft)
 		if dragged == 0 {
-			ghostcursor.Hide()
+			press.HideIfPressed()
 			return fmt.Errorf("failed to create mouse drag event")
 		}
 		cgEventPost(cgHIDEventTap, dragged)
@@ -647,7 +672,7 @@ func longPressDragScreenPoint(start, end LocalPoint, holdDuration time.Duration)
 	}
 	mouseUp := cgEventCreateMouseEvent(hidEventSource, cgEventLeftMouseUp, float64(end.X), float64(end.Y), cgMouseButtonLeft)
 	if mouseUp == 0 {
-		ghostcursor.Hide()
+		press.HideIfPressed()
 		return fmt.Errorf("failed to create mouse up event")
 	}
 	if cgEventSetIntegerValueField != nil {
@@ -655,7 +680,7 @@ func longPressDragScreenPoint(start, end LocalPoint, holdDuration time.Duration)
 	}
 	cgEventPost(cgHIDEventTap, mouseUp)
 	corefoundation.CFRelease(corefoundation.CFTypeRef(mouseUp))
-	ghostcursor.ReleaseAt(end.X, end.Y)
+	press.ReleaseAt(end.X, end.Y)
 	return nil
 }
 
