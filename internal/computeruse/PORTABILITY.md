@@ -6,22 +6,40 @@ input, and physical-intervention monitoring still require platform backends.
 
 ## Public Evidence
 
+Refreshed on 2026-05-31:
+
 The public OpenAI CUA sample app
-<https://github.com/openai/openai-cua-sample-app> is browser-oriented. Its
-native mode exposes the Responses API `computer` tool and maps model actions to
-Playwright mouse, keyboard, wait, and screenshot operations. The sample
-documents Linux setup through Playwright's OS dependency installer, which is
-useful evidence for a cross-platform browser backend, not for this repository's
-native desktop path. No public OpenAI repository found in this audit exposes a
-native Windows desktop backend to clone or port.
+<https://github.com/openai/openai-cua-sample-app> at main
+`3751c8baa6376c0bbf6cceea2cdc0c0b42996e03` is browser-oriented. Its native
+mode exposes the Responses API `computer` tool and maps model actions to
+Playwright mouse, keyboard, wait, and screenshot operations in
+`packages/runner-core/src/responses-loop.ts`. Screenshots come from
+`page.screenshot` through `packages/browser-runtime/src/index.ts`, and the
+state/replay schema is browser-session state. The sample documents Linux setup
+through Playwright's OS dependency installer, which is useful evidence for a
+cross-platform browser backend, not for this repository's native desktop path.
+No public OpenAI repository found in this audit exposes a native Windows or
+Linux desktop backend to clone or port.
 
 The public Cua driver repository <https://github.com/trycua/cua> documents a
-cross-platform native direction: macOS through Accessibility APIs, Windows
-through UI Automation, and Linux through AT-SPI with X11 or Wayland-specific
-input fallbacks. Its Linux support is described as beta or pre-release in public
-docs. The same docs call out platform risks that matter here: Windows screenshot
-capture can miss GPU-composited content, Windows services have session
-isolation, and Linux input depends on the display server and permissions.
+cross-platform native direction. The inspected main commit was
+`ef0a745b94a8578239561100cacf22dc41ef9431`. Relevant paths:
+
+- `libs/cua-driver/rust/crates/platform-windows`: UI Automation for trees,
+  MSAA fallback for SAL/VCL apps, Win32 enumeration, UIA/PostMessage/SendInput
+  input dispatch, and WGC/PrintWindow/GDI screenshot capture.
+- `libs/cua-driver/rust/crates/platform-linux`: AT-SPI tree walking, X11 window
+  enumeration, XSendEvent input, and X11 screenshot capture through
+  ImageMagick or XGetImage.
+- `libs/cua-driver/rust/Skills/cua-driver/WINDOWS.md` and `LINUX.md`: the
+  platform contracts and caveats.
+
+TryCUA's Windows path is the strongest native parity target: default background
+dispatch first, explicit foreground dispatch only when needed, and structured
+errors when background delivery is known to drop. Its Linux path is still beta:
+X11 can target windows with XSendEvent, but some apps reject synthetic events;
+XTest-style fallbacks route through the focused window; Wayland depends on
+remote-desktop portals; and AT-SPI availability varies by desktop and distro.
 
 ## Current Boundary
 
@@ -60,6 +78,47 @@ subsystem at a time.
 that are present or missing. The non-Darwin command prints that report before
 exiting so missing Windows or Linux prerequisites can become explicit backend
 probes instead of silent no-op behavior.
+
+## Upstream-Backed Backlog
+
+The next code milestones should keep the current `cmd/computer-use-mcp`
+contract and replace the unsupported stubs behind it.
+
+1. Split a small backend interface inside `internal/computeruse` for app/window
+   discovery, state capture, input, screenshots, and intervention monitoring.
+   Keep Darwin as the first implementation and keep stubs for unavailable
+   capabilities.
+2. Add a Windows state backend. Use Win32 process/window enumeration, HWND as
+   the native window id, UI Automation for the tree, and a retained per-state
+   element cache. Add an MSAA fallback for apps whose UIA providers hang or lose
+   role fidelity. Preserve axmcp's `state_id` refresh contract instead of
+   exposing reusable raw element handles to callers.
+3. Add Windows screenshot and coordinate handling. Mirror TryCUA's target:
+   WGC for DirectComposition/XAML hosts, PrintWindow for normal windows,
+   screen-region BitBlt only as a fallback with an occlusion warning, and DWM
+   frame cropping so returned image pixels map to the same origin used by pixel
+   actions. Preserve the existing 1568 px long-side cap and returned-dimension
+   coordinate contract.
+4. Add Windows input dispatch. Prefer element-index UIA patterns
+   (`Invoke`, `Value`, `Toggle`, `SelectionItem`, `ExpandCollapse`) for
+   background actions. For pixel actions, hit-test UIA first, then PostMessage
+   to the target HWND. Return a structured `background_unavailable` result when
+   background dispatch is known to drop, and require an explicit foreground
+   option before using SendInput.
+5. Add a Linux backend in narrower phases. Start with X11: list windows, capture
+   with XGetImage or a checked external helper, walk AT-SPI when the bus is
+   available, perform element actions through AT-SPI, and use XSendEvent for
+   window-targeted pixels/keys. Treat Wayland input as passive or portal-gated
+   until compositor support is detected.
+6. Expand `PlatformStatus` into a real doctor surface. Windows should report
+   interactive-session status, UIA reachability, WGC availability, integrity
+   level risks, and screen-capture readiness. Linux should report X11 versus
+   Wayland, AT-SPI bus reachability, XTest availability, portal availability,
+   and screenshot helper availability.
+7. Add tests before broad implementation: contract tests against fake backends,
+   cross-`GOOS` compile tests for stubs, and host-gated integration tests that
+   prove one calculator/notepad-class workflow on Windows and one GTK/Qt
+   workflow on Linux.
 
 ## Verification Targets
 
