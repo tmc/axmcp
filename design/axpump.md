@@ -108,9 +108,12 @@ func Ensure(pid int32) (bool, error)
 `Ensure` is idempotent per pid. It first sets Chromium's
 `AXManualAccessibility` / `AXEnhancedUserInterface` attributes when a
 target accepts them, then registers and retains a no-op observer through
-`tmc/apple/x/axuiautomation`. It returns `true` when an observer is
-retained, `false, nil` when the target is not assertable, and an error
-only for invalid pids or failures to connect to the target application.
+`tmc/apple/x/axuiautomation` when possible. Successful observers are
+retained for the process lifetime. It returns `true` once the target
+accepted the Chromium AX attributes, even if observer creation later
+fails; `false, nil` means the target was not assertable. Errors are
+reserved for invalid pids or failures to connect to the target
+application.
 
 ## Graceful-degrade contract
 
