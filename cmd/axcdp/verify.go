@@ -71,23 +71,28 @@ func findTarget(targets []map[string]any, selector string) (map[string]any, erro
 }
 
 func targetSummary(target map[string]any) string {
-	id := fmt.Sprint(target["id"])
-	title := fmt.Sprint(target["title"])
-	rawURL := fmt.Sprint(target["url"])
 	parts := make([]string, 0, 3)
-	if title != "" {
+	if title := targetString(target, "title"); title != "" {
 		parts = append(parts, "title="+title)
 	}
-	if id != "" {
+	if id := targetString(target, "id"); id != "" {
 		parts = append(parts, "id="+id)
 	}
-	if rawURL != "" {
+	if rawURL := targetString(target, "url"); rawURL != "" {
 		parts = append(parts, "url="+rawURL)
 	}
 	if len(parts) == 0 {
 		return "(untitled target)"
 	}
 	return strings.Join(parts, " ")
+}
+
+func targetString(target map[string]any, name string) string {
+	v, ok := target[name]
+	if !ok || v == nil {
+		return ""
+	}
+	return fmt.Sprint(v)
 }
 
 func verifyPreviewURL(client *http.Client, target map[string]any) error {

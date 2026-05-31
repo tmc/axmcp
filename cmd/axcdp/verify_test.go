@@ -25,6 +25,17 @@ func TestFindTargetNoMatchListsCandidates(t *testing.T) {
 	}
 }
 
+func TestTargetSummarySkipsMissingFields(t *testing.T) {
+	got := targetSummary(map[string]any{"type": "page", "title": "TextEdit"})
+	if got != "title=TextEdit" {
+		t.Fatalf("targetSummary = %q, want title only", got)
+	}
+	got = targetSummary(map[string]any{"type": "page"})
+	if got != "(untitled target)" {
+		t.Fatalf("targetSummary = %q, want untitled target", got)
+	}
+}
+
 func TestVerifyDOMHasWindowChildrenAcceptsWindowDocument(t *testing.T) {
 	result := map[string]any{
 		"root": map[string]any{
