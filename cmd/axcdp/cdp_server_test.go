@@ -2,7 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"image"
+	"image/color"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +16,24 @@ import (
 
 	"github.com/gorilla/websocket"
 )
+
+type failingPNGWriter struct{}
+
+func (failingPNGWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write failed")
+}
+
+func TestWritePNGBase64ReportsWriteError(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	img.Set(0, 0, color.RGBA{255, 255, 255, 255})
+	err := writePNGBase64(failingPNGWriter{}, img)
+	if err == nil {
+		t.Fatal("writePNGBase64 succeeded with failing writer")
+	}
+	if !strings.Contains(err.Error(), "write failed") {
+		t.Fatalf("writePNGBase64 error = %v, want wrapped write failure", err)
+	}
+}
 
 func TestCDPWebSocketEchoesFlattenedSessionID(t *testing.T) {
 	s := &cdpServer{}

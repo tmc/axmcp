@@ -13,6 +13,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	"image/png"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -4007,10 +4008,23 @@ func blankPNG() string {
 	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
 	img.Set(0, 0, color.RGBA{255, 255, 255, 255})
 	var b strings.Builder
-	enc := base64.NewEncoder(base64.StdEncoding, stringWriter{&b})
-	_ = png.Encode(enc, img)
-	_ = enc.Close()
+	if err := writePNGBase64(stringWriter{&b}, img); err != nil {
+		slog.Warn("encode blank png failed", "err", err)
+		return ""
+	}
 	return b.String()
+}
+
+func writePNGBase64(w io.Writer, img image.Image) error {
+	enc := base64.NewEncoder(base64.StdEncoding, w)
+	if err := png.Encode(enc, img); err != nil {
+		_ = enc.Close()
+		return fmt.Errorf("encode png: %w", err)
+	}
+	if err := enc.Close(); err != nil {
+		return fmt.Errorf("close base64 png encoder: %w", err)
+	}
+	return nil
 }
 
 func (s *cdpServer) captureTargetPNG() string {
