@@ -360,7 +360,6 @@ func main() {
 			procInfo.SetAutomaticTerminationSupportEnabled(false)
 			procInfo.DisableAutomaticTermination("axmcp server goroutine")
 			ui.CheckTrust()
-			ui.CheckScreenCapture()
 			if err := ensureAccessibilityPermission(context.Background()); err != nil {
 				failPermission(err)
 			}

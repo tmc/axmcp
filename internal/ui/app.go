@@ -366,18 +366,20 @@ func WaitForAccessibility(timeout time.Duration) bool {
 	}
 }
 
-// IsScreenRecordingTrusted checks if screen recording permission is granted
-// without triggering a system prompt. It falls back to an actual capture test
-// when the preflight API returns false, which handles post-re-sign scenarios
-// where the TCC grant no longer matches the code signature.
+// IsScreenRecordingTrusted reports whether screen recording is granted for the
+// current process without triggering a system prompt. The result reflects the
+// TCC responsible process: when axmcp runs from its app bundle via
+// LaunchServices the grant resolves against dev.tmc.axmcp, but invoking the
+// bundle binary directly from a shell attributes the check to the parent
+// terminal and can report a false negative.
 func IsScreenRecordingTrusted() bool {
 	return screenRecordingAvailable()
 }
 
 // isScreenRecordingAvailable checks whether screen recording permission is
-// available using CGPreflightScreenCaptureAccess. Note that after a binary
-// re-sign, the preflight cache may be stale. CGDisplayCreateImageForRect is
-// obsoleted on macOS 15+ and cannot be used as a fallback.
+// available using CGPreflightScreenCaptureAccess. This is the authoritative
+// preflight; CGDisplayCreateImageForRect is obsoleted on macOS 15+ and cannot
+// serve as a capture-test fallback.
 func isScreenRecordingAvailable() bool {
 	return coregraphics.CGPreflightScreenCaptureAccess()
 }
