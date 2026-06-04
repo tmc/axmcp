@@ -245,9 +245,6 @@ func main() {
 	if err := configureLogging(verbose); err != nil {
 		log.Fatalf("configure logging: %v", err)
 	}
-	if tryDirectWindowScreenshot(args) {
-		return
-	}
 
 	cfg := macgo.NewConfig().
 		WithAppName(appName).
@@ -270,6 +267,9 @@ func main() {
 
 	if err := macgo.Start(cfg); err != nil {
 		log.Fatalf("macgo start failed: %v", err)
+	}
+	if tryDirectWindowScreenshot(args) {
+		return
 	}
 
 	eyecandy := ghostcursor.EyecandyConfig{
