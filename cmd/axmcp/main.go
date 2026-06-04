@@ -355,14 +355,20 @@ func main() {
 		}()
 	} else if serverTransport {
 		// Run MCP server in goroutine so main thread can drive the AppKit run loop.
+		// Start the transport immediately so the initialize handshake is answered
+		// without waiting on permission checks — clients such as Claude relaunch
+		// axmcp through LaunchServices and close the connection if the first
+		// response is slow. Accessibility is verified concurrently and is only
+		// needed once a tool is actually called.
 		go func() {
-			time.Sleep(100 * time.Millisecond)
 			procInfo.SetAutomaticTerminationSupportEnabled(false)
 			procInfo.DisableAutomaticTermination("axmcp server goroutine")
-			ui.CheckTrust()
-			if err := ensureAccessibilityPermission(context.Background()); err != nil {
-				failPermission(err)
-			}
+			go func() {
+				ui.CheckTrust()
+				if err := ensureAccessibilityPermission(context.Background()); err != nil {
+					failPermission(err)
+				}
+			}()
 			if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 				log.Printf("server error: %v", err)
 			}
