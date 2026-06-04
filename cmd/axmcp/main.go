@@ -257,9 +257,6 @@ func main() {
 	if verbose {
 		cfg = cfg.WithDebug()
 	}
-	if stdioTransport {
-		cfg = cfg.WithSingleProcess()
-	}
 	cfg.BundleID = bundleID
 	cfg = macsigning.Configure(cfg)
 	ui.ConfigureIdentity(appName, cfg.BundleID)
