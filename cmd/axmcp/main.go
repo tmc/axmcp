@@ -209,11 +209,32 @@ func ensureAccessibilityPermission(ctx context.Context) error {
 	return waitForPermission("Accessibility", permissionWaitTimeout, permissionPollInterval, ui.IsTrusted)
 }
 
+func appIdentity() (string, string) {
+	name := strings.TrimSuffix(filepath.Base(os.Args[0]), ".app")
+	if name == "" {
+		name = "axmcp"
+	}
+	idName := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return r
+		case r >= 'A' && r <= 'Z':
+			return r + ('a' - 'A')
+		case r >= '0' && r <= '9':
+			return r
+		default:
+			return '-'
+		}
+	}, name)
+	return name, "dev.tmc." + idName
+}
+
 func main() {
 	installAtexitHandler()
 	runtime.LockOSThread()
 
 	args := os.Args[1:]
+	appName, bundleID := appIdentity()
 	verbose := cmdflag.Bool(args, "-v", false) || cmdflag.Bool(args, "--verbose", false)
 	ghostCursorEnabled := cmdflag.Bool(args, "--ghost-cursor", true)
 	eyecandyEnabled := cmdflag.Bool(args, "--eyecandy", true)
@@ -229,11 +250,11 @@ func main() {
 	}
 
 	cfg := macgo.NewConfig().
-		WithAppName("axmcp").
+		WithAppName(appName).
 		WithPermissions(macgo.Accessibility, macgo.ScreenRecording).
-		WithUsageDescription("NSAccessibilityUsageDescription", "axmcp uses Accessibility to inspect and interact with user interface elements.").
-		WithUsageDescription("NSAppleEventsUsageDescription", "axmcp may coordinate with other macOS apps while driving UI automation.").
-		WithUsageDescription("NSScreenCaptureUsageDescription", "axmcp needs to capture screenshots of specific UI elements and windows.").
+		WithUsageDescription("NSAccessibilityUsageDescription", appName+" uses Accessibility to inspect and interact with user interface elements.").
+		WithUsageDescription("NSAppleEventsUsageDescription", appName+" may coordinate with other macOS apps while driving UI automation.").
+		WithUsageDescription("NSScreenCaptureUsageDescription", appName+" needs to capture screenshots of specific UI elements and windows.").
 		WithInfo("NSSupportsAutomaticTermination", false).
 		WithUIMode(macgo.UIModeAccessory)
 	if verbose {
@@ -242,10 +263,10 @@ func main() {
 	if stdioTransport {
 		cfg = cfg.WithSingleProcess()
 	}
-	cfg.BundleID = "dev.tmc.axmcp"
+	cfg.BundleID = bundleID
 	cfg = macsigning.Configure(cfg)
-	ui.ConfigureIdentity("axmcp", cfg.BundleID)
-	permissions.ConfigureIdentity("axmcp", cfg.BundleID)
+	ui.ConfigureIdentity(appName, cfg.BundleID)
+	permissions.ConfigureIdentity(appName, cfg.BundleID)
 
 	if err := macgo.Start(cfg); err != nil {
 		log.Fatalf("macgo start failed: %v", err)

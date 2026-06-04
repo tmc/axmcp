@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tmc/apple/x/axuiautomation"
 	"github.com/tmc/axmcp/internal/ui"
+	"github.com/tmc/axmcp/internal/ui/permissions"
 	"golang.org/x/sys/unix"
 )
 
@@ -101,6 +103,7 @@ func runCLI() {
 		cliMenu(),
 		cliFocus(),
 		cliScreenshot(),
+		cliPermissions(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -110,6 +113,48 @@ func runCLI() {
 	waitForCLIVisualFeedback()
 	ui.WaitForWindows()
 	os.Exit(0)
+}
+
+// ── permissions ──────────────────────────────────────────────────────────────
+
+func cliPermissions() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "permissions",
+		Short: "Inspect or request macOS permissions",
+	}
+	cmd.AddCommand(
+		&cobra.Command{
+			Use:   "status",
+			Short: "Print permission status as JSON",
+			Args:  cobra.NoArgs,
+			RunE: func(cmd *cobra.Command, args []string) error {
+				snapshot := permissions.CurrentSnapshot(permissions.ReqAccessibility, permissions.ReqScreenRecording)
+				return json.NewEncoder(os.Stdout).Encode(snapshot)
+			},
+		},
+		&cobra.Command{
+			Use:   "request",
+			Short: "Show the permission onboarding window",
+			Args:  cobra.NoArgs,
+			RunE: func(cmd *cobra.Command, args []string) error {
+				reqs := []permissions.Requirement{permissions.ReqAccessibility, permissions.ReqScreenRecording}
+				go requestMissingPermissions(reqs)
+				return permissions.OnboardingWindow(context.Background(), reqs...)
+			},
+		},
+	)
+	return cmd
+}
+
+func requestMissingPermissions(reqs []permissions.Requirement) {
+	for _, req := range reqs {
+		if permissions.Check(req) == permissions.StatusGranted {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		_, _ = permissions.Request(ctx, req)
+		cancel()
+	}
 }
 
 // ── apps ──────────────────────────────────────────────────────────────────────

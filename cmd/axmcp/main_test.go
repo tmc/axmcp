@@ -52,6 +52,29 @@ func TestPermissionPane(t *testing.T) {
 	}
 }
 
+func TestAppIdentity(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+
+	tests := []struct {
+		arg0     string
+		wantName string
+		wantID   string
+	}{
+		{arg0: "/Users/tmc/go/bin/axmcp", wantName: "axmcp", wantID: "dev.tmc.axmcp"},
+		{arg0: "/Users/tmc/go/bin/axmcp2", wantName: "axmcp2", wantID: "dev.tmc.axmcp2"},
+		{arg0: "/Users/tmc/go/bin/AX MCP.app", wantName: "AX MCP", wantID: "dev.tmc.ax-mcp"},
+	}
+
+	for _, tt := range tests {
+		os.Args = []string{tt.arg0}
+		gotName, gotID := appIdentity()
+		if gotName != tt.wantName || gotID != tt.wantID {
+			t.Fatalf("appIdentity(%q) = %q, %q, want %q, %q", tt.arg0, gotName, gotID, tt.wantName, tt.wantID)
+		}
+	}
+}
+
 func TestWaitForPermissionImmediate(t *testing.T) {
 	if err := waitForPermission("Accessibility", time.Millisecond, time.Microsecond, func() bool { return true }); err != nil {
 		t.Fatalf("waitForPermission returned %v, want nil", err)
