@@ -9,6 +9,7 @@ import (
 
 	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/coregraphics"
+	"github.com/tmc/apple/kernel"
 )
 
 const (
@@ -94,15 +95,15 @@ func mouseInterventionMask() coregraphics.CGEventMask {
 	return mask
 }
 
-func ghostCursorInterventionCallback(_ uintptr, typ coregraphics.CGEventType, event uintptr, userInfo unsafe.Pointer) uintptr {
+func ghostCursorInterventionCallback(_ uintptr, typ coregraphics.CGEventType, event uintptr, userInfo kernel.Pointer) uintptr {
 	switch typ {
 	case coregraphics.KCGEventTapDisabledByTimeout, coregraphics.KCGEventTapDisabledByUserInput:
-		if c := interventionController(userInfo); c != nil && c.interventionTap != 0 {
+		if c := interventionController(unsafe.Pointer(userInfo)); c != nil && c.interventionTap != 0 {
 			coregraphics.CGEventTapEnable(c.interventionTap, true)
 		}
 		return event
 	}
-	c := interventionController(userInfo)
+	c := interventionController(unsafe.Pointer(userInfo))
 	if c == nil || event == 0 {
 		return event
 	}

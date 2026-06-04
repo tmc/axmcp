@@ -264,8 +264,8 @@ func cursorFogPath(scale float64) coregraphics.CGPathRef {
 		body,
 		nil,
 		strokeWidth,
-		uint(coregraphics.KCGLineCapRound),
-		uint(coregraphics.KCGLineJoinRound),
+		coregraphics.KCGLineCapRound,
+		coregraphics.KCGLineJoinRound,
 		10,
 	)
 	path := coregraphics.CGPathCreateMutable()

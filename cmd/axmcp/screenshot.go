@@ -547,7 +547,7 @@ func cgImageToPNG(img coregraphics.CGImageRef) ([]byte, error) {
 		return nil, fmt.Errorf("failed to create NSBitmapImageRep")
 	}
 	data := rep.RepresentationUsingTypeProperties(appkit.NSBitmapImageFileTypePNG, nil)
-	if data == nil {
+	if data.GetID() == 0 {
 		return nil, fmt.Errorf("failed to create PNG representation")
 	}
 	length := data.Length()
