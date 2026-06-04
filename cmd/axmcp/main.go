@@ -230,7 +230,7 @@ func main() {
 
 	cfg := macgo.NewConfig().
 		WithAppName("axmcp").
-		WithPermissions(macgo.Accessibility).
+		WithPermissions(macgo.Accessibility, macgo.ScreenRecording).
 		WithUsageDescription("NSAccessibilityUsageDescription", "axmcp uses Accessibility to inspect and interact with user interface elements.").
 		WithUsageDescription("NSAppleEventsUsageDescription", "axmcp may coordinate with other macOS apps while driving UI automation.").
 		WithUsageDescription("NSScreenCaptureUsageDescription", "axmcp needs to capture screenshots of specific UI elements and windows.").
