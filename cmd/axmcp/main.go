@@ -30,6 +30,7 @@ import (
 const (
 	permissionWaitTimeout  = 120 * time.Second
 	permissionPollInterval = 250 * time.Millisecond
+	stdioTransportEnv      = "AXMCP_STDIO_TRANSPORT"
 )
 
 var (
@@ -111,6 +112,9 @@ func failPermission(err error) {
 }
 
 func stdinLooksLikeTransport() bool {
+	if os.Getenv(stdioTransportEnv) == "1" {
+		return true
+	}
 	info, err := os.Stdin.Stat()
 	if err != nil {
 		return false
@@ -213,6 +217,10 @@ func main() {
 	verbose := cmdflag.Bool(args, "-v", false) || cmdflag.Bool(args, "--verbose", false)
 	ghostCursorEnabled := cmdflag.Bool(args, "--ghost-cursor", true)
 	eyecandyEnabled := cmdflag.Bool(args, "--eyecandy", true)
+	stdioTransport := stdinTransportReady()
+	if stdioTransport {
+		os.Setenv(stdioTransportEnv, "1")
+	}
 	if err := configureLogging(verbose); err != nil {
 		log.Fatalf("configure logging: %v", err)
 	}
@@ -230,6 +238,9 @@ func main() {
 		WithUIMode(macgo.UIModeAccessory)
 	if verbose {
 		cfg = cfg.WithDebug()
+	}
+	if stdioTransport {
+		cfg = cfg.WithSingleProcess()
 	}
 	cfg.BundleID = "dev.tmc.axmcp"
 	cfg = macsigning.Configure(cfg)
@@ -308,7 +319,7 @@ func main() {
 
 	stdinTTY := isTTY()
 	cliMode := shouldRunCLI(stdinTTY, args)
-	serverTransport := stdinTransportReady()
+	serverTransport := stdioTransport
 
 	if cliMode {
 		// Run CLI in goroutine so main thread can drive the AppKit run loop.

@@ -35,7 +35,7 @@ var (
 	enableResources      = flag.Bool("enable-resources", true, "Enable resource management")
 	enableASC            = flag.Bool("enable-asc-tools", false, "Enable App Store Connect and altool tools at startup")
 	enableXcode          = flag.Bool("enable-xcode-tools", true, "Enable Xcode tools via xcrun mcpbridge")
-	waitForXcode         = flag.Duration("wait-for-xcode", 30*time.Second, "Max time to wait for Xcode bridge tools before accepting MCP connections (0 to disable)")
+	waitForXcode         = flag.Duration("wait-for-xcode", 0, "Max time to wait for Xcode bridge tools before accepting MCP connections (0 to disable)")
 	xcodeToolsPrefix     = flag.String("xcode-tools-prefix", "", "Optional prefix for proxied Xcode tool names")
 	xcodeOnly            = flag.Bool("xcode-only", false, "Only register Xcode bridge tools, skip all native xcmcp tools")
 	subscribeBuildErrors = flag.Bool("subscribe-build-errors", false, "Expose Xcode build errors as a subscribable resource")
