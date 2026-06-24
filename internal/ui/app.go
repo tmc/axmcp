@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -84,6 +85,18 @@ func MkString(s string) uintptr {
 	return uintptr(foundation.NewStringWithUTF8String(s).GetID())
 }
 
+func releaseCreatedString(ref uintptr) {
+	if ref != 0 && cfStringCreateWithCString != nil {
+		corefoundation.CFRelease(corefoundation.CFTypeRef(ref))
+	}
+}
+
+func releaseCF(ref uintptr) {
+	if ref != 0 {
+		corefoundation.CFRelease(corefoundation.CFTypeRef(ref))
+	}
+}
+
 // (Inside Element)
 
 func (e *Element) getFrame() corefoundation.CGRect {
@@ -92,7 +105,9 @@ func (e *Element) getFrame() corefoundation.CGRect {
 	// Get Position
 	var ptrPos uintptr
 	keyPos := MkString("AXPosition")
+	defer releaseCreatedString(keyPos)
 	if axCopyAttributeValue(e.ax, keyPos, &ptrPos) == 0 {
+		defer releaseCF(ptrPos)
 		var pt corefoundation.CGPoint
 		if axValueGetValue(ptrPos, kAXValueTypeCGPoint, unsafe.Pointer(&pt)) {
 			rect.Origin = pt
@@ -102,7 +117,9 @@ func (e *Element) getFrame() corefoundation.CGRect {
 	// Get Size
 	var ptrSize uintptr
 	keySize := MkString("AXSize")
+	defer releaseCreatedString(keySize)
 	if axCopyAttributeValue(e.ax, keySize, &ptrSize) == 0 {
+		defer releaseCF(ptrSize)
 		var sz corefoundation.CGSize
 		if axValueGetValue(ptrSize, kAXValueTypeCGSize, unsafe.Pointer(&sz)) {
 			rect.Size = sz
@@ -851,7 +868,7 @@ func NewApp(bundleID string) *App {
 	axRef := axCreateApplication(targetPid)
 	return &App{
 		pid:     targetPid,
-		element: &Element{ax: axRef},
+		element: newOwnedElement(axRef),
 	}
 }
 
@@ -865,6 +882,14 @@ func Application() *App {
 
 func (a *App) Exists() bool {
 	return a.pid != 0
+}
+
+func (a *App) Close() {
+	if a == nil || a.element == nil {
+		return
+	}
+	a.element.Close()
+	a.element = nil
 }
 
 func (a *App) Terminate() {
@@ -896,11 +921,44 @@ func (a *App) Tree() string {
 
 // Element
 type Element struct {
-	ax uintptr // AXUIElementRef
+	ax    uintptr // AXUIElementRef
+	owned bool
+}
+
+func newOwnedElement(ax uintptr) *Element {
+	if ax == 0 {
+		return nil
+	}
+	e := &Element{ax: ax, owned: true}
+	runtime.SetFinalizer(e, (*Element).Close)
+	return e
+}
+
+func retainElement(ax uintptr) *Element {
+	if ax == 0 {
+		return nil
+	}
+	corefoundation.CFRetain(corefoundation.CFTypeRef(ax))
+	return newOwnedElement(ax)
+}
+
+func (e *Element) Close() {
+	if e == nil || !e.owned || e.ax == 0 {
+		return
+	}
+	runtime.SetFinalizer(e, nil)
+	releaseCF(e.ax)
+	e.ax = 0
+	e.owned = false
 }
 
 func ElementByID(id string) *Element {
-	return Application().Element().ElementByID(id)
+	app := Application()
+	if app == nil || app.Element() == nil {
+		return nil
+	}
+	defer app.Close()
+	return app.Element().ElementByID(id)
 }
 
 func (e *Element) ElementByID(id string) *Element {
@@ -920,6 +978,7 @@ func (e *Element) PerformAction(action string) {
 		return
 	}
 	key := MkString(action)
+	defer releaseCreatedString(key)
 	axPerformAction(e.ax, key)
 }
 
@@ -942,6 +1001,7 @@ func (e *Element) dump(sb *strings.Builder, depth int) {
 	children := e.Children()
 	for _, child := range children {
 		child.dump(sb, depth+1)
+		child.Close()
 	}
 }
 
@@ -968,13 +1028,17 @@ func (e *Element) Frame() corefoundation.CGRect {
 func (e *Element) Children() []*Element {
 	var ptr uintptr
 	key := MkString("AXChildren")
+	defer releaseCreatedString(key)
 	if axCopyAttributeValue != nil && axCopyAttributeValue(e.ax, key, &ptr) == 0 {
+		defer releaseCF(ptr)
 		arr := foundation.NSArrayFromID(objc.ID(ptr))
 		count := arr.Count()
 		res := make([]*Element, count)
 		for i := range res {
 			item := arr.ObjectAtIndex(uint(i))
-			res[i] = &Element{ax: uintptr(item.GetID())}
+			ax := uintptr(item.GetID())
+			corefoundation.CFRetain(corefoundation.CFTypeRef(ax))
+			res[i] = newOwnedElement(ax)
 		}
 		return res
 	}
@@ -987,8 +1051,11 @@ func (e *Element) FindChildren(role string) []*Element {
 	children := e.Children()
 	for _, child := range children {
 		if child.Role() == role {
-			res = append(res, child)
+			if kept := retainElement(child.ax); kept != nil {
+				res = append(res, kept)
+			}
 		}
+		child.Close()
 	}
 	return res
 }
@@ -1004,10 +1071,13 @@ func (e *Element) Buttons() []*Element {
 	var visit func(*Element)
 	visit = func(el *Element) {
 		if el.Role() == "AXButton" {
-			res = append(res, el)
+			if kept := retainElement(el.ax); kept != nil {
+				res = append(res, kept)
+			}
 		}
 		for _, child := range el.Children() {
 			visit(child)
+			child.Close()
 		}
 	}
 	visit(e)
@@ -1044,11 +1114,14 @@ func (e *Element) Query(p QueryParams) []*Element {
 		}
 
 		if match {
-			res = append(res, el)
+			if kept := retainElement(el.ax); kept != nil {
+				res = append(res, kept)
+			}
 		}
 
 		for _, child := range el.Children() {
 			visit(child)
+			child.Close()
 		}
 	}
 	visit(e)
@@ -1074,9 +1147,11 @@ func BytePtrToString(ptr uintptr) string {
 func (e *Element) getStringAttr(attr string) string {
 	var ptr uintptr
 	key := MkString(attr)
+	defer releaseCreatedString(key)
 	if axCopyAttributeValue != nil {
 		err := axCopyAttributeValue(e.ax, key, &ptr)
 		if err == 0 {
+			defer releaseCF(ptr)
 			return foundation.NSStringFromID(objc.ID(ptr)).UTF8String()
 		}
 	}
