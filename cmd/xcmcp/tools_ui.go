@@ -65,6 +65,7 @@ func registerUITools(s *mcp.Server) {
 		}
 
 		app := ui.Application()
+		defer app.Close()
 		if !app.Exists() {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "Simulator app not found"}}}, SimulatorActionOutput{}, nil
 		}
@@ -76,16 +77,27 @@ func registerUITools(s *mcp.Server) {
 		var el *ui.Element
 		if args.ID != "" {
 			el = ui.ElementByID(args.ID)
+			if el != nil {
+				defer el.Close()
+			}
 			if el == nil {
 				matches := root.Query(ui.QueryParams{Label: args.ID})
 				if len(matches) > 0 {
 					el = matches[0]
+					defer el.Close()
+					for _, match := range matches[1:] {
+						match.Close()
+					}
 				}
 			}
 			if el == nil {
 				matches := root.Query(ui.QueryParams{Title: args.ID})
 				if len(matches) > 0 {
 					el = matches[0]
+					defer el.Close()
+					for _, match := range matches[1:] {
+						match.Close()
+					}
 				}
 			}
 		}
@@ -93,6 +105,10 @@ func registerUITools(s *mcp.Server) {
 			matches := root.Query(ui.QueryParams{Label: args.Label})
 			if len(matches) > 0 {
 				el = matches[0]
+				defer el.Close()
+				for _, match := range matches[1:] {
+					match.Close()
+				}
 			}
 		}
 		if el == nil {
@@ -117,6 +133,7 @@ func registerUITools(s *mcp.Server) {
 			bundleID = "com.apple.iphonesimulator"
 		}
 		app := ui.ApplicationWithBundleID(bundleID)
+		defer app.Close()
 		return &mcp.CallToolResult{}, UITreeOutput{Tree: app.Tree()}, nil
 	}))
 
@@ -128,8 +145,13 @@ func registerUITools(s *mcp.Server) {
 		var el *ui.Element
 		if args.ID != "" {
 			el = ui.ElementByID(args.ID)
+			if el != nil {
+				defer el.Close()
+			}
 		} else {
-			el = ui.Application().Element()
+			app := ui.Application()
+			defer app.Close()
+			el = app.Element()
 		}
 
 		if el == nil {
@@ -168,7 +190,11 @@ func registerUITools(s *mcp.Server) {
 		for time.Now().Before(deadline) {
 			el := ui.ElementByID(args.ID)
 			if el != nil && el.Exists() {
+				el.Close()
 				return &mcp.CallToolResult{}, SimulatorActionOutput{Message: "Element exists"}, nil
+			}
+			if el != nil {
+				el.Close()
 			}
 			time.Sleep(200 * time.Millisecond)
 		}
@@ -182,10 +208,12 @@ func registerUITools(s *mcp.Server) {
 		BundleID string `json:"bundle_id"`
 	}) (*mcp.CallToolResult, map[string]interface{}, error) {
 		app := ui.ApplicationWithBundleID(args.BundleID)
+		defer app.Close()
 		windows := app.Element().Windows()
 		var windowList []string
 		for _, w := range windows {
 			windowList = append(windowList, w.Title())
+			w.Close()
 		}
 		return &mcp.CallToolResult{}, map[string]interface{}{"windows": windowList}, nil
 	}))
@@ -200,10 +228,12 @@ func registerUITools(s *mcp.Server) {
 		if el == nil {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "Element not found"}}}, nil, nil
 		}
+		defer el.Close()
 		buttons := el.Buttons()
 		var buttonList []string
 		for _, b := range buttons {
 			buttonList = append(buttonList, b.Title())
+			b.Close()
 		}
 		return &mcp.CallToolResult{}, map[string]interface{}{"buttons": buttonList}, nil
 	}))
@@ -223,6 +253,7 @@ func registerUITools(s *mcp.Server) {
 			bundleID = "com.apple.iphonesimulator"
 		}
 		app := ui.ApplicationWithBundleID(bundleID)
+		defer app.Close()
 		matches := app.Element().Query(ui.QueryParams{
 			Role:       args.Role,
 			Label:      args.Label,
@@ -240,6 +271,7 @@ func registerUITools(s *mcp.Server) {
 				"identifier": m.Identifier(),
 				"frame":      m.Frame(),
 			})
+			m.Close()
 		}
 
 		jsonBytes, _ := json.Marshal(map[string]interface{}{
@@ -267,6 +299,7 @@ func registerUITools(s *mcp.Server) {
 
 		if bundleID != "" {
 			app := ui.ApplicationWithBundleID(bundleID)
+			defer app.Close()
 			if !app.Exists() {
 				return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "App not found or not running"}}}, map[string]string{}, nil
 			}
@@ -274,14 +307,23 @@ func registerUITools(s *mcp.Server) {
 				matches := app.Element().Query(ui.QueryParams{Identifier: id})
 				if len(matches) > 0 {
 					el = matches[0]
+					defer el.Close()
+					for _, match := range matches[1:] {
+						match.Close()
+					}
 				}
 			} else {
 				el = app.Element()
 			}
 		} else if id != "" {
 			el = ui.ElementByID(id)
+			if el != nil {
+				defer el.Close()
+			}
 		} else {
-			el = ui.Application().Element()
+			app := ui.Application()
+			defer app.Close()
+			el = app.Element()
 		}
 
 		if el == nil {
