@@ -90,7 +90,7 @@ func (r *toolsetRegistry) list() []map[string]string {
 
 // addXcodeBridgeToolset adds the Xcode mcpbridge as a named toolset. Call this
 // before registerToolsetTools so it appears in the list and description.
-func addXcodeBridgeToolset(prefix string, subscribeBuildErrors bool, wait bool) {
+func addXcodeBridgeToolset(prefix string, buildErrors *buildErrorPoller, wait bool) {
 	if wait {
 		xcodeReady.Add(1)
 	}
@@ -141,8 +141,8 @@ func addXcodeBridgeToolset(prefix string, subscribeBuildErrors bool, wait bool) 
 			} else {
 				slog.Info("registered xcode tools from mcpbridge", "count", n)
 			}
-			if subscribeBuildErrors {
-				registerBuildErrorResource(s, proxy)
+			if buildErrors != nil {
+				registerBuildErrorResource(s, proxy, buildErrors)
 			}
 		},
 	})

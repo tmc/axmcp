@@ -13,9 +13,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/tmc/apple/appkit"
-	"github.com/tmc/macgo"
 	"github.com/tmc/axmcp/internal/resources"
 	"github.com/tmc/axmcp/internal/ui"
+	"github.com/tmc/macgo"
 )
 
 // Define flags at package level so they can be registered before macgo.Start.
@@ -92,6 +92,11 @@ func main() {
 		*enableXcode = true
 	}
 
+	var buildErrors *buildErrorPoller
+	if *subscribeBuildErrors {
+		buildErrors = newBuildErrorPoller("xcmcp://xcode/build-errors")
+	}
+
 	// Create server options based on flags
 	serverOpts := &mcp.ServerOptions{
 		Instructions:      serverInstructions(*enableXcode || *xcodeOnly, *xcodeToolsPrefix),
@@ -109,12 +114,8 @@ func main() {
 		serverOpts.Capabilities.Resources = &mcp.ResourceCapabilities{Subscribe: true}
 	}
 	if *subscribeBuildErrors {
-		serverOpts.SubscribeHandler = func(_ context.Context, _ *mcp.SubscribeRequest) error {
-			return nil
-		}
-		serverOpts.UnsubscribeHandler = func(_ context.Context, _ *mcp.UnsubscribeRequest) error {
-			return nil
-		}
+		serverOpts.SubscribeHandler = buildErrors.subscribe
+		serverOpts.UnsubscribeHandler = buildErrors.unsubscribe
 	}
 
 	// Create server
@@ -136,7 +137,7 @@ func main() {
 
 	// The xcode bridge toolset must be declared before registerToolsetTools
 	// so it appears in list_toolsets / enable_toolset descriptions.
-	addXcodeBridgeToolset(*xcodeToolsPrefix, *subscribeBuildErrors, *waitForXcode > 0)
+	addXcodeBridgeToolset(*xcodeToolsPrefix, buildErrors, *waitForXcode > 0)
 	if *enableXcode || *xcodeOnly {
 		_ = globalToolsets.enable(server, "xcode")
 	}
