@@ -132,6 +132,11 @@ func main() {
 		return
 	}
 
+	var buildErrors *buildErrorPoller
+	if *subscribeBuildErrors {
+		buildErrors = newBuildErrorPoller("xcmcp://xcode/build-errors")
+	}
+
 	// Create server options based on flags
 	serverOpts := &mcp.ServerOptions{
 		Instructions:      serverInstructions(*enableXcode || *xcodeOnly, *xcodeToolsPrefix),
@@ -149,12 +154,8 @@ func main() {
 		serverOpts.Capabilities.Resources = &mcp.ResourceCapabilities{Subscribe: true}
 	}
 	if *subscribeBuildErrors {
-		serverOpts.SubscribeHandler = func(_ context.Context, _ *mcp.SubscribeRequest) error {
-			return nil
-		}
-		serverOpts.UnsubscribeHandler = func(_ context.Context, _ *mcp.UnsubscribeRequest) error {
-			return nil
-		}
+		serverOpts.SubscribeHandler = buildErrors.subscribe
+		serverOpts.UnsubscribeHandler = buildErrors.unsubscribe
 	}
 
 	// Create server
@@ -171,7 +172,7 @@ func main() {
 
 	// The xcode bridge toolset must be declared before registerToolsetTools
 	// so it appears in list_toolsets / enable_toolset descriptions.
-	if err := addXcodeBridgeToolset(*xcodeToolsPrefix, *subscribeBuildErrors, *waitForXcode > 0); err != nil {
+	if err := addXcodeBridgeToolset(*xcodeToolsPrefix, buildErrors, *waitForXcode > 0); err != nil {
 		log.Fatalf("register xcode toolset: %v", err)
 	}
 	if *enableXcode || *xcodeOnly {

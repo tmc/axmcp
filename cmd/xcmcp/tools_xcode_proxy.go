@@ -35,6 +35,141 @@ type xcodeProxy struct {
 	prefix      string             // tool name prefix for proxied tools
 }
 
+type buildErrorPoller struct {
+	uri      string
+	interval time.Duration
+	fetch    func(context.Context, *xcodeProxy) (string, error)
+
+	mu      sync.Mutex
+	server  *mcp.Server
+	proxy   *xcodeProxy
+	subs    map[*mcp.ServerSession]int
+	watched map[*mcp.ServerSession]bool
+	cancel  context.CancelFunc
+}
+
+func newBuildErrorPoller(uri string) *buildErrorPoller {
+	return &buildErrorPoller{
+		uri:      uri,
+		interval: 5 * time.Second,
+		fetch:    fetchBuildErrors,
+		subs:     map[*mcp.ServerSession]int{},
+		watched:  map[*mcp.ServerSession]bool{},
+	}
+}
+
+func (p *buildErrorPoller) bind(s *mcp.Server, proxy *xcodeProxy) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.server = s
+	p.proxy = proxy
+	p.startLocked()
+}
+
+func (p *buildErrorPoller) subscribe(_ context.Context, req *mcp.SubscribeRequest) error {
+	if req.Params == nil {
+		return fmt.Errorf("missing subscribe params")
+	}
+	if req.Params.URI != p.uri {
+		return fmt.Errorf("unsupported resource subscription %q", req.Params.URI)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.subs[req.Session]++
+	p.watchSessionLocked(req.Session)
+	p.startLocked()
+	return nil
+}
+
+func (p *buildErrorPoller) unsubscribe(_ context.Context, req *mcp.UnsubscribeRequest) error {
+	if req.Params == nil {
+		return fmt.Errorf("missing unsubscribe params")
+	}
+	if req.Params.URI != p.uri {
+		return fmt.Errorf("unsupported resource subscription %q", req.Params.URI)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if n := p.subs[req.Session]; n <= 1 {
+		delete(p.subs, req.Session)
+	} else {
+		p.subs[req.Session] = n - 1
+	}
+	p.stopIfIdleLocked()
+	return nil
+}
+
+func (p *buildErrorPoller) watchSessionLocked(session *mcp.ServerSession) {
+	if session == nil || p.watched[session] {
+		return
+	}
+	p.watched[session] = true
+	go func() {
+		_ = session.Wait()
+		p.sessionClosed(session)
+	}()
+}
+
+func (p *buildErrorPoller) sessionClosed(session *mcp.ServerSession) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.subs, session)
+	delete(p.watched, session)
+	p.stopIfIdleLocked()
+}
+
+func (p *buildErrorPoller) isRunning() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.cancel != nil
+}
+
+func (p *buildErrorPoller) startLocked() {
+	if len(p.subs) == 0 || p.server == nil || p.proxy == nil || p.cancel != nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	p.cancel = cancel
+	go p.run(ctx, p.server, p.proxy)
+}
+
+func (p *buildErrorPoller) stopIfIdleLocked() {
+	if len(p.subs) != 0 || p.cancel == nil {
+		return
+	}
+	p.cancel()
+	p.cancel = nil
+}
+
+func (p *buildErrorPoller) run(ctx context.Context, s *mcp.Server, proxy *xcodeProxy) {
+	ticker := time.NewTicker(p.interval)
+	defer ticker.Stop()
+
+	var lastHash [sha256.Size]byte
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			fetchCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			text, err := p.fetch(fetchCtx, proxy)
+			cancel()
+			if err != nil {
+				continue
+			}
+			hash := sha256.Sum256([]byte(text))
+			if hash == lastHash {
+				continue
+			}
+			lastHash = hash
+			if err := s.ResourceUpdated(context.Background(), &mcp.ResourceUpdatedNotificationParams{URI: p.uri}); err != nil {
+				log.Printf("build error notify: %v", err)
+			}
+		}
+	}
+}
+
 // newXcodeProxy starts xcrun mcpbridge as a child process, connects an MCP
 // client, and returns the proxy. Returns an error if the process cannot be
 // started or the MCP handshake fails.
@@ -375,11 +510,9 @@ func clickXcodeAllowButton() bool {
 // registerBuildErrorResource registers a subscribable resource that exposes
 // Xcode build errors. It polls GetBuildLog every few seconds and notifies
 // subscribers when the error list changes.
-func registerBuildErrorResource(s *mcp.Server, proxy *xcodeProxy) {
-	const uri = "xcmcp://xcode/build-errors"
-
+func registerBuildErrorResource(s *mcp.Server, proxy *xcodeProxy, poller *buildErrorPoller) {
 	s.AddResource(&mcp.Resource{
-		URI:         uri,
+		URI:         poller.uri,
 		Name:        "xcode_build_errors",
 		Description: "Current Xcode build errors (polls GetBuildLog from mcpbridge)",
 		MIMEType:    "application/json",
@@ -390,15 +523,14 @@ func registerBuildErrorResource(s *mcp.Server, proxy *xcodeProxy) {
 		}
 		return &mcp.ReadResourceResult{
 			Contents: []*mcp.ResourceContents{{
-				URI:      uri,
+				URI:      poller.uri,
 				MIMEType: "application/json",
 				Text:     text,
 			}},
 		}, nil
 	})
 
-	// Start background poller that notifies subscribers on change.
-	go pollBuildErrors(s, proxy, uri)
+	poller.bind(s, proxy)
 	log.Println("Build error subscription resource registered")
 }
 
@@ -418,28 +550,4 @@ func fetchBuildErrors(ctx context.Context, proxy *xcodeProxy) (string, error) {
 		}
 	}
 	return "{}", nil
-}
-
-// pollBuildErrors periodically checks for build error changes and notifies subscribers.
-func pollBuildErrors(s *mcp.Server, proxy *xcodeProxy, uri string) {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	var lastHash [sha256.Size]byte
-
-	for range ticker.C {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		text, err := fetchBuildErrors(ctx, proxy)
-		cancel()
-		if err != nil {
-			continue
-		}
-		hash := sha256.Sum256([]byte(text))
-		if hash != lastHash {
-			lastHash = hash
-			if err := s.ResourceUpdated(context.Background(), &mcp.ResourceUpdatedNotificationParams{URI: uri}); err != nil {
-				log.Printf("build error notify: %v", err)
-			}
-		}
-	}
 }
