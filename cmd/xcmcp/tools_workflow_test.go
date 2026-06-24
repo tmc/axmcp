@@ -135,11 +135,102 @@ func TestRenderAllPreviewsBridgeFallback(t *testing.T) {
 	}
 }
 
+func TestRenderAllPreviewsDoesNotCreateTempDirWithoutSnapshots(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", t.TempDir())
+	source := filepath.Join(dir, "PlainView.swift")
+	if err := os.WriteFile(source, []byte(`import SwiftUI
+
+struct PlainView: View {
+	var body: some View { Text("plain") }
+}
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	bridge := &fakeBridge{
+		windows: &mcp.CallToolResult{
+			StructuredContent: map[string]any{
+				"windows": []any{
+					map[string]any{"tabIdentifier": "workspace-tab-1"},
+				},
+			},
+		},
+	}
+	setXcodeBridge(bridge)
+	t.Cleanup(func() { setXcodeBridge(nil) })
+
+	out, err := renderAllPreviews(context.Background(), RenderAllPreviewsInput{
+		Root: dir,
+		Glob: "**/*.swift",
+	})
+	if err != nil {
+		t.Fatalf("renderAllPreviews: %v", err)
+	}
+	if len(out.Results) != 0 {
+		t.Fatalf("len(Results) = %d, want 0", len(out.Results))
+	}
+	assertNoPreviewTempDirs(t)
+}
+
+func TestRenderAllPreviewsRemovesTempDirWhenNoSnapshotWrites(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", t.TempDir())
+	source := filepath.Join(dir, "BrokenView.swift")
+	if err := os.WriteFile(source, []byte(`import SwiftUI
+
+#Preview { Text("broken") }
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	bridge := &fakeBridge{
+		windows: &mcp.CallToolResult{
+			StructuredContent: map[string]any{
+				"windows": []any{
+					map[string]any{"tabIdentifier": "workspace-tab-1"},
+				},
+			},
+		},
+		renders: map[string]*mcp.CallToolResult{
+			"BrokenView.swift#0": {Content: []mcp.Content{&mcp.TextContent{Text: "render failed"}}},
+		},
+	}
+	setXcodeBridge(bridge)
+	t.Cleanup(func() { setXcodeBridge(nil) })
+
+	out, err := renderAllPreviews(context.Background(), RenderAllPreviewsInput{
+		Root: dir,
+		Glob: "**/*.swift",
+	})
+	if err != nil {
+		t.Fatalf("renderAllPreviews: %v", err)
+	}
+	if len(out.Results) != 1 {
+		t.Fatalf("len(Results) = %d, want 1", len(out.Results))
+	}
+	if out.Results[0].Success {
+		t.Fatalf("preview unexpectedly succeeded: %+v", out.Results[0])
+	}
+	assertNoPreviewTempDirs(t)
+}
+
 func TestGlobMatch(t *testing.T) {
 	if !globMatch("**/*.swift", "Sources/MeshView.swift") {
 		t.Fatal("globMatch failed for recursive swift glob")
 	}
 	if globMatch("**/*.swift", "Sources/MeshView.m") {
 		t.Fatal("globMatch matched non-swift file")
+	}
+}
+
+func assertNoPreviewTempDirs(t *testing.T) {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(os.TempDir(), "xcmcp-previews-*"))
+	if err != nil {
+		t.Fatalf("Glob: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("preview temp dirs left behind: %v", matches)
 	}
 }
