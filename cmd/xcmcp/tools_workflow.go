@@ -277,10 +277,13 @@ func renderAllPreviews(ctx context.Context, args RenderAllPreviewsInput) (Render
 		return RenderAllPreviewsOutput{}, err
 	}
 
-	tempDir, err := os.MkdirTemp("", "xcmcp-previews-*")
-	if err != nil {
-		return RenderAllPreviewsOutput{}, err
-	}
+	var tempDir string
+	wroteSnapshot := false
+	defer func() {
+		if !wroteSnapshot && tempDir != "" {
+			_ = os.RemoveAll(tempDir)
+		}
+	}()
 
 	timeout := args.Timeout
 	if timeout <= 0 {
@@ -321,6 +324,14 @@ func renderAllPreviews(ctx context.Context, args RenderAllPreviewsInput) (Render
 				results = append(results, result)
 				continue
 			}
+			if tempDir == "" {
+				tempDir, err = os.MkdirTemp("", "xcmcp-previews-*")
+				if err != nil {
+					result.Error = err.Error()
+					results = append(results, result)
+					continue
+				}
+			}
 			name := fmt.Sprintf("%s-%d%s", sanitizeFilename(sourcePath), i, previewFileExtension(mime))
 			snapshotPath := filepath.Join(tempDir, name)
 			if err := os.WriteFile(snapshotPath, image, 0o644); err != nil {
@@ -328,6 +339,7 @@ func renderAllPreviews(ctx context.Context, args RenderAllPreviewsInput) (Render
 				results = append(results, result)
 				continue
 			}
+			wroteSnapshot = true
 			result.Success = true
 			result.MIMEType = mime
 			result.SnapshotPath = snapshotPath
