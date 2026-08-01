@@ -30,7 +30,7 @@ func (c *ocrCapture) Close() {
 	}
 }
 
-func captureOCRScope(appName, window, contains, role string) (*ocrCapture, error) {
+func captureOCRScope(appName, window, contains, role string, opts ocrOptions) (*ocrCapture, error) {
 	app, err := spinAndOpen(appName)
 	if err != nil {
 		return nil, err
@@ -61,7 +61,7 @@ func captureOCRScope(appName, window, contains, role string) (*ocrCapture, error
 			capture.Close()
 			return nil, fmt.Errorf("ocr target disappeared: %s", formatMatch(result.matches[0]))
 		}
-		results, png, err := ocrElementCapture(target)
+		results, png, err := ocrElementCapture(target, opts)
 		if err != nil {
 			capture.Close()
 			return nil, err
@@ -81,7 +81,7 @@ func captureOCRScope(appName, window, contains, role string) (*ocrCapture, error
 	if err != nil {
 		// AX window resolution failed. Fall back to CGWindowList-based OCR,
 		// which works even when apps have unresponsive accessibility.
-		results, png, w, h, ocrErr := ocrWindowCapture(appName, window)
+		results, png, w, h, ocrErr := ocrWindowCapture(appName, window, opts)
 		if ocrErr != nil {
 			capture.Close()
 			return nil, fmt.Errorf("%v (AX fallback: %v)", ocrErr, err)
@@ -94,13 +94,13 @@ func captureOCRScope(appName, window, contains, role string) (*ocrCapture, error
 		capture.result = results
 		return capture, nil
 	}
-	results, png, w, h, err := ocrElementWithSize(win)
+	results, png, w, h, err := ocrElementWithSize(win, opts)
 	if err != nil {
 		title := win.Title()
 		if title == "" {
 			title = window
 		}
-		results, png, w, h, err = ocrWindowCapture(appName, title)
+		results, png, w, h, err = ocrWindowCapture(appName, title, opts)
 		if err != nil {
 			capture.Close()
 			return nil, err
@@ -116,7 +116,7 @@ func captureOCRScope(appName, window, contains, role string) (*ocrCapture, error
 	return capture, nil
 }
 
-func ocrElementWithSize(el *axuiautomation.Element) ([]ocrResult, []byte, int, int, error) {
+func ocrElementWithSize(el *axuiautomation.Element, opts ocrOptions) ([]ocrResult, []byte, int, int, error) {
 	if el == nil {
 		return nil, nil, 0, 0, fmt.Errorf("target disappeared")
 	}
@@ -124,7 +124,7 @@ func ocrElementWithSize(el *axuiautomation.Element) ([]ocrResult, []byte, int, i
 	if w <= 0 || h <= 0 {
 		return nil, nil, 0, 0, fmt.Errorf("element has zero-size frame")
 	}
-	results, png, err := ocrElementCapture(el)
+	results, png, err := ocrElementCapture(el, opts)
 	if err != nil {
 		return nil, nil, 0, 0, err
 	}
@@ -344,7 +344,7 @@ func selectOCRMatch(results []ocrResult, query string, matchIndex *int) (selecte
 		match:    matches[0],
 		index:    1,
 		total:    len(matches),
-		resolved: fmt.Sprintf("selected OCR match 1 of %d", len(matches)),
+		resolved: fmt.Sprintf("selected OCR match 1 of %d: %q is part of the block %q", len(matches), query, matches[0].Text),
 	}, nil
 }
 
@@ -382,7 +382,7 @@ func ocrNoMatchHint(appName, window, query string) string {
 		return buf.String()
 	}
 
-	results, _, _, err := ocrWindow(appName, window)
+	results, _, _, err := ocrWindow(appName, window, defaultOCROptions())
 	if err != nil {
 		fmt.Fprintf(&buf, " Try %s or %s.", ocrToolCall(appName, window, query), ocrClickToolCall(appName, window, query))
 		return buf.String()
@@ -423,7 +423,7 @@ type axOCRHoverInput struct {
 func registerAXOCRClick(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "ax_ocr_click",
-		Description: `Find visible text with OCR inside a window or scoped AX element, then click its center.
+		Description: `Find visible text with OCR inside a window or scoped AX element, then click it.
 
 Use window to target a specific window title substring. Use contains/role to OCR a specific AX element such as a sidebar outline, then click text inside that element using local coordinates. Optional match selects the 1-based OCR hit number after filtering; otherwise exact visible text is preferred.`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axOCRClickInput) (*mcp.CallToolResult, any, error) {
@@ -431,7 +431,7 @@ Use window to target a specific window title substring. Use contains/role to OCR
 			return nil, nil, fmt.Errorf("find is required")
 		}
 
-		capture, err := captureOCRScope(args.App, args.Window, args.Contains, args.Role)
+		capture, err := captureOCRScope(args.App, args.Window, args.Contains, args.Role, defaultOCROptions())
 		if err != nil {
 			return nil, nil, err
 		}
@@ -464,7 +464,7 @@ Use window to target a specific window title substring. Use contains/role to OCR
 func registerAXOCRHover(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "ax_ocr_hover",
-		Description: `Find visible text with OCR inside a window or scoped AX element, then move the pointer to its center.
+		Description: `Find visible text with OCR inside a window or scoped AX element, then move the pointer to it.
 
 Use window to target a specific window title substring. Use contains/role to OCR a specific AX element such as a sidebar outline, then hover text inside that element using local coordinates. Optional match selects the 1-based OCR hit number after filtering; otherwise exact visible text is preferred.`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axOCRHoverInput) (*mcp.CallToolResult, any, error) {
@@ -472,7 +472,7 @@ Use window to target a specific window title substring. Use contains/role to OCR
 			return nil, nil, fmt.Errorf("find is required")
 		}
 
-		capture, err := captureOCRScope(args.App, args.Window, args.Contains, args.Role)
+		capture, err := captureOCRScope(args.App, args.Window, args.Contains, args.Role, defaultOCROptions())
 		if err != nil {
 			return nil, nil, err
 		}

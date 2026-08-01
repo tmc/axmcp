@@ -417,7 +417,7 @@ func buildAXTreePayload(appName string, root *axuiautomation.Element, scope stri
 		if err != nil {
 			return axTreePayload{}, err
 		}
-		results, err := recognizeText(png, w, h)
+		results, err := recognizeText(png, w, h, defaultOCROptions())
 		if err != nil {
 			return axTreePayload{}, err
 		}
@@ -718,7 +718,7 @@ func registerAXClick(s *mcp.Server) {
 		})
 		if len(result.matches) == 0 {
 			if ui.IsScreenRecordingTrusted() && args.Contains != "" && args.XOffset == nil && args.YOffset == nil {
-				capture, err := captureOCRScope(args.App, args.Window, "", "")
+				capture, err := captureOCRScope(args.App, args.Window, "", "", defaultOCROptions())
 				if err == nil {
 					defer capture.Close()
 					selection, err := selectOCRMatch(capture.result, args.Contains, nil)
@@ -1076,7 +1076,7 @@ Set padding to expand the capture rect around a targeted element by N pixels on 
 			if err != nil {
 				return nil, nil, err
 			}
-			results, err := recognizeText(png, w, h)
+			results, err := recognizeText(png, w, h, defaultOCROptions())
 			if err != nil {
 				return nil, nil, err
 			}
@@ -1228,16 +1228,35 @@ func registerAXFocus(s *mcp.Server) {
 }
 
 type axOCRInput struct {
-	App       string `json:"app"`
-	Window    string `json:"window,omitempty"`
-	Contains  string `json:"contains,omitempty"`
-	Role      string `json:"role,omitempty"`
-	Find      string `json:"find,omitempty"`
-	JSON      bool   `json:"json,omitempty"`
-	Layout    bool   `json:"layout,omitempty"`
-	Annotated bool   `json:"annotated,omitempty"`
-	Cols      int    `json:"cols,omitempty"`
-	Rows      int    `json:"rows,omitempty"`
+	App                string  `json:"app"`
+	Window             string  `json:"window,omitempty"`
+	Contains           string  `json:"contains,omitempty"`
+	Role               string  `json:"role,omitempty"`
+	Find               string  `json:"find,omitempty"`
+	JSON               bool    `json:"json,omitempty"`
+	Layout             bool    `json:"layout,omitempty"`
+	Annotated          bool    `json:"annotated,omitempty"`
+	Cols               int     `json:"cols,omitempty"`
+	Rows               int     `json:"rows,omitempty"`
+	Candidates         int     `json:"candidates,omitempty"`
+	MinConfidence      float32 `json:"min_confidence,omitempty"`
+	LanguageCorrection *bool   `json:"language_correction,omitempty"`
+	Fast               bool    `json:"fast,omitempty"`
+}
+
+// ocrOptionsFromArgs applies the recognition knobs an ax_ocr caller set on top
+// of the defaults.
+func ocrOptionsFromArgs(args axOCRInput) ocrOptions {
+	opts := defaultOCROptions()
+	if args.Candidates > 0 {
+		opts.Candidates = args.Candidates
+	}
+	opts.MinConfidence = args.MinConfidence
+	if args.LanguageCorrection != nil {
+		opts.LanguageCorrection = *args.LanguageCorrection
+	}
+	opts.Fast = args.Fast
+	return opts
 }
 
 func registerAXOCR(s *mcp.Server) {
@@ -1249,9 +1268,13 @@ func registerAXOCR(s *mcp.Server) {
 			"Set annotated=true to return a PNG with OCR boxes and index labels burned in. " +
 			"Use 'find' to search for specific text. " +
 			"Use 'layout' for a spatial ASCII rendering that preserves text positions. " +
-			"Useful for VMs, custom-drawn UIs, and elements without accessibility text.",
+			"Useful for VMs, custom-drawn UIs, and elements without accessibility text.\n\n" +
+			"Recognition knobs, rarely needed: candidates keeps N alternate readings per region (default 1; higher values return spelling variants of the same pixels, sharing one bounding box), " +
+			"min_confidence drops low-confidence results, language_correction=false stops spell-correction toward dictionary words and suits identifiers and hex addresses, " +
+			"and fast trades accuracy for speed but loses small text entirely. " +
+			"When labels several pixels apart come back fused into one block, that is capture resolution, not a knob: scope the capture with contains/role instead.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axOCRInput) (*mcp.CallToolResult, any, error) {
-		capture, err := captureOCRScope(args.App, args.Window, args.Contains, args.Role)
+		capture, err := captureOCRScope(args.App, args.Window, args.Contains, args.Role, ocrOptionsFromArgs(args))
 		if err != nil {
 			return nil, nil, err
 		}

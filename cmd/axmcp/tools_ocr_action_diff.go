@@ -46,7 +46,7 @@ Use window to target a specific window title substring. Use contains/role to sco
 			return nil, nil, fmt.Errorf("unknown action %q; use click, hover, ocr_click, or ocr_hover", args.Action)
 		}
 
-		beforeCapture, err := captureOCRScope(args.App, args.Window, args.Contains, args.Role)
+		beforeCapture, err := captureOCRScope(args.App, args.Window, args.Contains, args.Role, defaultOCROptions())
 		if err != nil {
 			return nil, nil, err
 		}
@@ -59,7 +59,7 @@ Use window to target a specific window title substring. Use contains/role to sco
 
 		time.Sleep(actionSettleDuration(args.SettleMS))
 
-		afterCapture, err := captureOCRScope(args.App, args.Window, args.Contains, args.Role)
+		afterCapture, err := captureOCRScope(args.App, args.Window, args.Contains, args.Role, defaultOCROptions())
 		if err != nil {
 			return nil, nil, err
 		}

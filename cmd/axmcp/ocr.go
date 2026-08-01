@@ -81,15 +81,54 @@ func expandOCRResultsAtOrigin(results []ocrResult, screenX, screenY int) []ocrOu
 	return out
 }
 
+// ocrOptions tunes Vision text recognition. The zero value is not usable;
+// call defaultOCROptions.
+type ocrOptions struct {
+	// Candidates is how many alternate readings to keep per recognized
+	// region. Vision ranks them, and beyond the first they are spelling
+	// variants of the same pixels ("Counters", "Conters"), sharing one
+	// bounding box. More than one is useful for reading, harmful for acting.
+	Candidates int
+
+	// MinConfidence drops results Vision reports below this confidence.
+	MinConfidence float32
+
+	// LanguageCorrection spell-corrects toward dictionary words. It helps
+	// prose and hurts identifiers, hex addresses, and symbol names.
+	LanguageCorrection bool
+
+	// Fast trades accuracy for speed. It loses small text, identifiers, and
+	// hex addresses outright; prefer scoping the capture instead.
+	Fast bool
+}
+
+// defaultOCROptions returns the options used when a caller does not tune
+// recognition: the single best reading of each region, spell-corrected.
+func defaultOCROptions() ocrOptions {
+	return ocrOptions{Candidates: 1, LanguageCorrection: true}
+}
+
 // recognizeText runs Apple Vision OCR on PNG image data and returns results
 // with bounding boxes converted to pixel coordinates.
-func recognizeText(pngData []byte, imgWidth, imgHeight int) ([]ocrResult, error) {
+//
+// Recognition quality tracks capture resolution closely: adjacent labels such
+// as a segmented tab bar fuse into one region when the image is downscaled,
+// and — counterintuitively — also when it is upscaled, so callers should pass
+// the image at its captured size and scope the capture rather than resize it.
+func recognizeText(pngData []byte, imgWidth, imgHeight int, opts ocrOptions) ([]ocrResult, error) {
+	if opts.Candidates < 1 {
+		opts.Candidates = 1
+	}
 	nsData := foundation.NewDataWithBytesLength(pngData)
 	handler := vision.NewImageRequestHandlerWithDataOptions(nsData, nil)
 
 	request := vision.NewVNRecognizeTextRequest()
-	request.SetRecognitionLevel(vision.VNRequestTextRecognitionLevelAccurate)
-	request.SetUsesLanguageCorrection(true)
+	level := vision.VNRequestTextRecognitionLevelAccurate
+	if opts.Fast {
+		level = vision.VNRequestTextRecognitionLevelFast
+	}
+	request.SetRecognitionLevel(level)
+	request.SetUsesLanguageCorrection(opts.LanguageCorrection)
 
 	ok, err := handler.PerformRequestsError([]vision.VNRequest{request.VNImageBasedRequest.VNRequest})
 	if err != nil {
@@ -105,8 +144,11 @@ func recognizeText(pngData []byte, imgWidth, imgHeight int) ([]ocrResult, error)
 	for _, obs := range observations {
 		textObs := vision.VNRecognizedTextObservationFromID(obs.ID)
 		bb := textObs.BoundingBox()
-		candidates := textObs.TopCandidates(3)
+		candidates := textObs.TopCandidates(uint(opts.Candidates))
 		for _, c := range candidates {
+			if float32(c.Confidence()) < opts.MinConfidence {
+				continue
+			}
 			// Vision bounding boxes are normalized (0-1), origin at bottom-left.
 			// Convert to pixel coordinates with origin at top-left.
 			px := int(math.Round(bb.Origin.X * float64(imgWidth)))
@@ -132,7 +174,7 @@ func recognizeText(pngData []byte, imgWidth, imgHeight int) ([]ocrResult, error)
 }
 
 // ocrElementCapture captures a screenshot of the element and runs OCR on it.
-func ocrElementCapture(el *axuiautomation.Element) ([]ocrResult, []byte, error) {
+func ocrElementCapture(el *axuiautomation.Element, opts ocrOptions) ([]ocrResult, []byte, error) {
 	frame := el.Frame()
 	w := int(frame.Size.Width)
 	h := int(frame.Size.Height)
@@ -149,7 +191,7 @@ func ocrElementCapture(el *axuiautomation.Element) ([]ocrResult, []byte, error) 
 		Size:   corefoundation.CGSize{Width: frame.Size.Width, Height: frame.Size.Height},
 	})
 	noteCLIVisualFeedback()
-	results, err := recognizeText(png, w, h)
+	results, err := recognizeText(png, w, h, opts)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -157,14 +199,14 @@ func ocrElementCapture(el *axuiautomation.Element) ([]ocrResult, []byte, error) 
 }
 
 // ocrElement captures a screenshot of the element and runs OCR on it.
-func ocrElement(el *axuiautomation.Element) ([]ocrResult, error) {
-	results, _, err := ocrElementCapture(el)
+func ocrElement(el *axuiautomation.Element, opts ocrOptions) ([]ocrResult, error) {
+	results, _, err := ocrElementCapture(el, opts)
 	return results, err
 }
 
 // ocrWindowCapture captures a window screenshot and runs OCR using coordinates
 // in the window's local coordinate space rather than raw screenshot pixels.
-func ocrWindowCapture(appName, windowTitle string) ([]ocrResult, []byte, int, int, error) {
+func ocrWindowCapture(appName, windowTitle string, opts ocrOptions) ([]ocrResult, []byte, int, int, error) {
 	if !ui.IsScreenRecordingTrusted() {
 		if !ui.WaitForScreenRecording(30 * time.Second) {
 			return nil, nil, 0, 0, fmt.Errorf("screen recording permission required for window OCR")
@@ -194,14 +236,14 @@ func ocrWindowCapture(appName, windowTitle string) ([]ocrResult, []byte, int, in
 			return nil, nil, 0, 0, fmt.Errorf("read image dimensions: %w", err)
 		}
 	}
-	results, err := recognizeText(png, coordW, coordH)
+	results, err := recognizeText(png, coordW, coordH, opts)
 	return results, png, coordW, coordH, err
 }
 
 // ocrWindow captures a window screenshot and runs OCR using coordinates in the
 // window's local coordinate space rather than raw screenshot pixels.
-func ocrWindow(appName, windowTitle string) ([]ocrResult, int, int, error) {
-	results, _, coordW, coordH, err := ocrWindowCapture(appName, windowTitle)
+func ocrWindow(appName, windowTitle string, opts ocrOptions) ([]ocrResult, int, int, error) {
+	results, _, coordW, coordH, err := ocrWindowCapture(appName, windowTitle, opts)
 	return results, coordW, coordH, err
 }
 

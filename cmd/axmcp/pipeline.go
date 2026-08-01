@@ -299,7 +299,7 @@ func capturePipelineOCRScope(pc *pipeContext) (*ocrCapture, error) {
 	}
 	capture := &ocrCapture{}
 	if pc.element != nil {
-		if results, png, w, h, err := ocrElementWithSize(pc.element); err == nil {
+		if results, png, w, h, err := ocrElementWithSize(pc.element, defaultOCROptions()); err == nil {
 			capture.target = pc.element
 			capture.desc = formatSnapshot(snapshotElement(pc.element, 0, 0))
 			capture.imgW = w
@@ -323,7 +323,7 @@ func capturePipelineOCRScope(pc *pipeContext) (*ocrCapture, error) {
 	if target == nil {
 		return nil, fmt.Errorf("ocr: no window in context")
 	}
-	if results, png, w, h, err := ocrElementWithSize(target); err == nil {
+	if results, png, w, h, err := ocrElementWithSize(target, defaultOCROptions()); err == nil {
 		capture.target = target
 		capture.desc = formatSnapshot(snapshotElement(target, 0, 0))
 		capture.imgW = w
@@ -348,7 +348,7 @@ func capturePipelineOCRScope(pc *pipeContext) (*ocrCapture, error) {
 		}
 	}
 	for _, appID := range appIDs {
-		if results, w, h, err := ocrWindow(appID, title); err == nil {
+		if results, w, h, err := ocrWindow(appID, title, defaultOCROptions()); err == nil {
 			capture.target = target
 			capture.desc = formatSnapshot(snapshotElement(target, 0, 0))
 			capture.imgW = w
@@ -918,9 +918,10 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 		if err != nil {
 			return err
 		}
-		matches := findOCRText(capture.result, strings.Join(args, " "))
+		query := strings.Join(args, " ")
+		matches := findOCRText(capture.result, query)
 		if len(matches) == 0 {
-			return fmt.Errorf("ocr-hover: no text matching %q found", strings.Join(args, " "))
+			return fmt.Errorf("ocr-hover: no text matching %q found", query)
 		}
 		summary, resolutionNote, err := performOCRHover(capture, matches[0])
 		if err != nil {

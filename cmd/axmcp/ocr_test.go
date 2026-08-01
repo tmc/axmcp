@@ -48,3 +48,14 @@ func TestFormatOCRResultsIncludesScreenCoordinates(t *testing.T) {
 		}
 	}
 }
+
+func TestOCROptionsFromArgs(t *testing.T) {
+	if opts := ocrOptionsFromArgs(axOCRInput{App: "Xcode"}); opts.Candidates != 1 || !opts.LanguageCorrection || opts.Fast {
+		t.Errorf("ocrOptionsFromArgs(default) = %+v, want one spell-corrected candidate at accurate level", opts)
+	}
+	off := false
+	opts := ocrOptionsFromArgs(axOCRInput{App: "Xcode", Candidates: 3, MinConfidence: 0.5, LanguageCorrection: &off, Fast: true})
+	if opts.Candidates != 3 || opts.MinConfidence != 0.5 || opts.LanguageCorrection || !opts.Fast {
+		t.Errorf("ocrOptionsFromArgs(tuned) = %+v, want the caller's knobs applied", opts)
+	}
+}
