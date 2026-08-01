@@ -483,7 +483,7 @@ func captureWindowSCK(ctx context.Context, windowID uint32) ([]byte, error) {
 	config.SetWidth(uintptr(frame.Size.Width * 2))
 	config.SetHeight(uintptr(frame.Size.Height * 2))
 
-	img, err := screencapturekit.GetSCScreenshotManagerClass().CaptureImageWithFilterConfiguration(ctx, &filter, &config)
+	img, err := screencapturekit.GetSCScreenshotManagerClass().CaptureImageWithFilterConfiguration(ctx, filter, config)
 	if err != nil {
 		return nil, fmt.Errorf("capture image: %w", err)
 	}
@@ -524,7 +524,7 @@ func captureFullScreen() ([]byte, error) {
 	config.SetWidth(uintptr(display.Width() * 2))
 	config.SetHeight(uintptr(display.Height() * 2))
 
-	img, err := screencapturekit.GetSCScreenshotManagerClass().CaptureImageWithFilterConfiguration(ctx, &filter, &config)
+	img, err := screencapturekit.GetSCScreenshotManagerClass().CaptureImageWithFilterConfiguration(ctx, filter, config)
 	if err != nil {
 		return nil, fmt.Errorf("capture display: %w", err)
 	}
