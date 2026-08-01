@@ -1271,7 +1271,8 @@ func registerAXOCR(s *mcp.Server) {
 			"Set window to target a specific window title substring. Use contains/role to OCR a specific AX element such as a sidebar outline. " +
 			"Set annotated=true to return a PNG with OCR boxes and index labels burned in. " +
 			"Use 'find' to search for specific text. " +
-			"Use 'layout' for a spatial ASCII rendering that preserves text positions. " +
+			"Use 'layout' for a spatial ASCII rendering that preserves text positions: text is grouped into visual lines and written at the column it occupies on screen, so table and panel columns stay aligned. " +
+			"By default the grid is as wide as the recognized text needs and as long as it takes; set cols to narrow it (crowded text then spills onto continuation rows) and rows to cap the output. " +
 			"Useful for VMs, custom-drawn UIs, and elements without accessibility text.\n\n" +
 			"Recognition knobs, rarely needed: candidates keeps N alternate readings per region (default 1; higher values return spelling variants of the same pixels, sharing one bounding box), " +
 			"min_confidence drops low-confidence results, language_correction=false stops spell-correction toward dictionary words and suits identifiers and hex addresses, " +
@@ -1292,14 +1293,7 @@ func registerAXOCR(s *mcp.Server) {
 			}
 		}
 		if args.Layout {
-			cols, rows := 120, 40
-			if args.Cols > 0 {
-				cols = args.Cols
-			}
-			if args.Rows > 0 {
-				rows = args.Rows
-			}
-			content := []mcp.Content{&mcp.TextContent{Text: renderOCRLayout(results, capture.imgW, capture.imgH, cols, rows)}}
+			content := []mcp.Content{&mcp.TextContent{Text: renderOCRLayout(results, capture.imgW, capture.imgH, args.Cols, args.Rows)}}
 			if args.Annotated && len(capture.png) > 0 {
 				render, err := drawAnnotatedOCR(capture.png, capture.imgW, capture.imgH, results, capture.scope, args.Find)
 				if err != nil {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -96,5 +97,93 @@ func TestOCRMatchPointTargetsSubstringSpan(t *testing.T) {
 	}
 	if note != "" {
 		t.Errorf("ocrMatchPoint(...) note = %q, want empty for a whole-block match", note)
+	}
+}
+
+func TestOCRActionPointUsesOffsets(t *testing.T) {
+	block := ocrResult{Text: "ShadersHeat Map", X: 1067, Y: 94, W: 134, H: 18}
+	xOffset, yOffset := 28, 9
+	x, y, note := ocrActionPoint(block, "Shaders", &xOffset, &yOffset)
+	if x != 1095 || y != 103 {
+		t.Errorf("ocrActionPoint(...) = (%d,%d), want (1095,103) relative to the bounds origin", x, y)
+	}
+	if note == "" {
+		t.Error("ocrActionPoint(...) note is empty, want the offset reported")
+	}
+
+	if _, err := offsetsComplete(&xOffset, nil); err == nil {
+		t.Error("offsetsComplete(x, nil) = nil error, want an error for a lone offset")
+	}
+	if ok, err := offsetsComplete(nil, nil); ok || err != nil {
+		t.Errorf("offsetsComplete(nil, nil) = (%v, %v), want (false, nil)", ok, err)
+	}
+}
+
+func TestOCROptionsFromArgs(t *testing.T) {
+	if opts := ocrOptionsFromArgs(axOCRInput{App: "Xcode"}); opts.Candidates != 1 || !opts.LanguageCorrection || opts.Fast {
+		t.Errorf("ocrOptionsFromArgs(default) = %+v, want one spell-corrected candidate at accurate level", opts)
+	}
+	off := false
+	opts := ocrOptionsFromArgs(axOCRInput{App: "Xcode", Candidates: 3, MinConfidence: 0.5, LanguageCorrection: &off, Fast: true})
+	if opts.Candidates != 3 || opts.MinConfidence != 0.5 || opts.LanguageCorrection || !opts.Fast {
+		t.Errorf("ocrOptionsFromArgs(tuned) = %+v, want the caller's knobs applied", opts)
+	}
+}
+
+func TestRenderOCRLayoutKeepsColumnsAndContent(t *testing.T) {
+	// Two rows of a two-column table, plus a label far below.
+	results := []ocrResult{
+		{Text: "Name", X: 100, Y: 100, W: 40, H: 16},
+		{Text: "Cost", X: 600, Y: 101, W: 40, H: 16},
+		{Text: "rmsbfloat16", X: 100, Y: 130, W: 110, H: 16},
+		{Text: "5.52%", X: 600, Y: 131, W: 50, H: 16},
+		{Text: "Counters", X: 100, Y: 400, W: 80, H: 16},
+	}
+	out := renderOCRLayout(results, 1000, 500, 80, 0)
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("renderOCRLayout(...) = %q, want at least three rows", out)
+	}
+	for _, r := range results {
+		if !strings.Contains(out, r.Text) {
+			t.Errorf("renderOCRLayout(...) dropped %q:\n%s", r.Text, out)
+		}
+	}
+	if got, want := strings.Index(lines[0], "Cost"), strings.Index(lines[1], "5.52%"); got != want {
+		t.Errorf("column of %q = %d, %q = %d; want the table column aligned", "Cost", got, "5.52%", want)
+	}
+	if !strings.Contains(out, "\n\n") {
+		t.Errorf("renderOCRLayout(...) = %q, want a blank line for the vertical gap", out)
+	}
+}
+
+func TestRenderOCRLayoutSpillsOverlapInsteadOfDropping(t *testing.T) {
+	// At 20 columns these two cannot share a row without overlapping.
+	results := []ocrResult{
+		{Text: "left column text", X: 0, Y: 50, W: 300, H: 16},
+		{Text: "right column text", X: 320, Y: 50, W: 300, H: 16},
+	}
+	out := renderOCRLayout(results, 1000, 200, 20, 0)
+	for _, r := range results {
+		if !strings.Contains(out, r.Text) {
+			t.Errorf("renderOCRLayout(...) dropped %q:\n%s", r.Text, out)
+		}
+	}
+	if lines := strings.Split(strings.TrimRight(out, "\n"), "\n"); len(lines) != 2 {
+		t.Errorf("renderOCRLayout(...) = %d rows, want the collision spilled onto a continuation row:\n%s", len(lines), out)
+	}
+}
+
+func TestRenderOCRLayoutCapsRows(t *testing.T) {
+	var results []ocrResult
+	for i := range 10 {
+		results = append(results, ocrResult{Text: fmt.Sprintf("row%d", i), X: 0, Y: i * 40, W: 40, H: 16})
+	}
+	out := renderOCRLayout(results, 400, 400, 40, 3)
+	if !strings.Contains(out, "more rows") {
+		t.Errorf("renderOCRLayout(...) = %q, want the truncation reported", out)
+	}
+	if strings.Contains(out, "row9") {
+		t.Errorf("renderOCRLayout(...) = %q, want rows past the cap left out", out)
 	}
 }

@@ -856,7 +856,8 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 		var findQuery string
 		jsonOut := false
 		layoutOut := false
-		layoutCols, layoutRows := 120, 40
+		// Zero lets renderOCRLayout size the grid to the text.
+		layoutCols, layoutRows := 0, 0
 		for i := 0; i < len(args); i++ {
 			switch args[i] {
 			case "--find", "-f":

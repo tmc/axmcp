@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -290,102 +291,190 @@ func formatOCRResultsJSON(results []ocrOutputResult) (string, error) {
 	return string(data), nil
 }
 
-// renderOCRLayout places OCR text on a character grid that preserves the
-// spatial layout of the original image. Each text result is positioned
-// proportionally within a cols x rows grid using its left edge for
-// horizontal placement. Overlapping text is placed on the nearest free
-// row within 3 rows of its target; text that cannot be placed is dropped
-// rather than displaced far from its source. Consecutive empty rows are
-// collapsed to a single blank line.
-func renderOCRLayout(results []ocrResult, imgW, imgH, cols, rows int) string {
+// renderOCRLayout renders OCR results as text laid out the way it appears on
+// screen. Results are grouped into visual lines by vertical position, and each
+// one is written at the column its left edge maps to, so columns of a table or
+// panel stay aligned. Where two results would overlap at that scale, the later
+// one spills onto a continuation row under the same line rather than being
+// shifted sideways or dropped: position is what the layout is for.
+//
+// cols is the width of the character grid; zero picks a width from the median
+// glyph width of the recognized text, so one column holds roughly one
+// character. maxRows caps the output, reporting how much it left out; zero
+// renders everything. Blank lines mark vertical gaps in the source.
+func renderOCRLayout(results []ocrResult, imgW, imgH, cols, maxRows int) string {
 	if imgW == 0 || imgH == 0 || len(results) == 0 {
 		return ""
 	}
-
-	grid := make([][]byte, rows)
-	for i := range grid {
-		grid[i] = make([]byte, cols)
-		for j := range grid[i] {
-			grid[i][j] = ' '
-		}
+	if cols <= 0 {
+		cols = autoLayoutCols(results, imgW)
 	}
 
-	// Sort results top-to-bottom, left-to-right for deterministic placement.
-	sorted := make([]ocrResult, len(results))
-	copy(sorted, results)
-	for i := 1; i < len(sorted); i++ {
-		for j := i; j > 0; j-- {
-			if sorted[j].Y < sorted[j-1].Y || (sorted[j].Y == sorted[j-1].Y && sorted[j].X < sorted[j-1].X) {
-				sorted[j], sorted[j-1] = sorted[j-1], sorted[j]
-			} else {
-				break
+	lines := groupOCRLines(results)
+	medianH := medianOCRHeight(results)
+
+	var rendered []string
+	prevY := 0
+	for i, line := range lines {
+		if i > 0 {
+			for range layoutGapRows(line.y-prevY, medianH) {
+				rendered = append(rendered, "")
 			}
 		}
+		prevY = line.y
+		rendered = append(rendered, renderOCRLine(line.runs, imgW, cols)...)
 	}
 
-	for _, r := range sorted {
-		// Map left edge of bounding box to grid column.
-		startCol := r.X * cols / imgW
-		row := r.Y * rows / imgH
-		if row >= rows {
-			row = rows - 1
-		}
-
-		text := r.Text
-		if startCol < 0 {
-			startCol = 0
-		}
-		if startCol+len(text) > cols {
-			text = text[:max(0, cols-startCol)]
-		}
-		if len(text) == 0 {
-			continue
-		}
-
-		// Try target row, then up to 3 rows away.
-		const maxDrift = 3
-		placed := false
-		for delta := range maxDrift + 1 {
-			for _, tryRow := range []int{row + delta, row - delta} {
-				if tryRow < 0 || tryRow >= rows {
-					continue
-				}
-				free := true
-				for k := range len(text) {
-					if grid[tryRow][startCol+k] != ' ' {
-						free = false
-						break
-					}
-				}
-				if free {
-					copy(grid[tryRow][startCol:], text)
-					placed = true
-					break
-				}
-			}
-			if placed {
-				break
-			}
-		}
-	}
-
-	// Render grid, collapsing consecutive empty rows.
 	var buf strings.Builder
-	prevEmpty := false
-	for _, line := range grid {
-		s := strings.TrimRight(string(line), " ")
-		if s == "" {
-			if !prevEmpty {
-				buf.WriteByte('\n')
-			}
-			prevEmpty = true
-			continue
+	for i, line := range rendered {
+		if maxRows > 0 && i >= maxRows {
+			fmt.Fprintf(&buf, "... %d more rows (raise rows to see them)\n", len(rendered)-maxRows)
+			break
 		}
-		prevEmpty = false
-		buf.WriteString(s)
+		buf.WriteString(line)
 		buf.WriteByte('\n')
 	}
 	return buf.String()
+}
+
+// ocrLine is one visual line of recognized text.
+type ocrLine struct {
+	y    int // vertical center, in image coordinates
+	runs []ocrResult
+}
+
+// groupOCRLines groups results into visual lines by vertical center, within a
+// tolerance derived from the median text height, and orders each line
+// left-to-right.
+func groupOCRLines(results []ocrResult) []ocrLine {
+	sorted := append([]ocrResult(nil), results...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].Y != sorted[j].Y {
+			return sorted[i].Y < sorted[j].Y
+		}
+		return sorted[i].X < sorted[j].X
+	})
+
+	tolerance := medianOCRHeight(results) * 3 / 4
+	var lines []ocrLine
+	for _, r := range sorted {
+		center := r.Y + r.H/2
+		if n := len(lines); n > 0 && center-lines[n-1].y <= tolerance {
+			lines[n-1].runs = append(lines[n-1].runs, r)
+			continue
+		}
+		lines = append(lines, ocrLine{y: center, runs: []ocrResult{r}})
+	}
+	for i := range lines {
+		sort.SliceStable(lines[i].runs, func(a, b int) bool {
+			return lines[i].runs[a].X < lines[i].runs[b].X
+		})
+	}
+	return lines
+}
+
+// renderOCRLine renders one visual line, returning the continuation rows that
+// collisions spilled onto along with the line itself.
+func renderOCRLine(runs []ocrResult, imgW, cols int) []string {
+	var rows [][]rune
+	for _, r := range runs {
+		text := []rune(r.Text)
+		start := r.X * cols / imgW
+		if start < 0 {
+			start = 0
+		}
+		placed := false
+		for i, row := range rows {
+			row = growOCRRow(row, start+len(text))
+			if freeOCRSpan(row, start, len(text)) {
+				copy(row[start:], text)
+				rows[i] = row
+				placed = true
+				break
+			}
+		}
+		if !placed {
+			row := growOCRRow(nil, max(cols, start+len(text)))
+			copy(row[start:], text)
+			rows = append(rows, row)
+		}
+	}
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, strings.TrimRight(string(row), " "))
+	}
+	return out
+}
+
+// growOCRRow returns row padded with blanks to at least n columns. A row grows
+// past the requested grid width rather than clipping text: cols sets the scale
+// text is positioned at, not a budget to truncate it to.
+func growOCRRow(row []rune, n int) []rune {
+	for len(row) < n {
+		row = append(row, ' ')
+	}
+	return row
+}
+
+// freeOCRSpan reports whether n columns starting at start are blank, keeping a
+// blank column ahead of the span so neighboring text does not run together.
+func freeOCRSpan(row []rune, start, n int) bool {
+	if start > 0 && row[start-1] != ' ' {
+		return false
+	}
+	for i := start; i < start+n; i++ {
+		if row[i] != ' ' {
+			return false
+		}
+	}
+	return true
+}
+
+// layoutGapRows converts a vertical gap between visual lines into blank rows,
+// preserving the whitespace that separates sections without letting a tall
+// empty region push the rest of the layout off screen.
+func layoutGapRows(gap, medianH int) int {
+	if medianH <= 0 {
+		return 0
+	}
+	rows := gap*2/(medianH*3) - 1
+	return min(max(rows, 0), 2)
+}
+
+// autoLayoutCols picks a grid width where one column holds about one
+// character, from the median glyph width of the recognized text.
+func autoLayoutCols(results []ocrResult, imgW int) int {
+	widths := make([]float64, 0, len(results))
+	for _, r := range results {
+		if n := len([]rune(r.Text)); n > 0 && r.W > 0 {
+			widths = append(widths, float64(r.W)/float64(n))
+		}
+	}
+	if len(widths) == 0 {
+		return 120
+	}
+	sort.Float64s(widths)
+	glyph := widths[len(widths)/2]
+	if glyph <= 0 {
+		return 120
+	}
+	return min(max(int(float64(imgW)/glyph), 80), 240)
+}
+
+// medianOCRHeight returns the median height of the recognized text, the scale
+// that line grouping and vertical gaps are measured in.
+func medianOCRHeight(results []ocrResult) int {
+	heights := make([]int, 0, len(results))
+	for _, r := range results {
+		if r.H > 0 {
+			heights = append(heights, r.H)
+		}
+	}
+	if len(heights) == 0 {
+		return 16
+	}
+	sort.Ints(heights)
+	return heights[len(heights)/2]
 }
 
 // findOCRText searches OCR results for text containing the query string.
