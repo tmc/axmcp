@@ -204,47 +204,59 @@ func ocrElement(el *axuiautomation.Element, opts ocrOptions) ([]ocrResult, error
 	return results, err
 }
 
+// ocrWindowResult holds a window OCR capture together with the window it came
+// from, so callers can report and coordinate against the window actually
+// captured rather than the one they asked for.
+type ocrWindowResult struct {
+	results []ocrResult
+	png     []byte
+	w, h    int
+	win     windowInfo
+}
+
 // ocrWindowCapture captures a window screenshot and runs OCR using coordinates
 // in the window's local coordinate space rather than raw screenshot pixels.
-func ocrWindowCapture(appName, windowTitle string, opts ocrOptions) ([]ocrResult, []byte, int, int, error) {
+// An empty windowTitle selects the app's first listed window; the caller can
+// see which one that was in the returned windowInfo.
+func ocrWindowCapture(appName, windowTitle string, opts ocrOptions) (ocrWindowResult, error) {
 	if !ui.IsScreenRecordingTrusted() {
 		if !ui.WaitForScreenRecording(30 * time.Second) {
-			return nil, nil, 0, 0, fmt.Errorf("screen recording permission required for window OCR")
+			return ocrWindowResult{}, fmt.Errorf("screen recording permission required for window OCR")
 		}
 	}
 	windows, err := listAppWindows(appName)
 	if err != nil || len(windows) == 0 {
-		return nil, nil, 0, 0, fmt.Errorf("no windows for %q — the app may have windows on another Space or display: %w", appName, err)
+		return ocrWindowResult{}, fmt.Errorf("no windows for %q — the app may have windows on another Space or display: %w", appName, err)
 	}
 	win := windows[0]
 	if windowTitle != "" {
 		var ok bool
 		win, ok = matchWindowInfo(windows, windowTitle)
 		if !ok {
-			return nil, nil, 0, 0, fmt.Errorf("no window matching %q found for %q", windowTitle, appName)
+			return ocrWindowResult{}, fmt.Errorf("no window matching %q found for %q", windowTitle, appName)
 		}
 	}
 	png, err := captureWindow(win)
 	if err != nil {
-		return nil, nil, 0, 0, fmt.Errorf("capture: %w", err)
+		return ocrWindowResult{}, fmt.Errorf("capture: %w", err)
 	}
 	coordW := int(math.Round(win.Width))
 	coordH := int(math.Round(win.Height))
 	if coordW <= 0 || coordH <= 0 {
 		coordW, coordH, err = pngDimensions(png)
 		if err != nil {
-			return nil, nil, 0, 0, fmt.Errorf("read image dimensions: %w", err)
+			return ocrWindowResult{}, fmt.Errorf("read image dimensions: %w", err)
 		}
 	}
 	results, err := recognizeText(png, coordW, coordH, opts)
-	return results, png, coordW, coordH, err
+	return ocrWindowResult{results: results, png: png, w: coordW, h: coordH, win: win}, err
 }
 
 // ocrWindow captures a window screenshot and runs OCR using coordinates in the
 // window's local coordinate space rather than raw screenshot pixels.
 func ocrWindow(appName, windowTitle string, opts ocrOptions) ([]ocrResult, int, int, error) {
-	results, _, coordW, coordH, err := ocrWindowCapture(appName, windowTitle, opts)
-	return results, coordW, coordH, err
+	capture, err := ocrWindowCapture(appName, windowTitle, opts)
+	return capture.results, capture.w, capture.h, err
 }
 
 // pngDimensions reads width and height from PNG header (IHDR chunk).
@@ -259,9 +271,9 @@ func pngDimensions(data []byte) (int, int, error) {
 }
 
 // formatOCRResults formats results as human-readable text lines.
-func formatOCRResults(results []ocrResult, target *axuiautomation.Element) string {
+func formatOCRResults(results []ocrOutputResult) string {
 	var buf strings.Builder
-	for _, r := range expandOCRResults(results, target) {
+	for _, r := range results {
 		fmt.Fprintf(&buf, "[%.2f] %q center=(%d,%d) bounds=(%d,%d %dx%d) screen_center=(%d,%d) screen_bounds=(%d,%d %dx%d)\n",
 			r.Confidence, r.Text, r.CenterX, r.CenterY, r.X, r.Y, r.W, r.H,
 			r.ScreenCenterX, r.ScreenCenterY, r.ScreenX, r.ScreenY, r.ScreenW, r.ScreenH)
@@ -270,8 +282,8 @@ func formatOCRResults(results []ocrResult, target *axuiautomation.Element) strin
 }
 
 // formatOCRResultsJSON formats results as indented JSON.
-func formatOCRResultsJSON(results []ocrResult, target *axuiautomation.Element) (string, error) {
-	data, err := json.MarshalIndent(expandOCRResults(results, target), "", "  ")
+func formatOCRResultsJSON(results []ocrOutputResult) (string, error) {
+	data, err := json.MarshalIndent(results, "", "  ")
 	if err != nil {
 		return "", err
 	}
@@ -409,5 +421,75 @@ func findOCRText(results []ocrResult, query string) []ocrResult {
 			}
 		}
 	}
-	return matches
+	return dedupeOCRRegions(matches)
+}
+
+// dedupeOCRRegions drops matches that cover a region already claimed by an
+// earlier, better-ranked match. Vision often reports the same block with
+// slightly different spellings across calls ("Cost Graph Counters",
+// "Cost Graph Conters"), which would otherwise inflate the match count and
+// make a 1-based match index select a spelling rather than a region.
+func dedupeOCRRegions(matches []ocrResult) []ocrResult {
+	var kept []ocrResult
+	for _, m := range matches {
+		duplicate := false
+		for _, k := range kept {
+			if overlapsOCRRegion(k, m) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			kept = append(kept, m)
+		}
+	}
+	return kept
+}
+
+// overlapsOCRRegion reports whether a and b cover mostly the same pixels,
+// meaning more than half of the smaller region lies inside the larger.
+func overlapsOCRRegion(a, b ocrResult) bool {
+	areaA, areaB := a.W*a.H, b.W*b.H
+	if areaA <= 0 || areaB <= 0 {
+		return false
+	}
+	w := min(a.X+a.W, b.X+b.W) - max(a.X, b.X)
+	h := min(a.Y+a.H, b.Y+b.H) - max(a.Y, b.Y)
+	if w <= 0 || h <= 0 {
+		return false
+	}
+	return 2*w*h > min(areaA, areaB)
+}
+
+// ocrMatchPoint returns the point to act on for query within result r, in the
+// coordinate space of r. When query covers only part of r.Text — Vision fuses
+// adjacent labels such as a segmented tab bar into a single block — the point
+// is placed over the matched substring rather than the block center, so that
+// clicking "Shaders" in a "ShadersHeat Map" block does not land on "Heat Map".
+// note describes any adjustment, and is empty for a whole-block match.
+func ocrMatchPoint(r ocrResult, query string) (x, y int, note string) {
+	cx, cy := r.Center()
+	text := []rune(strings.ToLower(displayString(r.Text)))
+	want := []rune(strings.ToLower(strings.TrimSpace(query)))
+	if len(want) == 0 || len(text) == 0 || len(want) >= len(text) {
+		return cx, cy, ""
+	}
+	start := runeIndex(text, want)
+	if start < 0 {
+		return cx, cy, fmt.Sprintf("%q is part of the larger OCR block %q; clicking the block center", query, r.Text)
+	}
+	mid := start + len(want)/2
+	x = r.X + r.W*mid/len(text)
+	note = fmt.Sprintf("%q covers only part of the OCR block %q; targeting the matched span instead of the block center", query, r.Text)
+	return x, cy, note
+}
+
+// runeIndex returns the index of the first occurrence of want in text, or -1.
+func runeIndex(text, want []rune) int {
+	for i := 0; i+len(want) <= len(text); i++ {
+		if string(text[i:i+len(want)]) == string(want) {
+			return i
+		}
+	}
+	return -1
 }

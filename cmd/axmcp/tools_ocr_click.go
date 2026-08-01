@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
@@ -21,6 +22,47 @@ type ocrCapture struct {
 	png    []byte
 	result []ocrResult
 	scope  *ocrRedactionScope
+
+	// originX, originY hold the screen position of the captured image when it
+	// came from CGWindowList rather than from target. The application element
+	// used as target on that path has no meaningful frame of its own, so
+	// without this the reported screen coordinates belong to no window.
+	originX, originY int
+	hasOrigin        bool
+}
+
+// setWindowOrigin pins screen coordinates to the window actually captured.
+func (c *ocrCapture) setWindowOrigin(win windowInfo) {
+	c.originX = int(math.Round(win.X))
+	c.originY = int(math.Round(win.Y))
+	c.hasOrigin = true
+}
+
+// expandResults converts OCR results to screen coordinates, preferring the
+// captured window origin over the AX target frame when one was recorded.
+func (c *ocrCapture) expandResults(results []ocrResult) []ocrOutputResult {
+	if c != nil && c.hasOrigin {
+		return expandOCRResultsAtOrigin(results, c.originX, c.originY)
+	}
+	var target *axuiautomation.Element
+	if c != nil {
+		target = c.target
+	}
+	return expandOCRResults(results, target)
+}
+
+// describeCapturedWindow names the window a CGWindowList capture landed on, so
+// results say which window they describe even when the app was asked for by
+// name alone and the window carries no title.
+func describeCapturedWindow(appName string, win windowInfo) string {
+	title := win.Title
+	if title == "" {
+		title = "untitled"
+	}
+	return fmt.Sprintf("window %q of %q (id=%d at %d,%d %dx%d, via CGWindowList)",
+		title, appName, win.WindowID,
+		int(math.Round(win.X)), int(math.Round(win.Y)),
+		int(math.Round(win.Width)), int(math.Round(win.Height)))
 }
 
 func (c *ocrCapture) Close() {
@@ -81,17 +123,18 @@ func captureOCRScope(appName, window, contains, role string, opts ocrOptions) (*
 	if err != nil {
 		// AX window resolution failed. Fall back to CGWindowList-based OCR,
 		// which works even when apps have unresponsive accessibility.
-		results, png, w, h, ocrErr := ocrWindowCapture(appName, window, opts)
+		windowCapture, ocrErr := ocrWindowCapture(appName, window, opts)
 		if ocrErr != nil {
 			capture.Close()
 			return nil, fmt.Errorf("%v (AX fallback: %v)", ocrErr, err)
 		}
 		capture.target = app.Root()
-		capture.desc = fmt.Sprintf("window %q (via CGWindowList)", appName)
-		capture.imgW = w
-		capture.imgH = h
-		capture.png = png
-		capture.result = results
+		capture.desc = describeCapturedWindow(appName, windowCapture.win)
+		capture.imgW = windowCapture.w
+		capture.imgH = windowCapture.h
+		capture.png = windowCapture.png
+		capture.result = windowCapture.results
+		capture.setWindowOrigin(windowCapture.win)
 		return capture, nil
 	}
 	results, png, w, h, err := ocrElementWithSize(win, opts)
@@ -100,11 +143,14 @@ func captureOCRScope(appName, window, contains, role string, opts ocrOptions) (*
 		if title == "" {
 			title = window
 		}
-		results, png, w, h, err = ocrWindowCapture(appName, title, opts)
-		if err != nil {
+		windowCapture, capErr := ocrWindowCapture(appName, title, opts)
+		if capErr != nil {
 			capture.Close()
-			return nil, err
+			return nil, capErr
 		}
+		results, png, w, h = windowCapture.results, windowCapture.png, windowCapture.w, windowCapture.h
+		desc = describeCapturedWindow(appName, windowCapture.win)
+		capture.setWindowOrigin(windowCapture.win)
 	}
 	capture.target = win
 	capture.desc = desc
@@ -244,14 +290,13 @@ func resolveOCRActionableTarget(root elementSnapshot, descendants []elementSnaps
 	return best.snapshot, reason, true
 }
 
-func nearestOCRActionableTarget(capture *ocrCapture, match ocrResult) (elementSnapshot, string, bool) {
+func nearestOCRActionableTarget(capture *ocrCapture, localX, localY int, text string) (elementSnapshot, string, bool) {
 	if capture == nil || capture.target == nil {
 		return elementSnapshot{}, "", false
 	}
 	root := snapshotElement(capture.target, 0, 0)
 	descendants := actionableDescendants(root, 500)
-	localX, localY := match.Center()
-	return resolveOCRActionableTarget(root, descendants, localX, localY, displayString(match.Text))
+	return resolveOCRActionableTarget(root, descendants, localX, localY, displayString(text))
 }
 
 func roundedDistance(distance2 int) int {
@@ -265,12 +310,19 @@ func roundedDistance(distance2 int) int {
 	return d
 }
 
-func performOCRClick(capture *ocrCapture, match ocrResult) (summary, resolutionNote string, err error) {
+// performOCRClick clicks the point x,y in the capture's local coordinate
+// space, which the caller derives from match via ocrActionPoint. When exact is
+// set the point is clicked as given, without redirecting to a nearby AX
+// element whose own click point would discard the caller's offset.
+func performOCRClick(capture *ocrCapture, match ocrResult, x, y int, exact bool) (summary, resolutionNote string, err error) {
 	if capture == nil || capture.target == nil {
 		return "", "", fmt.Errorf("OCR scope target disappeared")
 	}
-	x, y := match.Center()
-	if target, note, ok := nearestOCRActionableTarget(capture, match); ok && target.element != nil {
+	target, note, ok := nearestOCRActionableTarget(capture, x, y, match.Text)
+	if exact {
+		ok = false
+	}
+	if ok && target.element != nil {
 		clickSummary, err := performDefaultClick(target)
 		if err == nil {
 			if strings.Contains(clickSummary, "via AXPress") {
@@ -290,16 +342,29 @@ func performOCRClick(capture *ocrCapture, match ocrResult) (summary, resolutionN
 	return summary, resolutionNote, nil
 }
 
-func performOCRHover(capture *ocrCapture, match ocrResult) (summary, resolutionNote string, err error) {
+// performOCRHover moves the pointer to the point x,y in the capture's local
+// coordinate space, which the caller derives from match via ocrActionPoint.
+func performOCRHover(capture *ocrCapture, match ocrResult, x, y int) (summary, resolutionNote string, err error) {
 	if capture == nil || capture.target == nil {
 		return "", "", fmt.Errorf("OCR scope target disappeared")
 	}
-	x, y := match.Center()
 	if err := hoverLocalPoint(capture.target, x, y); err != nil {
 		return "", "", fmt.Errorf("hover OCR match %q in %s: %w", match.Text, capture.desc, err)
 	}
 	summary = fmt.Sprintf("hovered OCR match %q in %s at %d,%d via local hover", match.Text, capture.desc, x, y)
-	return summary, "hover uses the OCR match center", nil
+	return summary, "", nil
+}
+
+// ocrActionPoint returns the point to click or hover for a selected match,
+// in the capture's local coordinate space. Offsets, when both are given, are
+// relative to the top-left of the match bounds; otherwise the point comes from
+// ocrMatchPoint, which keeps a substring query off the center of a fused block.
+func ocrActionPoint(match ocrResult, query string, xOffset, yOffset *int) (x, y int, note string) {
+	if xOffset != nil && yOffset != nil {
+		return match.X + *xOffset, match.Y + *yOffset,
+			fmt.Sprintf("using offset %d,%d from the match bounds origin", *xOffset, *yOffset)
+	}
+	return ocrMatchPoint(match, query)
 }
 
 type selectedOCRMatch struct {
@@ -409,6 +474,8 @@ type axOCRClickInput struct {
 	Window   string `json:"window,omitempty"`
 	Contains string `json:"contains,omitempty"`
 	Role     string `json:"role,omitempty"`
+	XOffset  *int   `json:"x_offset,omitempty"`
+	YOffset  *int   `json:"y_offset,omitempty"`
 }
 
 type axOCRHoverInput struct {
@@ -418,6 +485,20 @@ type axOCRHoverInput struct {
 	Window   string `json:"window,omitempty"`
 	Contains string `json:"contains,omitempty"`
 	Role     string `json:"role,omitempty"`
+	XOffset  *int   `json:"x_offset,omitempty"`
+	YOffset  *int   `json:"y_offset,omitempty"`
+}
+
+// offsetsComplete reports whether both offsets are set, and errors when only
+// one is: a lone offset would silently mean "center on the other axis".
+func offsetsComplete(xOffset, yOffset *int) (bool, error) {
+	switch {
+	case xOffset == nil && yOffset == nil:
+		return false, nil
+	case xOffset == nil || yOffset == nil:
+		return false, fmt.Errorf("x_offset and y_offset must be given together")
+	}
+	return true, nil
 }
 
 func registerAXOCRClick(s *mcp.Server) {
@@ -425,10 +506,16 @@ func registerAXOCRClick(s *mcp.Server) {
 		Name: "ax_ocr_click",
 		Description: `Find visible text with OCR inside a window or scoped AX element, then click it.
 
-Use window to target a specific window title substring. Use contains/role to OCR a specific AX element such as a sidebar outline, then click text inside that element using local coordinates. Optional match selects the 1-based OCR hit number after filtering; otherwise exact visible text is preferred.`,
+Use window to target a specific window title substring. Use contains/role to OCR a specific AX element such as a sidebar outline, then click text inside that element using local coordinates. Optional match selects the 1-based OCR hit number after filtering; otherwise exact visible text is preferred.
+
+When find matches only part of an OCR block — Vision fuses adjacent labels such as segmented tab bars into one block — the click lands on the matched span rather than the block center, and the result says so. Set x_offset and y_offset together to click a point relative to the top-left of the match bounds instead.`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axOCRClickInput) (*mcp.CallToolResult, any, error) {
 		if strings.TrimSpace(args.Find) == "" {
 			return nil, nil, fmt.Errorf("find is required")
+		}
+		exact, err := offsetsComplete(args.XOffset, args.YOffset)
+		if err != nil {
+			return nil, nil, err
 		}
 
 		capture, err := captureOCRScope(args.App, args.Window, args.Contains, args.Role, defaultOCROptions())
@@ -444,7 +531,8 @@ Use window to target a specific window title substring. Use contains/role to OCR
 		if humanHighlightEnabled() {
 			_, _ = highlightOCRMatches(capture, []ocrResult{selection.match}, highlightDuration)
 		}
-		summary, resolutionNote, err := performOCRClick(capture, selection.match)
+		x, y, pointNote := ocrActionPoint(selection.match, args.Find, args.XOffset, args.YOffset)
+		summary, resolutionNote, err := performOCRClick(capture, selection.match, x, y, exact)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -452,11 +540,13 @@ Use window to target a specific window title substring. Use contains/role to OCR
 		var buf bytes.Buffer
 		buf.WriteString(summary)
 		fmt.Fprintf(&buf, "\n%s", selection.resolved)
+		if pointNote != "" {
+			fmt.Fprintf(&buf, "\n%s", pointNote)
+		}
 		if resolutionNote != "" {
 			fmt.Fprintf(&buf, "\n%s", resolutionNote)
 		}
-		x, y := selection.match.Center()
-		fmt.Fprintf(&buf, "\ncenter=(%d,%d) bounds=(%d,%d %dx%d)", x, y, selection.match.X, selection.match.Y, selection.match.W, selection.match.H)
+		fmt.Fprintf(&buf, "\npoint=(%d,%d) bounds=(%d,%d %dx%d)", x, y, selection.match.X, selection.match.Y, selection.match.W, selection.match.H)
 		return textResult(buf.String()), nil, nil
 	})
 }
@@ -466,10 +556,15 @@ func registerAXOCRHover(s *mcp.Server) {
 		Name: "ax_ocr_hover",
 		Description: `Find visible text with OCR inside a window or scoped AX element, then move the pointer to it.
 
-Use window to target a specific window title substring. Use contains/role to OCR a specific AX element such as a sidebar outline, then hover text inside that element using local coordinates. Optional match selects the 1-based OCR hit number after filtering; otherwise exact visible text is preferred.`,
+Use window to target a specific window title substring. Use contains/role to OCR a specific AX element such as a sidebar outline, then hover text inside that element using local coordinates. Optional match selects the 1-based OCR hit number after filtering; otherwise exact visible text is preferred.
+
+When find matches only part of an OCR block the pointer lands on the matched span rather than the block center. Set x_offset and y_offset together to hover a point relative to the top-left of the match bounds instead.`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axOCRHoverInput) (*mcp.CallToolResult, any, error) {
 		if strings.TrimSpace(args.Find) == "" {
 			return nil, nil, fmt.Errorf("find is required")
+		}
+		if _, err := offsetsComplete(args.XOffset, args.YOffset); err != nil {
+			return nil, nil, err
 		}
 
 		capture, err := captureOCRScope(args.App, args.Window, args.Contains, args.Role, defaultOCROptions())
@@ -482,7 +577,8 @@ Use window to target a specific window title substring. Use contains/role to OCR
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s in %s", err, capture.desc)
 		}
-		summary, resolutionNote, err := performOCRHover(capture, selection.match)
+		x, y, pointNote := ocrActionPoint(selection.match, args.Find, args.XOffset, args.YOffset)
+		summary, resolutionNote, err := performOCRHover(capture, selection.match, x, y)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -490,11 +586,13 @@ Use window to target a specific window title substring. Use contains/role to OCR
 		var buf bytes.Buffer
 		buf.WriteString(summary)
 		fmt.Fprintf(&buf, "\n%s", selection.resolved)
+		if pointNote != "" {
+			fmt.Fprintf(&buf, "\n%s", pointNote)
+		}
 		if resolutionNote != "" {
 			fmt.Fprintf(&buf, "\n%s", resolutionNote)
 		}
-		x, y := selection.match.Center()
-		fmt.Fprintf(&buf, "\ncenter=(%d,%d) bounds=(%d,%d %dx%d)", x, y, selection.match.X, selection.match.Y, selection.match.W, selection.match.H)
+		fmt.Fprintf(&buf, "\npoint=(%d,%d) bounds=(%d,%d %dx%d)", x, y, selection.match.X, selection.match.Y, selection.match.W, selection.match.H)
 		return textResult(buf.String()), nil, nil
 	})
 }

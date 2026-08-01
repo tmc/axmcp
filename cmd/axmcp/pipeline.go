@@ -900,14 +900,14 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 		if layoutOut {
 			buf.WriteString(renderOCRLayout(results, capture.imgW, capture.imgH, layoutCols, layoutRows))
 		} else if jsonOut {
-			s, err := formatOCRResultsJSON(results, capture.target)
+			s, err := formatOCRResultsJSON(capture.expandResults(results))
 			if err != nil {
 				return err
 			}
 			buf.WriteString(s)
 			buf.WriteByte('\n')
 		} else {
-			buf.WriteString(formatOCRResults(results, capture.target))
+			buf.WriteString(formatOCRResults(capture.expandResults(results)))
 		}
 
 	case "ocr-hover":
@@ -923,11 +923,15 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 		if len(matches) == 0 {
 			return fmt.Errorf("ocr-hover: no text matching %q found", query)
 		}
-		summary, resolutionNote, err := performOCRHover(capture, matches[0])
+		x, y, pointNote := ocrMatchPoint(matches[0], query)
+		summary, resolutionNote, err := performOCRHover(capture, matches[0], x, y)
 		if err != nil {
 			return err
 		}
 		fmt.Fprintln(buf, summary)
+		if pointNote != "" {
+			fmt.Fprintln(buf, pointNote)
+		}
 		if resolutionNote != "" {
 			fmt.Fprintln(buf, resolutionNote)
 		}

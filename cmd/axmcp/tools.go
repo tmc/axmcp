@@ -723,12 +723,16 @@ func registerAXClick(s *mcp.Server) {
 					defer capture.Close()
 					selection, err := selectOCRMatch(capture.result, args.Contains, nil)
 					if err == nil {
-						summary, resolutionNote, err := performOCRClick(capture, selection.match)
+						x, y, pointNote := ocrMatchPoint(selection.match, args.Contains)
+						summary, resolutionNote, err := performOCRClick(capture, selection.match, x, y, false)
 						if err == nil {
 							var buf bytes.Buffer
 							buf.WriteString(summary)
 							buf.WriteString("\nAX search found no matching element; used OCR fallback")
 							fmt.Fprintf(&buf, "\n%s", selection.resolved)
+							if pointNote != "" {
+								fmt.Fprintf(&buf, "\n%s", pointNote)
+							}
 							if resolutionNote != "" {
 								fmt.Fprintf(&buf, "\n%s", resolutionNote)
 							}
@@ -1324,14 +1328,14 @@ func registerAXOCR(s *mcp.Server) {
 				}
 				content = append(content, &mcp.TextContent{Text: out})
 			} else {
-				out, err := formatOCRResultsJSON(results, capture.target)
+				out, err := formatOCRResultsJSON(capture.expandResults(results))
 				if err != nil {
 					return nil, nil, err
 				}
 				content = append(content, &mcp.TextContent{Text: out})
 			}
 		} else {
-			text := formatOCRResults(results, capture.target)
+			text := formatOCRResults(capture.expandResults(results))
 			if args.Annotated && len(capture.png) > 0 {
 				text = overlaySummary(render) + "\n" + text
 			}

@@ -488,12 +488,16 @@ func performCLIOCRHover(app *axuiautomation.Application, query string) error {
 	if err != nil {
 		return err
 	}
-	summary, resolutionNote, err := performOCRHover(capture, selection.match)
+	x, y, pointNote := ocrMatchPoint(selection.match, query)
+	summary, resolutionNote, err := performOCRHover(capture, selection.match, x, y)
 	if err != nil {
 		return err
 	}
 	fmt.Println(summary)
 	fmt.Println(selection.resolved)
+	if pointNote != "" {
+		fmt.Println(pointNote)
+	}
 	if resolutionNote != "" {
 		fmt.Println(resolutionNote)
 	}
@@ -510,12 +514,15 @@ func performCLIOCRClick(app *axuiautomation.Application, query string) error {
 	if err != nil {
 		return err
 	}
-	x, y := selection.match.Center()
+	x, y, pointNote := ocrMatchPoint(selection.match, query)
 	if err := clickLocalPoint(capture.target, x, y); err != nil {
 		return fmt.Errorf("click OCR match %q in %s: %w", selection.match.Text, capture.desc, err)
 	}
 	fmt.Printf("clicked OCR match %q in %s at %d,%d via local click\n", selection.match.Text, capture.desc, x, y)
 	fmt.Println(selection.resolved)
+	if pointNote != "" {
+		fmt.Println(pointNote)
+	}
 	return nil
 }
 

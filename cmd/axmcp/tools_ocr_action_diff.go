@@ -106,18 +106,23 @@ func performOCRDiffAction(capture *ocrCapture, args axOCRActionDiffInput, action
 		if err != nil {
 			return "", "", "", fmt.Errorf("%s in %s", err, capture.desc)
 		}
+		x, y, pointNote := ocrMatchPoint(selection.match, find)
+		resolved := selection.resolved
+		if pointNote != "" {
+			resolved += "\n" + pointNote
+		}
 		if action == "ocr_click" {
-			summary, resolutionNote, err := performOCRClick(capture, selection.match)
+			summary, resolutionNote, err := performOCRClick(capture, selection.match, x, y, false)
 			if err != nil {
 				return "", "", "", err
 			}
-			return summary, selection.resolved, resolutionNote, nil
+			return summary, resolved, resolutionNote, nil
 		}
-		summary, resolutionNote, err := performOCRHover(capture, selection.match)
+		summary, resolutionNote, err := performOCRHover(capture, selection.match, x, y)
 		if err != nil {
 			return "", "", "", err
 		}
-		return summary, selection.resolved, resolutionNote, nil
+		return summary, resolved, resolutionNote, nil
 	case "click", "hover":
 		target, err := resolveActionTarget(capture.target, args.ActionContains, args.ActionRole)
 		if err != nil {
