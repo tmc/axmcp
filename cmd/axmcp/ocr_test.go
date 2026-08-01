@@ -187,3 +187,29 @@ func TestRenderOCRLayoutCapsRows(t *testing.T) {
 		t.Errorf("renderOCRLayout(...) = %q, want rows past the cap left out", out)
 	}
 }
+
+func TestRenderOCRLayoutMarksPaneBoundaries(t *testing.T) {
+	// Two panes with a corridor of blank pixels between them, plus one wide
+	// title crossing the corridor.
+	results := []ocrResult{
+		{Text: "a title that spans both panes", X: 60, Y: 10, W: 700, H: 16},
+		{Text: "navigator", X: 0, Y: 60, W: 180, H: 16},
+		{Text: "inspector", X: 700, Y: 61, W: 180, H: 16},
+		{Text: "entry", X: 0, Y: 90, W: 120, H: 16},
+		{Text: "value", X: 700, Y: 91, W: 120, H: 16},
+	}
+	out := renderOCRLayout(results, 1000, 200, 100, 0)
+	if !strings.Contains(out, "|") {
+		t.Errorf("renderOCRLayout(...) = %q, want a boundary between the panes", out)
+	}
+	for _, r := range results {
+		if !strings.Contains(out, r.Text) {
+			t.Errorf("renderOCRLayout(...) lost %q to a boundary marker:\n%s", r.Text, out)
+		}
+	}
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if strings.Contains(line, "navigator") && !strings.Contains(line, "|") {
+			t.Errorf("row %q spans both panes without a boundary marker", line)
+		}
+	}
+}

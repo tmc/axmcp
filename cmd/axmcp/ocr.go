@@ -324,6 +324,7 @@ func renderOCRLayout(results []ocrResult, imgW, imgH, cols, maxRows int) string 
 		prevY = line.y
 		rendered = append(rendered, renderOCRLine(line.runs, imgW, cols)...)
 	}
+	rendered = markOCRGutters(rendered)
 
 	var buf strings.Builder
 	for i, line := range rendered {
@@ -335,6 +336,85 @@ func renderOCRLayout(results []ocrResult, imgW, imgH, cols, maxRows int) string 
 		buf.WriteByte('\n')
 	}
 	return buf.String()
+}
+
+// markOCRGutters draws a vertical bar down each corridor of blank columns that
+// runs the full height of the layout. Those corridors are the boundaries
+// between side-by-side panes, and without them a row reads as one record when
+// it is really unrelated text from several panes at the same height — a
+// plausible-looking row is worse than a garbled one, because it gets believed.
+func markOCRGutters(rows []string) []string {
+	width := 0
+	for _, row := range rows {
+		width = max(width, len([]rune(row)))
+	}
+	if width == 0 {
+		return rows
+	}
+
+	// Count how often each column carries text. A pane boundary is a column
+	// almost always blank, not necessarily always: a wide title or a tooltip
+	// may cross it a few times without making it any less of a boundary.
+	hits := make([]int, width)
+	content := 0
+	for _, row := range rows {
+		if strings.TrimSpace(row) == "" {
+			continue
+		}
+		content++
+		for i, r := range []rune(row) {
+			if r != ' ' {
+				hits[i]++
+			}
+		}
+	}
+	if content == 0 {
+		return rows
+	}
+	occupied := make([]bool, width)
+	for i, n := range hits {
+		occupied[i] = n*20 > content // busier than 5% of content rows
+	}
+
+	// A corridor must be wide enough to be a pane boundary rather than the gap
+	// between two columns of one table, and must have content on both sides.
+	const minGutter = 4
+	gutters := map[int]bool{}
+	for start := 0; start < width; start++ {
+		if occupied[start] {
+			continue
+		}
+		end := start
+		for end < width && !occupied[end] {
+			end++
+		}
+		if end-start >= minGutter && start > 0 && end < width {
+			gutters[(start+end)/2] = true
+		}
+		start = end
+	}
+	if len(gutters) == 0 {
+		return rows
+	}
+
+	marked := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if strings.TrimSpace(row) == "" {
+			marked = append(marked, row) // blank rows mark vertical gaps
+			continue
+		}
+		runes := []rune(row)
+		for col := range gutters {
+			runes = growOCRRow(runes, col+1)
+			if runes[col] == ' ' {
+				runes[col] = '|'
+			}
+			// Text crossing a boundary keeps the column: the bar is a reading
+			// aid, never a reason to lose a character.
+		}
+		marked = append(marked, strings.TrimRight(string(runes), " "))
+	}
+	return marked
 }
 
 // ocrLine is one visual line of recognized text.
