@@ -330,3 +330,28 @@ func TestResolveClickTargetFromDescendants(t *testing.T) {
 		t.Fatalf("reason = %q, want descendant explanation", resolution.reason)
 	}
 }
+
+func TestNormalizeMatchStringFoldsEllipsis(t *testing.T) {
+	// macOS publishes "Export…" (U+2026); callers type three periods. A caller
+	// that cannot match the real title has no way to tell a missing item from a
+	// disabled one without pressing, and pressing opens menus.
+	tests := []struct {
+		name string
+		a, b string
+	}{
+		{"ellipsis vs periods", "Export…", "Export..."},
+		{"case", "Open…", "open…"},
+		{"case and spacing", "Add  Files…", "add files..."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got, want := normalizeMatchString(tt.a), normalizeMatchString(tt.b); got != want {
+				t.Errorf("normalizeMatchString(%q) = %q, normalizeMatchString(%q) = %q; want equal", tt.a, got, tt.b, want)
+			}
+		})
+	}
+
+	if normalizeMatchString("Export…") == normalizeMatchString("Import...") {
+		t.Error("normalizeMatchString folded two distinct titles together")
+	}
+}

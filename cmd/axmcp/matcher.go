@@ -78,6 +78,9 @@ type matchField struct {
 const defaultSearchTraversalLimit = 2000
 
 func normalizeMatchString(s string) string {
+	// macOS titles use U+2026 HORIZONTAL ELLIPSIS ("Export…"), which callers
+	// routinely type as three periods. Fold them together so either matches.
+	s = strings.ReplaceAll(s, "…", "...")
 	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(s)), " "))
 }
 
