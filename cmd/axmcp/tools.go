@@ -109,6 +109,7 @@ func registerAXTools(s *mcp.Server) {
 	registerAXClick(s)
 	registerAXType(s)
 	registerAXMenu(s)
+	registerAXMenuRead(s)
 	registerAXFocus(s)
 	registerAXListWindows(s)
 	registerAXScreenshot(s)
@@ -902,6 +903,48 @@ func registerAXMenu(s *mcp.Server) {
 			return nil, nil, fmt.Errorf("menu: %w", err)
 		}
 		return textResult("clicked menu: " + strings.Join(args.Path, " > ")), nil, nil
+	})
+}
+
+// ── ax_menu_read ──────────────────────────────────────────────────────────────
+
+type axMenuReadInput struct {
+	App  string   `json:"app"`
+	Path []string `json:"path,omitempty"`
+}
+
+func registerAXMenuRead(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "ax_menu_read",
+		Description: `Read menu items without opening any menu. Returns each item's title, whether it is enabled, and whether it has a submenu.
+
+Pass path to list the contents of a menu, e.g. ["File"] or ["File","New"]; omit it to list the menu bar. Pass a path naming a leaf item to report just that item.
+
+Use this instead of ax_menu whenever you only need to know whether an item exists or is enabled. ax_menu presses items, which opens the menu and raises the owning window — on a multi-display setup that steals focus, and in a retry loop it does so repeatedly. Reading presses nothing. Titles match with or without the U+2026 ellipsis, so "Export..." finds "Export…".`,
+	}, func(_ context.Context, _ *mcp.CallToolRequest, args axMenuReadInput) (*mcp.CallToolResult, any, error) {
+		app, err := spinAndOpen(args.App)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer app.Close()
+
+		// A path naming a leaf reports that item; otherwise list the children.
+		items, err := listMenuItems(app, args.Path)
+		if err != nil {
+			return nil, nil, fmt.Errorf("menu read: %w", err)
+		}
+		if len(items) == 0 && len(args.Path) > 0 {
+			state, err := readMenuItem(app, args.Path)
+			if err != nil {
+				return nil, nil, fmt.Errorf("menu read: %w", err)
+			}
+			return textResult(formatMenuItems([]menuItemState{state})), nil, nil
+		}
+		header := "menu bar"
+		if len(args.Path) > 0 {
+			header = strings.Join(args.Path, " > ")
+		}
+		return textResult(header + ":\n" + formatMenuItems(items)), nil, nil
 	})
 }
 

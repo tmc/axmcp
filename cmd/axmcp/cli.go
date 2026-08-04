@@ -101,6 +101,7 @@ func runCLI() {
 		cliRightClick(),
 		cliType(),
 		cliMenu(),
+		cliMenuRead(),
 		cliFocus(),
 		cliScreenshot(),
 		cliPermissions(),
@@ -586,6 +587,44 @@ func cliMenu() *cobra.Command {
 				return fmt.Errorf("menu: %w", err)
 			}
 			fmt.Println("clicked menu:", strings.Join(path, " > "))
+			return nil
+		},
+	}
+}
+
+func cliMenuRead() *cobra.Command {
+	return &cobra.Command{
+		Use:   "menu-read <app> [item...]",
+		Short: "Read menu items without opening any menu",
+		Long: `Read menu items without opening any menu.
+
+Pressing a menu item opens it and raises the owning window, which steals focus
+on a multi-display setup. Reading presses nothing, so use this whenever you only
+need to know whether an item exists or is enabled.`,
+		Example: `  axmcp menu-read com.apple.dt.Xcode
+  axmcp menu-read com.apple.dt.Xcode File
+  axmcp menu-read com.apple.dt.Xcode File "Export..."`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			app, err := spinAndOpen(args[0])
+			if err != nil {
+				return err
+			}
+			defer app.Close()
+
+			path := args[1:]
+			items, err := listMenuItems(app, path)
+			if err != nil {
+				return fmt.Errorf("menu read: %w", err)
+			}
+			if len(items) == 0 && len(path) > 0 {
+				state, err := readMenuItem(app, path)
+				if err != nil {
+					return fmt.Errorf("menu read: %w", err)
+				}
+				items = []menuItemState{state}
+			}
+			fmt.Print(formatMenuItems(items))
 			return nil
 		},
 	}
