@@ -210,6 +210,32 @@ func newXcodeProxy(ctx context.Context) (*xcodeProxy, error) {
 	}, nil
 }
 
+// newLazyXcodeProxy returns a proxy with no bridge connection. The bridge
+// starts on the first tool call; see callTool.
+func newLazyXcodeProxy() *xcodeProxy {
+	return &xcodeProxy{}
+}
+
+// registerCachedXcodeTools registers proxy tools from cached schemas without
+// starting the bridge. Calls made to these tools connect on demand.
+func registerCachedXcodeTools(s *mcp.Server, proxy *xcodeProxy, prefix string, tools []*mcp.Tool) int {
+	proxy.server = s
+	proxy.prefix = prefix
+	for _, tool := range tools {
+		name := tool.Name
+		if prefix != "" {
+			name = prefix + "_" + tool.Name
+		}
+		registered := *tool
+		registered.Name = name
+		if registered.InputSchema == nil {
+			registered.InputSchema = map[string]any{"type": "object"}
+		}
+		s.AddTool(&registered, makeProxyHandler(proxy, tool.Name))
+	}
+	return len(tools)
+}
+
 func xcodeBridgeAvailable() bool {
 	return shouldAttemptXcodeBridge(os.Getenv("MCP_XCODE_PID"), hasRunningXcodeProcess())
 }
@@ -244,10 +270,12 @@ func (proxy *xcodeProxy) discoverAndRegisterTools() (int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), xcodeToolDiscoveryTimeout)
 	defer cancel()
 	n := 0
+	var discovered []*mcp.Tool
 	for tool, err := range proxy.session.Tools(ctx, nil) {
 		if err != nil {
 			return n, fmt.Errorf("list xcode tools: %w", err)
 		}
+		discovered = append(discovered, tool)
 		slog.Debug("registerXcodeTools: registering tool", "name", tool.Name)
 
 		name := tool.Name
@@ -278,6 +306,11 @@ func (proxy *xcodeProxy) discoverAndRegisterTools() (int, error) {
 		// so this is safe to call on reconnect.
 		proxy.server.AddTool(registered, handler)
 		n++
+	}
+	// Cache the schemas so the next start can advertise these tools without
+	// starting the bridge. A cache write failure is not fatal.
+	if err := saveBridgeCache(discovered); err != nil {
+		slog.Debug("bridge cache: save failed", "err", err)
 	}
 	return n, nil
 }

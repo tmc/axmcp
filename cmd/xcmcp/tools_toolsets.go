@@ -90,6 +90,23 @@ func (r *toolsetRegistry) list() []map[string]string {
 
 // addXcodeBridgeToolset adds the Xcode mcpbridge as a named toolset. Call this
 // before registerToolsetTools so it appears in the list and description.
+// accessibilityTrustTimeout bounds how long toolset registration waits for
+// Accessibility trust before proceeding without the Xcode dialog auto-clicker.
+const accessibilityTrustTimeout = 30 * time.Second
+
+// waitForAccessibilityTrust reports whether the process became trusted for
+// Accessibility within timeout.
+func waitForAccessibilityTrust(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for !ui.IsTrusted() {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return true
+}
+
 func addXcodeBridgeToolset(prefix string, buildErrors *buildErrorPoller, wait bool) {
 	if wait {
 		xcodeReady.Add(1)
@@ -110,11 +127,33 @@ func addXcodeBridgeToolset(prefix string, buildErrors *buildErrorPoller, wait bo
 				return
 			}
 
+			// Serve cached tool schemas when they match the active Xcode.
+			// Starting the bridge costs a subprocess, a permission dialog, and
+			// several seconds; most sessions never call an Xcode tool. The
+			// bridge starts on the first such call instead.
+			if tools := loadBridgeCache(); tools != nil {
+				proxy := newLazyXcodeProxy()
+				setXcodeBridge(proxy)
+				registerXcodeWorkflowTools(s)
+				n := registerCachedXcodeTools(s, proxy, prefix, tools)
+				slog.Info("registered xcode tools from cache", "count", n)
+				if buildErrors != nil {
+					registerBuildErrorResource(s, proxy, buildErrors)
+				}
+				return
+			}
+
+			// No usable cache: discover from the bridge now.
+			//
 			// Wait for Accessibility trust before attempting to auto-allow
 			// the Xcode MCP permission dialog. Without AX permission, the
-			// auto-clicker cannot interact with Xcode's UI.
-			for !ui.IsTrusted() {
-				time.Sleep(500 * time.Millisecond)
+			// auto-clicker cannot interact with Xcode's UI. Discovery is
+			// still worth attempting if trust never arrives, so the wait is
+			// bounded — an unbounded wait leaves this goroutine spinning for
+			// the life of the process and keeps it from exiting.
+			if !waitForAccessibilityTrust(accessibilityTrustTimeout) {
+				slog.Warn("accessibility not trusted; xcode dialog auto-allow disabled",
+					"waited", accessibilityTrustTimeout)
 			}
 
 			const maxRetries = 5
