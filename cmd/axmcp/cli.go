@@ -103,6 +103,7 @@ func runCLI() {
 		cliMenu(),
 		cliMenuRead(),
 		cliFocus(),
+		cliFocusState(),
 		cliScreenshot(),
 		cliPermissions(),
 	)
