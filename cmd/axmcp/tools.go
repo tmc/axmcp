@@ -20,8 +20,8 @@ import (
 	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/coregraphics"
 	"github.com/tmc/apple/x/axuiautomation"
+	"github.com/tmc/axmcp/internal/focusless"
 	"github.com/tmc/axmcp/internal/ghostcursor"
-	"github.com/tmc/axmcp/internal/spacedetect"
 	"github.com/tmc/axmcp/internal/ui"
 )
 
@@ -1023,9 +1023,9 @@ func registerAXListWindows(s *mcp.Server) {
 					Display:   displayIndexForPoint(displays, cw.X, cw.Y),
 					OffScreen: cw.OffScreen,
 				}
-				if off, err := spacedetect.IsOffSpace(cw.WindowID); err != nil {
-					if !errors.Is(err, spacedetect.ErrSkyLightUnavailable) {
-						slog.Debug("spacedetect: lookup failed", "windowID", cw.WindowID, "err", err)
+				if off, err := focusless.IsOffSpace(cw.WindowID); err != nil {
+					if !errors.Is(err, focusless.ErrUnavailable) {
+						slog.Debug("focusless: off-Space lookup failed", "windowID", cw.WindowID, "err", err)
 					}
 				} else if off {
 					wi.OffSpace = true
