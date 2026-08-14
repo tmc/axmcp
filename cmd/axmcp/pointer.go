@@ -218,14 +218,18 @@ func hoverLocalPoint(el *axuiautomation.Element, x, y int) error {
 	if err := validateLocalPoint(el, x, y); err != nil {
 		return err
 	}
+	absX, absY := localPointToScreen(el, x, y)
+	return hoverScreenPoint(absX, absY)
+}
+
+func hoverScreenPoint(x, y int) error {
 	initCGMouseEvents()
 	if cgWarpMouseCursorPosition == nil {
 		return fmt.Errorf("CGWarpMouseCursorPosition not available")
 	}
-	absX, absY := localPointToScreen(el, x, y)
-	ghostcursor.HoverAt(absX, absY)
+	ghostcursor.HoverAt(x, y)
 	noteCLIVisualFeedback()
-	cgWarpMouseCursorPosition(float64(absX), float64(absY))
+	cgWarpMouseCursorPosition(float64(x), float64(y))
 	return nil
 }
 

@@ -38,6 +38,37 @@ func (c *ocrCapture) setWindowOrigin(win windowInfo) {
 	c.hasOrigin = true
 }
 
+// clickPoint clicks x,y in the capture's local coordinate space. It uses the
+// same basis expandResults reports: the pinned window origin when the image
+// came from CGWindowList, since the application element used as target there
+// has an empty frame and would place the click at the top-left of the main
+// display instead of inside the window.
+func (c *ocrCapture) clickPoint(x, y int) error {
+	if screenX, screenY, ok := c.screenPoint(x, y); ok {
+		return clickScreenPoint(screenX, screenY)
+	}
+	return clickLocalPoint(c.target, x, y)
+}
+
+// screenPoint converts a local point to screen coordinates using the pinned
+// window origin. It reports false when no origin was recorded, leaving the
+// conversion to the AX target's own frame.
+func (c *ocrCapture) screenPoint(x, y int) (screenX, screenY int, ok bool) {
+	if c == nil || !c.hasOrigin {
+		return 0, 0, false
+	}
+	return c.originX + x, c.originY + y, true
+}
+
+// hoverPoint moves the pointer to x,y in the capture's local coordinate space,
+// on the same basis as clickPoint.
+func (c *ocrCapture) hoverPoint(x, y int) error {
+	if screenX, screenY, ok := c.screenPoint(x, y); ok {
+		return hoverScreenPoint(screenX, screenY)
+	}
+	return hoverLocalPoint(c.target, x, y)
+}
+
 // expandResults converts OCR results to screen coordinates, preferring the
 // captured window origin over the AX target frame when one was recorded.
 func (c *ocrCapture) expandResults(results []ocrResult) []ocrOutputResult {
@@ -336,7 +367,7 @@ func performOCRClick(capture *ocrCapture, match ocrResult, x, y int, exact bool)
 		}
 		resolutionNote = fmt.Sprintf("%s\nclick target failed: %v; falling back to OCR point", note, err)
 	}
-	if err := clickLocalPoint(capture.target, x, y); err != nil {
+	if err := capture.clickPoint(x, y); err != nil {
 		return "", resolutionNote, fmt.Errorf("click OCR match %q in %s: %w", match.Text, capture.desc, err)
 	}
 	summary = fmt.Sprintf("clicked OCR match %q in %s at %d,%d via local click", match.Text, capture.desc, x, y)
@@ -352,7 +383,7 @@ func performOCRHover(capture *ocrCapture, match ocrResult, x, y int) (summary, r
 	if capture == nil || capture.target == nil {
 		return "", "", fmt.Errorf("OCR scope target disappeared")
 	}
-	if err := hoverLocalPoint(capture.target, x, y); err != nil {
+	if err := capture.hoverPoint(x, y); err != nil {
 		return "", "", fmt.Errorf("hover OCR match %q in %s: %w", match.Text, capture.desc, err)
 	}
 	summary = fmt.Sprintf("hovered OCR match %q in %s at %d,%d via local hover", match.Text, capture.desc, x, y)

@@ -517,7 +517,7 @@ func performCLIOCRClick(app *axuiautomation.Application, query string) error {
 		return err
 	}
 	x, y, pointNote := ocrMatchPoint(selection.match, query)
-	if err := clickLocalPoint(capture.target, x, y); err != nil {
+	if err := capture.clickPoint(x, y); err != nil {
 		return fmt.Errorf("click OCR match %q in %s: %w", selection.match.Text, capture.desc, err)
 	}
 	fmt.Printf("clicked OCR match %q in %s at %d,%d via local click\n", selection.match.Text, capture.desc, x, y)

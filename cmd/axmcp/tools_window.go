@@ -230,10 +230,18 @@ func registerAXWindowAction(s *mcp.Server) {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
+// noAXWindowsMessage explains an empty AX window list. ax_list_windows falls
+// back to CGWindowList, so it can report windows these AX-only tools cannot
+// reach; saying nothing here reads as a contradiction between the two tools.
+const noAXWindowsMessage = "the app exposes no accessibility windows " +
+	"(its AX server may be unresponsive, or the windows are on another Space or display). " +
+	"ax_list_windows also reads CGWindowList and may still list them; " +
+	"ax_ocr / ax_ocr_click work from that same CGWindowList capture."
+
 func resolveWindow(app *axuiautomation.Application, titleSubstr string) (*axuiautomation.Element, string, error) {
 	wins := app.WindowList()
 	if len(wins) == 0 {
-		return nil, "", fmt.Errorf("no windows found (app may have windows on another Space or display)")
+		return nil, "", fmt.Errorf("%s", noAXWindowsMessage)
 	}
 	if titleSubstr == "" {
 		title := wins[0].Title()

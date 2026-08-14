@@ -141,3 +141,17 @@ func TestSelectOCRMatchRejectsOutOfRangeIndex(t *testing.T) {
 		t.Fatal("selectOCRMatch succeeded for out-of-range index")
 	}
 }
+
+func TestOCRCaptureScreenPointUsesPinnedOrigin(t *testing.T) {
+	// A CGWindowList capture pins the window origin; without it the click
+	// would be placed relative to the application element's empty frame.
+	capture := &ocrCapture{}
+	capture.setWindowOrigin(windowInfo{X: 3866, Y: -1126})
+	x, y, ok := capture.screenPoint(343, 250)
+	if !ok || x != 4209 || y != -876 {
+		t.Fatalf("screenPoint = (%d, %d, %v), want (4209, -876, true)", x, y, ok)
+	}
+	if _, _, ok := (&ocrCapture{}).screenPoint(343, 250); ok {
+		t.Fatal("screenPoint reported an origin for a capture that has none")
+	}
+}
