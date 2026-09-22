@@ -88,8 +88,6 @@ func (r *toolsetRegistry) list() []map[string]string {
 	return out
 }
 
-// addXcodeBridgeToolset adds the Xcode mcpbridge as a named toolset. Call this
-// before registerToolsetTools so it appears in the list and description.
 // accessibilityTrustTimeout bounds how long toolset registration waits for
 // Accessibility trust before proceeding without the Xcode dialog auto-clicker.
 const accessibilityTrustTimeout = 30 * time.Second
@@ -107,6 +105,8 @@ func waitForAccessibilityTrust(timeout time.Duration) bool {
 	return true
 }
 
+// addXcodeBridgeToolset adds the Xcode mcpbridge as a named toolset. Call this
+// before registerToolsetTools so it appears in the list and description.
 func addXcodeBridgeToolset(prefix string, buildErrors *buildErrorPoller, wait bool) {
 	if wait {
 		xcodeReady.Add(1)

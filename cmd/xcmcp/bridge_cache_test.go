@@ -82,7 +82,11 @@ func TestSaveBridgeCacheEmptyIsNoop(t *testing.T) {
 	if err := saveBridgeCache(nil); err != nil {
 		t.Errorf("saveBridgeCache(nil) = %v, want nil", err)
 	}
-	if _, err := os.Stat(bridgeCachePath()); !os.IsNotExist(err) {
+	path, err := bridgeCachePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Errorf("saveBridgeCache(nil) created a cache file")
 	}
 }

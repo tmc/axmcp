@@ -25,8 +25,12 @@ type bridgeCache struct {
 }
 
 // bridgeCachePath returns the cache file location.
-func bridgeCachePath() string {
-	return filepath.Join(os.Getenv("HOME"), ".xcmcp", "bridge-tools.json")
+func bridgeCachePath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".xcmcp", "bridge-tools.json"), nil
 }
 
 // developerDir reports the active Xcode developer directory without shelling
@@ -62,7 +66,11 @@ func loadBridgeCache() []*mcp.Tool {
 		slog.Debug("bridge cache: no fingerprint", "err", err)
 		return nil
 	}
-	data, err := os.ReadFile(bridgeCachePath())
+	path, err := bridgeCachePath()
+	if err != nil {
+		return nil
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
@@ -95,7 +103,10 @@ func saveBridgeCache(tools []*mcp.Tool) error {
 	if err != nil {
 		return fmt.Errorf("marshal bridge cache: %w", err)
 	}
-	path := bridgeCachePath()
+	path, err := bridgeCachePath()
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return fmt.Errorf("create cache dir: %w", err)
 	}
