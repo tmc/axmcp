@@ -847,7 +847,7 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 		} else {
 			path = args
 		}
-		if err := pc.app.ClickMenuItem(path); err != nil {
+		if err := clickMenuPath(pc.app, path); err != nil {
 			return err
 		}
 		fmt.Fprintf(buf, "clicked menu: %s\n", strings.Join(path, " > "))

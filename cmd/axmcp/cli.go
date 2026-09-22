@@ -584,7 +584,7 @@ func cliMenu() *cobra.Command {
 			}
 			defer app.Close()
 			path := args[1:]
-			if err := app.ClickMenuItem(path); err != nil {
+			if err := clickMenuPath(app, path); err != nil {
 				return fmt.Errorf("menu: %w", err)
 			}
 			fmt.Println("clicked menu:", strings.Join(path, " > "))

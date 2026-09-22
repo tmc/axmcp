@@ -98,6 +98,21 @@ func readMenuPath(app *axuiautomation.Application, path []string) (*axuiautomati
 	return current, nil
 }
 
+// clickMenuPath presses the menu item named by path. Titles match as in
+// readMenuPath, so "Export..." presses the "Export…" that macOS publishes.
+func clickMenuPath(app *axuiautomation.Application, path []string) error {
+	titles := make([]string, len(path))
+	for i := range path {
+		el, err := readMenuPath(app, path[:i+1])
+		if err != nil {
+			return err
+		}
+		titles[i] = el.Title()
+		el.Release()
+	}
+	return app.ClickMenuItem(titles)
+}
+
 // readMenuItem reports the state of the menu item named by path. It presses
 // nothing: no menu opens and no window is raised.
 func readMenuItem(app *axuiautomation.Application, path []string) (menuItemState, error) {

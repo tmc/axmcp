@@ -904,7 +904,7 @@ type axMenuInput struct {
 func registerAXMenu(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "ax_menu",
-		Description: `Click a menu item by path array, e.g. ["File", "New", "Target..."]`,
+		Description: `Click a menu item by path array, e.g. ["File", "New", "Target..."]. Titles match with or without the U+2026 ellipsis.`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axMenuInput) (*mcp.CallToolResult, any, error) {
 		app, err := spinAndOpen(args.App)
 		if err != nil {
@@ -912,7 +912,7 @@ func registerAXMenu(s *mcp.Server) {
 		}
 		defer app.Close()
 
-		if err := app.ClickMenuItem(args.Path); err != nil {
+		if err := clickMenuPath(app, args.Path); err != nil {
 			return nil, nil, fmt.Errorf("menu: %w", err)
 		}
 		return textResult("clicked menu: " + strings.Join(args.Path, " > ")), nil, nil
