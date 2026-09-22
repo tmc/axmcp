@@ -188,11 +188,24 @@ func findPIDByWindowTitleWithOption(query string, option coregraphics.CGWindowLi
 	return 0, false
 }
 
+// accessibilityWait is how long an AX operation waits for the user to grant
+// Accessibility. The server prompts at startup and fails fast; the CLI waits.
+var accessibilityWait time.Duration
+
+// requireAccessibility reports an error if the process is not trusted for
+// Accessibility, after waiting up to accessibilityWait for the user to grant it.
+func requireAccessibility() error {
+	if ui.IsTrusted() || accessibilityWait > 0 && ui.WaitForAccessibility(accessibilityWait) {
+		return nil
+	}
+	return fmt.Errorf("Accessibility permission required — grant access in System Settings > Privacy & Security > Accessibility")
+}
+
 // spinAndOpen opens an app, sets an AX messaging timeout, and spins
 // the run loop to prime AX IPC.
 func spinAndOpen(arg string) (*axuiautomation.Application, error) {
-	if !ui.WaitForAccessibility(30 * time.Second) {
-		return nil, fmt.Errorf("Accessibility permission required — grant access in System Settings > Privacy & Security")
+	if err := requireAccessibility(); err != nil {
+		return nil, err
 	}
 	app, err := openApp(arg)
 	if err != nil {

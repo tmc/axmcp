@@ -464,6 +464,9 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 		}
 
 	case "windows":
+		if err := requireAccessibility(); err != nil {
+			return fmt.Errorf("windows: %w", err)
+		}
 		if pc.app != nil {
 			pc.elements = pc.app.WindowList()
 			pc.element = nil

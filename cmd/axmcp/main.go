@@ -340,6 +340,7 @@ func main() {
 	serverTransport := stdioTransport
 
 	if cliMode {
+		accessibilityWait = 30 * time.Second
 		// Run CLI in goroutine so main thread can drive the AppKit run loop.
 		go func() {
 			diagf("axmcp: CLI goroutine started\n")
