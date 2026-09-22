@@ -57,7 +57,7 @@ func TestBindReplacesPriorState(t *testing.T) {
 	if firstState.StateID == secondState.StateID {
 		t.Fatalf("StateID should change across bindings")
 	}
-	if _, _, err := store.Resolve(firstState.StateID, 0); err == nil {
+	if _, err := store.Acquire(firstState.StateID); err == nil {
 		t.Fatalf("old state_id should be stale")
 	}
 }
@@ -76,7 +76,12 @@ func TestResolveUsesCurrentSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	_, node, err := store.Resolve(state.StateID, 7)
+	lease, err := store.Acquire(state.StateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
+	_, node, err := lease.Resolve(7)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}

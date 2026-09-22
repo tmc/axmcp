@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -125,8 +126,9 @@ func TestStateForActionRequiresFreshStateID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stateForAction fresh state: %v", err)
 	}
-	if got.StateID != state.StateID {
-		t.Fatalf("StateID = %q, want %q", got.StateID, state.StateID)
+	defer got.Close()
+	if got.State().StateID != state.StateID {
+		t.Fatalf("StateID = %q, want %q", got.State().StateID, state.StateID)
 	}
 	if _, err := stateForAction(rt, "click", "Safari", state.StateID); err == nil {
 		t.Fatalf("stateForAction mismatched app = nil, want error")
@@ -201,4 +203,79 @@ func normalizeJSON(t *testing.T, v any) any {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
 	return out
+}
+
+func TestStateForActionRetainsSnapshot(t *testing.T) {
+	rt := &runtimeState{sessions: session.NewStore()}
+	defer rt.sessions.Close()
+	snapshot := &leasedActionSnapshot{state: computeruse.AppState{App: computeruse.AppInfo{Name: "Finder", BundleID: "com.apple.finder", PID: 123}}}
+	state, err := rt.sessions.Bind(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := stateForAction(rt, "click", "Finder", state.StateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
+	if _, err := rt.sessions.Bind(fakeActionSnapshot{state: snapshot.state}); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.closed {
+		t.Fatal("snapshot released while action holds lease")
+	}
+	if _, _, err := lease.Resolve(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !snapshot.closed {
+		t.Fatal("snapshot not released after action")
+	}
+}
+
+type leasedActionSnapshot struct {
+	state  computeruse.AppState
+	closed bool
+}
+
+func (s *leasedActionSnapshot) State() computeruse.AppState { return s.state }
+func (s *leasedActionSnapshot) Resolve(index int) (*axuiautomation.Element, computeruse.ElementNode, error) {
+	if s.closed {
+		return nil, computeruse.ElementNode{}, fmt.Errorf("closed snapshot")
+	}
+	return nil, computeruse.ElementNode{Index: index}, nil
+}
+func (s *leasedActionSnapshot) Close() error { s.closed = true; return nil }
+
+func TestStateForActionRejectionReleasesLease(t *testing.T) {
+	for _, name := range []string{"app", "url"} {
+		t.Run(name, func(t *testing.T) {
+			rt := &runtimeState{sessions: session.NewStore(), urlPolicy: policy.NewURLPolicy([]string{"example.com"})}
+			defer rt.sessions.Close()
+			snapshot := &leasedActionSnapshot{state: computeruse.AppState{
+				App: computeruse.AppInfo{Name: "Brave Browser", BundleID: "com.brave.Browser", PID: 123},
+			}}
+			app := "wrong app"
+			if name == "url" {
+				app = "Brave"
+				snapshot.state.Tree = []computeruse.ElementNode{{Role: "AXTextField", Description: "Address and search bar", Value: "https://example.com"}}
+			}
+			state, err := rt.sessions.Bind(snapshot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if lease, err := stateForAction(rt, "click", app, state.StateID); err == nil {
+				lease.Close()
+				t.Fatal("invalid action accepted")
+			}
+			if err := rt.sessions.InvalidateSession(state.SessionID); err != nil {
+				t.Fatal(err)
+			}
+			if !snapshot.closed {
+				t.Fatal("rejected action leaked its lease")
+			}
+		})
+	}
 }

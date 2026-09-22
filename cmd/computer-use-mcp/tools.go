@@ -12,6 +12,7 @@ import (
 	"github.com/tmc/axmcp/internal/computeruse"
 	"github.com/tmc/axmcp/internal/computeruse/appstate"
 	"github.com/tmc/axmcp/internal/computeruse/input"
+	"github.com/tmc/axmcp/internal/computeruse/session"
 	"github.com/tmc/axmcp/internal/ui/permissions"
 )
 
@@ -127,10 +128,12 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 		if res, payload, ok := actionBlockedForIntervention(rt, "click"); ok {
 			return res, payload, nil
 		}
-		state, err := stateForAction(rt, "click", args.App, args.StateID)
+		lease, err := stateForAction(rt, "click", args.App, args.StateID)
 		if err != nil {
 			return staleStateResult("click", err)
 		}
+		defer lease.Close()
+		state := lease.State()
 		clickCount := args.ClickCount
 		if clickCount <= 0 {
 			clickCount = 1
@@ -140,7 +143,7 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 			if err != nil {
 				return toolError(err), nil, nil
 			}
-			el, node, err := rt.sessions.Resolve(args.StateID, index)
+			el, node, err := lease.Resolve(index)
 			if err != nil {
 				return staleStateResult("click", err)
 			}
@@ -158,7 +161,7 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 		if args.X == nil || args.Y == nil {
 			return toolError(missingCoordinatesError()), nil, nil
 		}
-		root, _, err := rt.sessions.Resolve(args.StateID, 0)
+		root, _, err := lease.Resolve(0)
 		if err != nil {
 			return staleStateResult("click", err)
 		}
@@ -199,15 +202,17 @@ func registerPerformSecondaryAction(s *mcp.Server, rt *runtimeState) {
 		if res, payload, ok := actionBlockedForIntervention(rt, args.Action); ok {
 			return res, payload, nil
 		}
-		state, err := stateForAction(rt, args.Action, args.App, args.StateID)
+		lease, err := stateForAction(rt, args.Action, args.App, args.StateID)
 		if err != nil {
 			return staleStateResult(args.Action, err)
 		}
+		defer lease.Close()
+		state := lease.State()
 		index, err := parseElementIndex(args.ElementIndex)
 		if err != nil {
 			return toolError(err), nil, nil
 		}
-		el, node, err := rt.sessions.Resolve(args.StateID, index)
+		el, node, err := lease.Resolve(index)
 		if err != nil {
 			return staleStateResult(args.Action, err)
 		}
@@ -242,15 +247,17 @@ func registerSetValue(s *mcp.Server, rt *runtimeState) {
 		if res, payload, ok := actionBlockedForIntervention(rt, "set_value"); ok {
 			return res, payload, nil
 		}
-		state, err := stateForAction(rt, "set_value", args.App, args.StateID)
+		lease, err := stateForAction(rt, "set_value", args.App, args.StateID)
 		if err != nil {
 			return staleStateResult("set_value", err)
 		}
+		defer lease.Close()
+		state := lease.State()
 		index, err := parseElementIndex(args.ElementIndex)
 		if err != nil {
 			return toolError(err), nil, nil
 		}
-		el, node, err := rt.sessions.Resolve(args.StateID, index)
+		el, node, err := lease.Resolve(index)
 		if err != nil {
 			return staleStateResult("set_value", err)
 		}
@@ -286,15 +293,17 @@ func registerScroll(s *mcp.Server, rt *runtimeState) {
 		if res, payload, ok := actionBlockedForIntervention(rt, "scroll"); ok {
 			return res, payload, nil
 		}
-		state, err := stateForAction(rt, "scroll", args.App, args.StateID)
+		lease, err := stateForAction(rt, "scroll", args.App, args.StateID)
 		if err != nil {
 			return staleStateResult("scroll", err)
 		}
+		defer lease.Close()
+		state := lease.State()
 		index, err := parseElementIndex(args.ElementIndex)
 		if err != nil {
 			return toolError(err), nil, nil
 		}
-		el, node, err := rt.sessions.Resolve(args.StateID, index)
+		el, node, err := lease.Resolve(index)
 		if err != nil {
 			return staleStateResult("scroll", err)
 		}
@@ -331,11 +340,13 @@ func registerDrag(s *mcp.Server, rt *runtimeState) {
 		if res, payload, ok := actionBlockedForIntervention(rt, "drag"); ok {
 			return res, payload, nil
 		}
-		state, err := stateForAction(rt, "drag", args.App, args.StateID)
+		lease, err := stateForAction(rt, "drag", args.App, args.StateID)
 		if err != nil {
 			return staleStateResult("drag", err)
 		}
-		root, _, err := rt.sessions.Resolve(args.StateID, 0)
+		defer lease.Close()
+		state := lease.State()
+		root, _, err := lease.Resolve(0)
 		if err != nil {
 			return staleStateResult("drag", err)
 		}
@@ -381,10 +392,12 @@ func registerPressKey(s *mcp.Server, rt *runtimeState) {
 		if res, payload, ok := actionBlockedForIntervention(rt, "press_key"); ok {
 			return res, payload, nil
 		}
-		state, err := stateForAction(rt, "press_key", args.App, args.StateID)
+		lease, err := stateForAction(rt, "press_key", args.App, args.StateID)
 		if err != nil {
 			return staleStateResult("press_key", err)
 		}
+		defer lease.Close()
+		state := lease.State()
 		if err := input.SendKeyComboToPID(int32(state.App.PID), args.Key); err != nil {
 			return toolError(err), nil, nil
 		}
@@ -416,16 +429,18 @@ func registerTypeText(s *mcp.Server, rt *runtimeState) {
 		if res, payload, ok := actionBlockedForIntervention(rt, "type_text"); ok {
 			return res, payload, nil
 		}
-		state, err := stateForAction(rt, "type_text", args.App, args.StateID)
+		lease, err := stateForAction(rt, "type_text", args.App, args.StateID)
 		if err != nil {
 			return staleStateResult("type_text", err)
 		}
+		defer lease.Close()
+		state := lease.State()
 		if args.ElementIndex != nil {
 			index, err := parseElementIndex(*args.ElementIndex)
 			if err != nil {
 				return toolError(err), nil, nil
 			}
-			el, node, err := rt.sessions.Resolve(args.StateID, index)
+			el, node, err := lease.Resolve(index)
 			if err != nil {
 				return staleStateResult("type_text", err)
 			}
@@ -442,7 +457,7 @@ func registerTypeText(s *mcp.Server, rt *runtimeState) {
 				Message:   fmt.Sprintf("typed into %s", formatNode(node)),
 			}, nil
 		}
-		root, _, err := rt.sessions.Resolve(args.StateID, 0)
+		root, _, err := lease.Resolve(0)
 		if err != nil {
 			return staleStateResult("type_text", err)
 		}
@@ -600,27 +615,30 @@ func missingAppStateError(app string) error {
 	return fmt.Errorf("no current app state for %q; call get_app_state again", app)
 }
 
-func stateForAction(rt *runtimeState, action, app, stateID string) (computeruse.AppState, error) {
+func stateForAction(rt *runtimeState, action, app, stateID string) (*session.Lease, error) {
 	stateID = strings.TrimSpace(stateID)
 	if stateID == "" {
-		return computeruse.AppState{}, fmt.Errorf("%s requires state_id from get_app_state; call get_app_state again", action)
+		return nil, fmt.Errorf("%s requires state_id from get_app_state; call get_app_state again", action)
 	}
 	if rt == nil || rt.sessions == nil {
-		return computeruse.AppState{}, fmt.Errorf("%s has no session store; call get_app_state again", action)
+		return nil, fmt.Errorf("%s has no session store; call get_app_state again", action)
 	}
-	state, ok := rt.sessions.Get(stateID)
-	if !ok {
-		return computeruse.AppState{}, fmt.Errorf("unknown or stale state_id %q; call get_app_state again", stateID)
+	lease, err := rt.sessions.Acquire(stateID)
+	if err != nil {
+		return nil, err
 	}
+	state := lease.State()
 	if !stateMatchesSelector(state, app) {
-		return computeruse.AppState{}, fmt.Errorf("state_id %q belongs to %s, not %q; call get_app_state again", stateID, state.App.BundleID, app)
+		_ = lease.Close()
+		return nil, fmt.Errorf("state_id %q belongs to %s, not %q; call get_app_state again", stateID, state.App.BundleID, app)
 	}
 	if rt.urlPolicy != nil {
 		if err := rt.urlPolicy.CheckState(state); err != nil {
-			return computeruse.AppState{}, err
+			_ = lease.Close()
+			return nil, err
 		}
 	}
-	return state, nil
+	return lease, nil
 }
 
 func stateMatchesSelector(state computeruse.AppState, selector string) bool {
