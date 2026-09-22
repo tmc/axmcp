@@ -35,7 +35,7 @@ func registerComputerUseTools(s *mcp.Server, rt *runtimeState) {
 func registerListApps(s *mcp.Server, rt *runtimeState) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_apps",
-		Description: "List the apps on this computer. Returns the set of apps that are currently running, as well as any that have been used in the last 14 days, including details on usage frequency",
+		Description: "List currently running apps with their names, bundle IDs, and process IDs.",
 		Annotations: readOnlyToolAnnotations(),
 		InputSchema: exactObjectSchema(map[string]any{}),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ listAppsInput) (*mcp.CallToolResult, any, error) {
