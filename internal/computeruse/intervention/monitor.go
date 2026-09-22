@@ -6,10 +6,10 @@ import (
 	"os"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/coregraphics"
-	"github.com/tmc/apple/kernel"
 )
 
 const defaultQuietPeriod = 750 * time.Millisecond
@@ -153,7 +153,7 @@ func (m *Monitor) isEnabled() bool {
 	return m.enabled
 }
 
-func (m *Monitor) callback(_ uintptr, typ coregraphics.CGEventType, event uintptr, _ kernel.Pointer) uintptr {
+func (m *Monitor) callback(_ coregraphics.CGEventTapProxy, typ coregraphics.CGEventType, event coregraphics.CGEventRef, _ unsafe.Pointer) coregraphics.CGEventRef {
 	if typ == coregraphics.KCGEventTapDisabledByTimeout || typ == coregraphics.KCGEventTapDisabledByUserInput {
 		m.mu.Lock()
 		tap := m.tap
@@ -170,11 +170,11 @@ func (m *Monitor) callback(_ uintptr, typ coregraphics.CGEventType, event uintpt
 	return event
 }
 
-func eventSourcePID(event uintptr) int64 {
+func eventSourcePID(event coregraphics.CGEventRef) int64 {
 	if event == 0 {
 		return 0
 	}
-	return coregraphics.CGEventGetIntegerValueField(coregraphics.CGEventRef(event), coregraphics.KCGEventSourceUnixProcessID)
+	return coregraphics.CGEventGetIntegerValueField(event, coregraphics.KCGEventSourceUnixProcessID)
 }
 
 func eventMask(types ...coregraphics.CGEventType) coregraphics.CGEventMask {

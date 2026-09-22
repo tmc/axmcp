@@ -9,7 +9,6 @@ import (
 
 	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/coregraphics"
-	"github.com/tmc/apple/kernel"
 )
 
 const (
@@ -95,7 +94,7 @@ func mouseInterventionMask() coregraphics.CGEventMask {
 	return mask
 }
 
-func ghostCursorInterventionCallback(_ uintptr, typ coregraphics.CGEventType, event uintptr, userInfo kernel.Pointer) uintptr {
+func ghostCursorInterventionCallback(_ coregraphics.CGEventTapProxy, typ coregraphics.CGEventType, event coregraphics.CGEventRef, userInfo unsafe.Pointer) coregraphics.CGEventRef {
 	switch typ {
 	case coregraphics.KCGEventTapDisabledByTimeout, coregraphics.KCGEventTapDisabledByUserInput:
 		if c := interventionController(unsafe.Pointer(userInfo)); c != nil && c.interventionTap != 0 {
@@ -107,10 +106,10 @@ func ghostCursorInterventionCallback(_ uintptr, typ coregraphics.CGEventType, ev
 	if c == nil || event == 0 {
 		return event
 	}
-	if pid := int(coregraphics.CGEventGetIntegerValueField(coregraphics.CGEventRef(event), coregraphics.KCGEventSourceUnixProcessID)); pid == os.Getpid() {
+	if pid := int(coregraphics.CGEventGetIntegerValueField(event, coregraphics.KCGEventSourceUnixProcessID)); pid == os.Getpid() {
 		return event
 	}
-	loc := coregraphics.CGEventGetLocation(coregraphics.CGEventRef(event))
+	loc := coregraphics.CGEventGetLocation(event)
 	go c.handleUserIntervention(int(math.Round(loc.X)), int(math.Round(loc.Y)))
 	return event
 }
