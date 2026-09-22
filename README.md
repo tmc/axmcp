@@ -235,7 +235,7 @@ Primitive tools cover element discovery, pointer and keyboard input, window mani
 
 `computer-use-mcp` is the stateful, session-oriented compatibility server. It holds the narrow Codex Computer Use tool contract on top of the same accessibility and screenshot primitives.
 
-Use `native_observe` and `native_act` for exact process/window targeting, single-use state tokens and separate execution, observation and postcondition results. See [Native observations and actions](docs/native-observations.md) for inputs, focus requirements and limitations.
+Use `native_discover` and `native_select` to retain a window on the current connection, and `native_release` when finished. Use `native_observe` and `native_act` for exact process/window targeting, single-use state tokens and separate execution, observation and postcondition results. See [Native observations and actions](docs/native-observations.md) for inputs, focus requirements and limitations.
 
 The legacy action surface starts with `get_app_state` and uses its returned state and element indices. The server also exposes the `mcp://permissions/status` resource; it has no resource templates.
 

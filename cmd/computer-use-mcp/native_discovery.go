@@ -39,6 +39,7 @@ type nativeWindowSet interface {
 	Targets() []nativeTarget
 	ProcessStart() nativeStart
 	Truncated() bool
+	Validate(context.Context, int) (nativeTarget, error)
 	Capture(context.Context, int) (session.Snapshot, nativeTarget, error)
 	Close() error
 }
@@ -49,7 +50,7 @@ type nativeDiscoveryBackend interface {
 }
 
 type nativeDiscovery struct {
-	windows    nativeWindowSet
+	windows    *nativeWindowGroup
 	targets    []nativeTarget
 	selections map[string]int
 	expires    time.Time
@@ -75,6 +76,7 @@ func (r *nativeRunner) watchNativeSession(owner *mcp.ServerSession) {
 		r.gate <- struct{}{}
 		defer func() { <-r.gate }()
 		r.clearDiscovery(owner)
+		r.clearTargets(owner)
 		delete(r.watched, owner)
 	}()
 }
@@ -106,6 +108,9 @@ func (r *nativeRunner) close() error {
 	r.closed = true
 	for owner := range r.discoveries {
 		r.clearDiscovery(owner)
+	}
+	for owner := range r.targets {
+		r.clearTargets(owner)
 	}
 	r.observation = nil
 	return r.store.Close()
@@ -150,7 +155,7 @@ func (r *nativeRunner) discover(ctx context.Context, req *mcp.CallToolRequest, i
 		if len(targets) > nativeDiscoveryLimit {
 			return fmt.Errorf("native discovery exceeded window limit")
 		}
-		d := &nativeDiscovery{windows: windows, targets: targets, selections: make(map[string]int), expires: r.now().Add(r.discoveryTTL)}
+		d := &nativeDiscovery{windows: &nativeWindowGroup{nativeWindowSet: windows, refs: 1}, targets: targets, selections: make(map[string]int), expires: r.now().Add(r.discoveryTTL)}
 		for i, target := range targets {
 			if target.App.PID != app.PID || target.Window.WindowID == 0 || target.Start != out.ProcessStart {
 				return fmt.Errorf("invalid discovery target")
@@ -186,21 +191,12 @@ func (r *nativeRunner) discover(ctx context.Context, req *mcp.CallToolRequest, i
 func (r *nativeRunner) observeSelection(ctx context.Context, req *mcp.CallToolRequest, id string) (nativeObservationOutput, error) {
 	var out nativeObservationOutput
 	owner := nativeOwner(req)
-	d := r.discoveries[owner]
-	if d == nil {
-		return out, fmt.Errorf("unknown selection_id; call native_discover")
-	}
-	if !r.now().Before(d.expires) {
-		r.clearDiscovery(owner)
-		return out, fmt.Errorf("selection_id expired; call native_discover")
-	}
-	index, ok := d.selections[id]
-	if !ok {
-		return out, fmt.Errorf("unknown selection_id; call native_discover")
+	d, index, err := r.discoveryCandidate(owner, id)
+	if err != nil {
+		return out, err
 	}
 	expected := d.targets[index]
 	out.App = expected.App
-	var err error
 	out.Permissions, out.Approval, err = r.backend.Authorize(ctx, req, expected.App, true)
 	if err != nil {
 		return out, err

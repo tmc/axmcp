@@ -335,3 +335,112 @@ func TestNativeDiscoveryLimit(t *testing.T) {
 		t.Fatal("oversized backend result leaked")
 	}
 }
+
+func (s *nativeTestWindowSet) Validate(ctx context.Context, index int) (nativeTarget, error) {
+	if s.closed.Load() != 0 {
+		return nativeTarget{}, fmt.Errorf("validate used closed window set")
+	}
+	target := s.targets[index]
+	if s.changeBirth {
+		target.Start.Microseconds++
+	}
+	return target, ctx.Err()
+}
+
+func TestNativeTargetMCPOwnership(t *testing.T) {
+	r, b := newDiscoveryTestRunner(t)
+	server := mcp.NewServer(&mcp.Implementation{Name: "discovery-test", Version: "1"}, nil)
+	registerNativeTools(server, r)
+	connect := func() *mcp.ClientSession {
+		st, ct := mcp.NewInMemoryTransports()
+		ss, err := server.Connect(t.Context(), st, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { ss.Close() })
+		c := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+		cs, err := c.Connect(t.Context(), ct, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { cs.Close() })
+		return cs
+	}
+	a, c := connect(), connect()
+	result, err := a.CallTool(t.Context(), &mcp.CallToolParams{Name: "native_discover", Arguments: nativeDiscoverInput{App: "Fixture"}})
+	if err != nil || result.IsError {
+		t.Fatalf("MCP discovery=%v %v", result, err)
+	}
+	var out nativeDiscoverOutput
+	raw, _ := json.Marshal(result.StructuredContent)
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Windows) != 2 {
+		t.Fatal("missing windows")
+	}
+	selectedResult, err := a.CallTool(t.Context(), &mcp.CallToolParams{Name: "native_select", Arguments: nativeSelectInput{SelectionID: out.Windows[0].SelectionID}})
+	if err != nil || selectedResult.IsError {
+		t.Fatalf("select: %v %v", selectedResult, err)
+	}
+	var selected nativeSelectOutput
+	raw, _ = json.Marshal(selectedResult.StructuredContent)
+	if err := json.Unmarshal(raw, &selected); err != nil {
+		t.Fatal(err)
+	}
+	if selected.TargetHandle == "" {
+		t.Fatal("missing target handle")
+	}
+	other, err := c.CallTool(t.Context(), &mcp.CallToolParams{Name: "native_observe", Arguments: nativeObserveInput{TargetHandle: selected.TargetHandle}})
+	if err == nil && !other.IsError {
+		t.Fatal("another client used retained handle")
+	}
+	foreignRelease, err := c.CallTool(t.Context(), &mcp.CallToolParams{Name: "native_release", Arguments: nativeReleaseInput{TargetHandle: selected.TargetHandle}})
+	if err != nil || foreignRelease.IsError {
+		t.Fatalf("foreign release: %v %v", foreignRelease, err)
+	}
+	var released nativeReleaseOutput
+	raw, _ = json.Marshal(foreignRelease.StructuredContent)
+	if err := json.Unmarshal(raw, &released); err != nil {
+		t.Fatal(err)
+	}
+	if released.Released {
+		t.Fatal("another client released retained handle")
+	}
+	own, err := a.CallTool(t.Context(), &mcp.CallToolParams{Name: "native_observe", Arguments: nativeObserveInput{TargetHandle: selected.TargetHandle}})
+	if err != nil || own.IsError {
+		t.Fatalf("own retained handle failed: %v %v", own, err)
+	}
+	var observed nativeObservationOutput
+	raw, _ = json.Marshal(own.StructuredContent)
+	if err := json.Unmarshal(raw, &observed); err != nil {
+		t.Fatal(err)
+	}
+	foreignAct, err := c.CallTool(t.Context(), &mcp.CallToolParams{Name: "native_act", Arguments: nativeTestClick(observed)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var act nativeActOutput
+	raw, _ = json.Marshal(foreignAct.StructuredContent)
+	if err := json.Unmarshal(raw, &act); err != nil {
+		t.Fatal(err)
+	}
+	if act.Execution != "not_dispatched" || act.ErrorText == "" {
+		t.Fatalf("foreign action: %+v", act)
+	}
+	// Transport response completed; inspect shared state under the same gate.
+	if err := r.run(t.Context(), 0, func(context.Context) error {
+		if r.observation == nil || r.observation.output.StateID != observed.StateID || b.calls != 0 {
+			return fmt.Errorf("foreign action consumed owner observation")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	a.Close()
+	select {
+	case <-b.sets[0].done:
+	case <-time.After(time.Second):
+		t.Fatal("disconnect did not release candidates")
+	}
+}

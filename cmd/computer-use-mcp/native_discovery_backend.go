@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/x/axuiautomation"
 	"github.com/tmc/axmcp/internal/computeruse"
 	"github.com/tmc/axmcp/internal/computeruse/session"
@@ -123,4 +124,58 @@ func (g *nativeOSWindowSet) Close() error {
 		g.app = nil
 	}
 	return nil
+}
+
+func (g *nativeOSWindowSet) Validate(ctx context.Context, index int) (nativeTarget, error) {
+	if g.app == nil || index < 0 || index >= len(g.windows) {
+		return nativeTarget{}, fmt.Errorf("discovery window unavailable")
+	}
+	target := g.targets[index]
+	before, err := nativeProcessStart(target.App.PID)
+	if err != nil {
+		return nativeTarget{}, err
+	}
+	if before != g.start {
+		return nativeTarget{}, fmt.Errorf("process changed since discovery")
+	}
+	window := g.windows[index]
+	if err := nativeAXBudget(ctx, window); err != nil {
+		return nativeTarget{}, err
+	}
+	metadata, ok := readNativeWindow(window)
+	if !ok || metadata.WindowID != target.Window.WindowID {
+		return nativeTarget{}, fmt.Errorf("native selection instance changed")
+	}
+	if err := nativeAXBudget(ctx, g.app.Root()); err != nil {
+		return nativeTarget{}, err
+	}
+	matches := 0
+	for _, current := range g.app.WindowList() {
+		if current == nil {
+			continue
+		}
+		if corefoundation.CFEqual(corefoundation.CFTypeRef(current.Ref()), corefoundation.CFTypeRef(window.Ref())) {
+			matches++
+		}
+		current.Release()
+	}
+	if matches != 1 {
+		return nativeTarget{}, fmt.Errorf("native window reference unavailable or ambiguous")
+	}
+	if err := nativeAXBudget(ctx, window); err != nil {
+		return nativeTarget{}, err
+	}
+	metadata.Title = window.Title()
+	after, err := nativeProcessStart(target.App.PID)
+	if err != nil {
+		return nativeTarget{}, err
+	}
+	if before != after {
+		return nativeTarget{}, fmt.Errorf("process changed during selection")
+	}
+	if err := ctx.Err(); err != nil {
+		return nativeTarget{}, err
+	}
+	target.Window = metadata
+	return target, nil
 }

@@ -1,7 +1,7 @@
 # Native observations and actions
 
-The `computer-use-mcp` server provides `native_discover`, `native_observe` and
-`native_act` for
+The `computer-use-mcp` server provides `native_discover`, `native_select`,
+`native_release`, `native_observe` and `native_act` for
 interactions tied to one process instance and window. Start each turn with an
 observation. Existing `get_app_state` and legacy action tools remain separate;
 their state tokens cannot be used with the native pair.
@@ -38,6 +38,28 @@ using them finishes. A new discovery or failed selection leaves the current
 observation intact. A successful observation replaces it. The native backend
 still has one current action observation; it is not a multi-surface state store.
 A selection token alone can never authorize `native_act`.
+
+For a longer-lived selection, call `native_select` with an unexpired
+`selection_id`. It returns a `target_handle` bound to the retained window and
+process instance, without capturing or activating it. Observe that handle with:
+
+```json
+{"target_handle":"returned target_handle"}
+```
+
+Do not combine this mode with `selection_id`, `app` or `window_id`. The handle
+survives candidate expiry, rediscovery and replacement of the current observation.
+Post-action capture uses the same retained window reference. Permission and
+approval checks still apply on each operation.
+
+Call `native_release` with the `target_handle` when finished. It returns
+`released: true` once and invalidates the current observation if it came from
+that handle. Unknown or foreign handles return `released: false`. Release never
+closes the application or window. Handles belong to one MCP connection; disconnect
+and server shutdown release them after in-flight operations finish. They do not
+provide cross-client handoff. Each client can retain at most 64 targets. Targets
+share their discovery's window group, so its native references remain retained
+until the candidates and all selected targets using that group are released.
 
 Observe a running app by its PID, unique full name or bundle identifier:
 
