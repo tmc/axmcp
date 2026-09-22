@@ -1232,20 +1232,21 @@ func registerAXFocus(s *mcp.Server) {
 }
 
 type axOCRInput struct {
-	App                string  `json:"app"`
-	Window             string  `json:"window,omitempty"`
-	Contains           string  `json:"contains,omitempty"`
-	Role               string  `json:"role,omitempty"`
-	Find               string  `json:"find,omitempty"`
-	JSON               bool    `json:"json,omitempty"`
-	Layout             bool    `json:"layout,omitempty"`
-	Annotated          bool    `json:"annotated,omitempty"`
-	Cols               int     `json:"cols,omitempty"`
-	Rows               int     `json:"rows,omitempty"`
-	Candidates         int     `json:"candidates,omitempty"`
-	MinConfidence      float32 `json:"min_confidence,omitempty"`
-	LanguageCorrection *bool   `json:"language_correction,omitempty"`
-	Fast               bool    `json:"fast,omitempty"`
+	App                string     `json:"app"`
+	Window             string     `json:"window,omitempty"`
+	Contains           string     `json:"contains,omitempty"`
+	Role               string     `json:"role,omitempty"`
+	Find               string     `json:"find,omitempty"`
+	JSON               bool       `json:"json,omitempty"`
+	Layout             bool       `json:"layout,omitempty"`
+	Annotated          bool       `json:"annotated,omitempty"`
+	Cols               int        `json:"cols,omitempty"`
+	Rows               int        `json:"rows,omitempty"`
+	Candidates         int        `json:"candidates,omitempty"`
+	MinConfidence      float32    `json:"min_confidence,omitempty"`
+	LanguageCorrection *bool      `json:"language_correction,omitempty"`
+	Fast               bool       `json:"fast,omitempty"`
+	Region             *ocrRegion `json:"region,omitempty"`
 }
 
 // ocrOptionsFromArgs applies the recognition knobs an ax_ocr caller set on top
@@ -1260,6 +1261,9 @@ func ocrOptionsFromArgs(args axOCRInput) ocrOptions {
 		opts.LanguageCorrection = *args.LanguageCorrection
 	}
 	opts.Fast = args.Fast
+	if args.Region != nil {
+		opts.Region = args.Region
+	}
 	return opts
 }
 
@@ -1276,6 +1280,7 @@ func registerAXOCR(s *mcp.Server) {
 			"Useful for VMs, custom-drawn UIs, and elements without accessibility text.\n\n" +
 			"Recognition knobs, rarely needed: candidates keeps N alternate readings per region (default 1; higher values return spelling variants of the same pixels, sharing one bounding box), " +
 			"min_confidence drops low-confidence results, language_correction=false stops spell-correction toward dictionary words and suits identifiers and hex addresses, " +
+			"region restricts recognition to a sub-rectangle {x,y,w,h} in local coordinates, " +
 			"and fast trades accuracy for speed but loses small text entirely. " +
 			"When labels several pixels apart come back fused into one block, that is capture resolution, not a knob: scope the capture with contains/role instead.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args axOCRInput) (*mcp.CallToolResult, any, error) {

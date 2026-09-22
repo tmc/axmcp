@@ -293,13 +293,36 @@ func capturePipelineScreenshot(pc *pipeContext, opts pipelineScreenshotOptions) 
 	return png, desc, nil
 }
 
-func capturePipelineOCRScope(pc *pipeContext) (*ocrCapture, error) {
+func parseOCRRegion(s string) (*ocrRegion, error) {
+	s = strings.TrimSpace(s)
+	parts := strings.FieldsFunc(s, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t'
+	})
+	if len(parts) != 4 {
+		return nil, fmt.Errorf("invalid region %q: expected 4 comma or space separated numbers (x,y,w,h)", s)
+	}
+	x, err1 := strconv.Atoi(parts[0])
+	y, err2 := strconv.Atoi(parts[1])
+	w, err3 := strconv.Atoi(parts[2])
+	h, err4 := strconv.Atoi(parts[3])
+	if err1 != nil || err2 != nil || err3 != nil || err4 != nil {
+		return nil, fmt.Errorf("invalid region %q: coordinates must be integers", s)
+	}
+	if w <= 0 || h <= 0 {
+		return nil, fmt.Errorf("invalid region %q: width and height must be > 0", s)
+	}
+	return &ocrRegion{X: x, Y: y, W: w, H: h}, nil
+}
+
+func capturePipelineOCRScopeWithOptions(pc *pipeContext, opts ocrOptions) (*ocrCapture, error) {
 	if pc == nil {
 		return nil, fmt.Errorf("ocr: no pipeline context")
 	}
 	capture := &ocrCapture{}
+	var lastErr error
 	if pc.element != nil {
-		if results, png, w, h, err := ocrElementWithSize(pc.element, defaultOCROptions()); err == nil {
+		results, png, w, h, err := ocrElementWithSize(pc.element, opts)
+		if err == nil {
 			capture.target = pc.element
 			capture.desc = formatSnapshot(snapshotElement(pc.element, 0, 0))
 			capture.imgW = w
@@ -309,8 +332,15 @@ func capturePipelineOCRScope(pc *pipeContext) (*ocrCapture, error) {
 			capture.scope = &ocrRedactionScope{root: pc.element}
 			return capture, nil
 		}
+		if isInvalidRegionErr(err) {
+			return nil, fmt.Errorf("ocr: %w", err)
+		}
+		lastErr = err
 	}
 	if pc.app == nil {
+		if lastErr != nil {
+			return nil, fmt.Errorf("ocr: %w", lastErr)
+		}
 		return nil, fmt.Errorf("ocr: no element or app in context")
 	}
 	target := pc.app.MainWindow()
@@ -321,9 +351,13 @@ func capturePipelineOCRScope(pc *pipeContext) (*ocrCapture, error) {
 		}
 	}
 	if target == nil {
+		if lastErr != nil {
+			return nil, fmt.Errorf("ocr: %w", lastErr)
+		}
 		return nil, fmt.Errorf("ocr: no window in context")
 	}
-	if results, png, w, h, err := ocrElementWithSize(target, defaultOCROptions()); err == nil {
+	results, png, w, h, err := ocrElementWithSize(target, opts)
+	if err == nil {
 		capture.target = target
 		capture.desc = formatSnapshot(snapshotElement(target, 0, 0))
 		capture.imgW = w
@@ -333,6 +367,10 @@ func capturePipelineOCRScope(pc *pipeContext) (*ocrCapture, error) {
 		capture.scope = &ocrRedactionScope{root: target}
 		return capture, nil
 	}
+	if isInvalidRegionErr(err) {
+		return nil, fmt.Errorf("ocr: %w", err)
+	}
+	lastErr = err
 
 	title := target.Title()
 	var appIDs []string
@@ -348,7 +386,8 @@ func capturePipelineOCRScope(pc *pipeContext) (*ocrCapture, error) {
 		}
 	}
 	for _, appID := range appIDs {
-		if results, w, h, err := ocrWindow(appID, title, defaultOCROptions()); err == nil {
+		results, w, h, err := ocrWindow(appID, title, opts)
+		if err == nil {
 			capture.target = target
 			capture.desc = formatSnapshot(snapshotElement(target, 0, 0))
 			capture.imgW = w
@@ -356,8 +395,19 @@ func capturePipelineOCRScope(pc *pipeContext) (*ocrCapture, error) {
 			capture.result = results
 			return capture, nil
 		}
+		if isInvalidRegionErr(err) {
+			return nil, fmt.Errorf("ocr: %w", err)
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("ocr: %w", lastErr)
 	}
 	return nil, fmt.Errorf("ocr: could not capture current scope")
+}
+
+func capturePipelineOCRScope(pc *pipeContext) (*ocrCapture, error) {
+	return capturePipelineOCRScopeWithOptions(pc, defaultOCROptions())
 }
 
 func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) error {
@@ -856,6 +906,7 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 		var findQuery string
 		jsonOut := false
 		layoutOut := false
+		opts := defaultOCROptions()
 		// Zero lets renderOCRLayout size the grid to the text.
 		layoutCols, layoutRows := 0, 0
 		for i := 0; i < len(args); i++ {
@@ -883,10 +934,19 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 					}
 					i++
 				}
+			case "--region", "-r":
+				if i+1 < len(args) {
+					reg, err := parseOCRRegion(args[i+1])
+					if err != nil {
+						return err
+					}
+					opts.Region = reg
+					i++
+				}
 			}
 		}
 
-		capture, err := capturePipelineOCRScope(pc)
+		capture, err := capturePipelineOCRScopeWithOptions(pc, opts)
 		if err != nil {
 			return err
 		}
@@ -1014,7 +1074,7 @@ func execStageWriter(pc *pipeContext, parts []string, buf *strings.Builder) erro
 			"  children\n"+
 			"  first\n"+
 			"  find [--role R] [--title T] [--contains C] [--id I]  (normalized text match)\n"+
-			"  ocr [--find TEXT] [--json] [--layout] [--cols N] [--rows N]\n"+
+			"  ocr [--find TEXT] [--json] [--layout] [--cols N] [--rows N] [--region X,Y,W,H]\n"+
 			"  ocr-hover <text>\n"+
 			"  highlight <text>\n"+
 			"  .\n"+

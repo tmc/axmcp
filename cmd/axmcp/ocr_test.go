@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/tmc/apple/corefoundation"
 )
 
 func TestExpandOCRResultsAtOrigin(t *testing.T) {
@@ -211,5 +213,216 @@ func TestRenderOCRLayoutMarksPaneBoundaries(t *testing.T) {
 		if strings.Contains(line, "navigator") && !strings.Contains(line, "|") {
 			t.Errorf("row %q spans both panes without a boundary marker", line)
 		}
+	}
+}
+
+func TestROIToCGRect(t *testing.T) {
+	tests := []struct {
+		name string
+		roi  *ocrRegion
+		imgW int
+		imgH int
+		want struct{ x, y, w, h float64 }
+	}{
+		{
+			name: "nil region defaults to full image",
+			roi:  nil,
+			imgW: 1000,
+			imgH: 500,
+			want: struct{ x, y, w, h float64 }{0, 0, 1, 1},
+		},
+		{
+			name: "zero width/height defaults to full image",
+			roi:  &ocrRegion{X: 10, Y: 10, W: 0, H: 0},
+			imgW: 1000,
+			imgH: 500,
+			want: struct{ x, y, w, h float64 }{0, 0, 1, 1},
+		},
+		{
+			name: "sub-region normalized to vision space (bottom-left origin)",
+			roi:  &ocrRegion{X: 300, Y: 100, W: 400, H: 200},
+			imgW: 1000,
+			imgH: 500,
+			want: struct{ x, y, w, h float64 }{0.3, 0.4, 0.4, 0.4},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := roiToCGRect(tt.roi, tt.imgW, tt.imgH)
+			if got.Origin.X != tt.want.x || got.Origin.Y != tt.want.y || got.Size.Width != tt.want.w || got.Size.Height != tt.want.h {
+				t.Errorf("roiToCGRect(%+v, %d, %d) = origin(%v,%v) size(%v,%v), want origin(%v,%v) size(%v,%v)",
+					tt.roi, tt.imgW, tt.imgH,
+					got.Origin.X, got.Origin.Y, got.Size.Width, got.Size.Height,
+					tt.want.x, tt.want.y, tt.want.w, tt.want.h)
+			}
+		})
+	}
+}
+
+func TestMapOBSToPixel(t *testing.T) {
+	tests := []struct {
+		name                       string
+		bb                         struct{ x, y, w, h float64 }
+		roi                        *ocrRegion
+		imgW, imgH                 int
+		wantX, wantY, wantW, wantH int
+	}{
+		{
+			name:  "roi-relative box maps to full-image pixels",
+			bb:    struct{ x, y, w, h float64 }{x: 0.1852, y: 0.0, w: 0.1, h: 0.1},
+			roi:   &ocrRegion{X: 300, Y: 0, W: 400, H: 1000},
+			imgW:  1000,
+			imgH:  1000,
+			wantX: 374,
+			wantY: 900,
+			wantW: 40,
+			wantH: 100,
+		},
+		{
+			name:  "nil ROI uses full image coordinates",
+			bb:    struct{ x, y, w, h float64 }{x: 0.1, y: 0.2, w: 0.3, h: 0.4},
+			roi:   nil,
+			imgW:  1000,
+			imgH:  500,
+			wantX: 100,
+			wantY: 200, // (1 - 0.2 - 0.4) * 500 = 200
+			wantW: 300,
+			wantH: 200,
+		},
+		{
+			name:  "sub-region ROI maps back to full image top-left coordinates",
+			bb:    struct{ x, y, w, h float64 }{x: 0.0, y: 0.5, w: 0.5, h: 0.25},
+			roi:   &ocrRegion{X: 100, Y: 200, W: 300, H: 400},
+			imgW:  1000,
+			imgH:  1000,
+			wantX: 100,
+			wantY: 300, // 200 + (1 - 0.5 - 0.25) * 400 = 300
+			wantW: 150, // 0.5 * 300 = 150
+			wantH: 100, // 0.25 * 400 = 100
+		},
+		{
+			name:  "top-left corner of ROI",
+			bb:    struct{ x, y, w, h float64 }{x: 0.0, y: 0.8, w: 0.2, h: 0.2},
+			roi:   &ocrRegion{X: 200, Y: 100, W: 500, H: 500},
+			imgW:  1000,
+			imgH:  1000,
+			wantX: 200,
+			wantY: 100, // 100 + (1 - 0.8 - 0.2) * 500 = 100
+			wantW: 100,
+			wantH: 100,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cgBB := corefoundation.CGRect{
+				Origin: corefoundation.CGPoint{X: tt.bb.x, Y: tt.bb.y},
+				Size:   corefoundation.CGSize{Width: tt.bb.w, Height: tt.bb.h},
+			}
+			px, py, pw, ph := mapOBSToPixel(cgBB, tt.roi, tt.imgW, tt.imgH)
+			if px != tt.wantX || py != tt.wantY || pw != tt.wantW || ph != tt.wantH {
+				t.Errorf("mapOBSToPixel(%+v, %+v, %d, %d) = (%d,%d %dx%d), want (%d,%d %dx%d)",
+					tt.bb, tt.roi, tt.imgW, tt.imgH,
+					px, py, pw, ph,
+					tt.wantX, tt.wantY, tt.wantW, tt.wantH)
+			}
+		})
+	}
+}
+
+func TestParseOCRRegion(t *testing.T) {
+	tests := []struct {
+		input   string
+		want    *ocrRegion
+		wantErr bool
+	}{
+		{"10,20,300,200", &ocrRegion{X: 10, Y: 20, W: 300, H: 200}, false},
+		{"10 20 300 200", &ocrRegion{X: 10, Y: 20, W: 300, H: 200}, false},
+		{" 100 , 50 , 400 , 300 ", &ocrRegion{X: 100, Y: 50, W: 400, H: 300}, false},
+		{"10,20,300", nil, true},
+		{"invalid", nil, true},
+		{"10,20,0,200", nil, true},
+		{"10,20,100,-5", nil, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, err := parseOCRRegion(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("parseOCRRegion(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+			if !tt.wantErr && *got != *tt.want {
+				t.Errorf("parseOCRRegion(%q) = %+v, want %+v", tt.input, *got, *tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateOCRRegion(t *testing.T) {
+	tests := []struct {
+		name    string
+		roi     *ocrRegion
+		imgW    int
+		imgH    int
+		wantErr string
+	}{
+		{
+			name:    "valid region inside capture",
+			roi:     &ocrRegion{X: 100, Y: 200, W: 300, H: 400},
+			imgW:    1000,
+			imgH:    1000,
+			wantErr: "",
+		},
+		{
+			name:    "nil region is valid",
+			roi:     nil,
+			imgW:    1000,
+			imgH:    1000,
+			wantErr: "",
+		},
+		{
+			name:    "out-of-bounds region beyond width and height",
+			roi:     &ocrRegion{X: 99999, Y: 99999, W: 500, H: 500},
+			imgW:    3840,
+			imgH:    2130,
+			wantErr: "region 99999,99999 500x500 lies outside the 3840x2130 capture",
+		},
+		{
+			name:    "negative origin coordinates",
+			roi:     &ocrRegion{X: -10, Y: 0, W: 100, H: 100},
+			imgW:    1000,
+			imgH:    1000,
+			wantErr: "region -10,0 100x100 lies outside the 1000x1000 capture",
+		},
+		{
+			name:    "region extending beyond image right edge",
+			roi:     &ocrRegion{X: 900, Y: 0, W: 200, H: 100},
+			imgW:    1000,
+			imgH:    1000,
+			wantErr: "region 900,0 200x100 lies outside the 1000x1000 capture",
+		},
+		{
+			name:    "empty region",
+			roi:     &ocrRegion{X: 10, Y: 10, W: 0, H: 50},
+			imgW:    1000,
+			imgH:    1000,
+			wantErr: "region 10,10 0x50 is empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateOCRRegion(tt.roi, tt.imgW, tt.imgH)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Errorf("validateOCRRegion(%+v, %d, %d) unexpected error: %v", tt.roi, tt.imgW, tt.imgH, err)
+				}
+			} else {
+				if err == nil || err.Error() != tt.wantErr {
+					t.Errorf("validateOCRRegion(%+v, %d, %d) = %v, want error %q", tt.roi, tt.imgW, tt.imgH, err, tt.wantErr)
+				}
+			}
+		})
 	}
 }

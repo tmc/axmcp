@@ -139,6 +139,10 @@ func captureOCRScope(appName, window, contains, role string, opts ocrOptions) (*
 	}
 	results, png, w, h, err := ocrElementWithSize(win, opts)
 	if err != nil {
+		if isInvalidRegionErr(err) {
+			capture.Close()
+			return nil, err
+		}
 		title := win.Title()
 		if title == "" {
 			title = window

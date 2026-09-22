@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -82,6 +83,51 @@ func expandOCRResultsAtOrigin(results []ocrResult, screenX, screenY int) []ocrOu
 	return out
 }
 
+// ocrRegion specifies a sub-region (rectangle) in window/image pixel coordinates
+// (top-left origin) for region-of-interest Vision OCR.
+type ocrRegion struct {
+	X int `json:"x"`
+	Y int `json:"y"`
+	W int `json:"w"`
+	H int `json:"h"`
+}
+
+// roiToCGRect converts an ocrRegion in top-left pixel coordinates into a
+// normalized Vision regionOfInterest CGRect (origin at bottom-left, values 0..1).
+func roiToCGRect(roi *ocrRegion, imgW, imgH int) corefoundation.CGRect {
+	if roi == nil || roi.W <= 0 || roi.H <= 0 || imgW <= 0 || imgH <= 0 {
+		return corefoundation.CGRect{
+			Origin: corefoundation.CGPoint{X: 0, Y: 0},
+			Size:   corefoundation.CGSize{Width: 1, Height: 1},
+		}
+	}
+	roiNormX := float64(roi.X) / float64(imgW)
+	roiNormW := float64(roi.W) / float64(imgW)
+	roiNormH := float64(roi.H) / float64(imgH)
+	roiNormY := 1.0 - (float64(roi.Y)+float64(roi.H))/float64(imgH)
+	return corefoundation.CGRect{
+		Origin: corefoundation.CGPoint{X: roiNormX, Y: roiNormY},
+		Size:   corefoundation.CGSize{Width: roiNormW, Height: roiNormH},
+	}
+}
+
+// mapOBSToPixel converts a Vision observation bounding box (normalized 0..1 to the ROI,
+// origin bottom-left) back to top-left image pixel coordinates.
+func mapOBSToPixel(bb corefoundation.CGRect, roi *ocrRegion, imgW, imgH int) (px, py, pw, ph int) {
+	rx, ry, rw, rh := 0.0, 0.0, float64(imgW), float64(imgH)
+	if roi != nil && roi.W > 0 && roi.H > 0 {
+		rx = float64(roi.X)
+		ry = float64(roi.Y)
+		rw = float64(roi.W)
+		rh = float64(roi.H)
+	}
+	px = int(math.Round(rx + bb.Origin.X*rw))
+	py = int(math.Round(ry + (1.0-bb.Origin.Y-bb.Size.Height)*rh))
+	pw = int(math.Round(bb.Size.Width * rw))
+	ph = int(math.Round(bb.Size.Height * rh))
+	return px, py, pw, ph
+}
+
 // ocrOptions tunes Vision text recognition. The zero value is not usable;
 // call defaultOCROptions.
 type ocrOptions struct {
@@ -101,6 +147,48 @@ type ocrOptions struct {
 	// Fast trades accuracy for speed. It loses small text, identifiers, and
 	// hex addresses outright; prefer scoping the capture instead.
 	Fast bool
+
+	// Region limits recognition to a specific sub-rectangle in window/image
+	// local pixel coordinates.
+	Region *ocrRegion
+}
+
+// ErrInvalidRegion indicates that an OCR region of interest is empty or lies
+// outside the captured image.
+type ErrInvalidRegion struct {
+	Region ocrRegion
+	ImgW   int
+	ImgH   int
+}
+
+func (e *ErrInvalidRegion) Error() string {
+	if e.Region.W <= 0 || e.Region.H <= 0 {
+		return fmt.Sprintf("region %d,%d %dx%d is empty", e.Region.X, e.Region.Y, e.Region.W, e.Region.H)
+	}
+	return fmt.Sprintf("region %d,%d %dx%d lies outside the %dx%d capture",
+		e.Region.X, e.Region.Y, e.Region.W, e.Region.H, e.ImgW, e.ImgH)
+}
+
+// isInvalidRegionErr reports whether err is an ErrInvalidRegion or wraps one.
+func isInvalidRegionErr(err error) bool {
+	var e *ErrInvalidRegion
+	return errors.As(err, &e)
+}
+
+// validateOCRRegion reports whether roi is non-empty and within the image
+// bounds (0..imgW, 0..imgH). A nil roi means the whole image.
+func validateOCRRegion(roi *ocrRegion, imgW, imgH int) error {
+	if roi == nil {
+		return nil
+	}
+	if roi.W <= 0 || roi.H <= 0 || roi.X < 0 || roi.Y < 0 || roi.X >= imgW || roi.Y >= imgH || roi.X+roi.W > imgW || roi.Y+roi.H > imgH {
+		return &ErrInvalidRegion{
+			Region: *roi,
+			ImgW:   imgW,
+			ImgH:   imgH,
+		}
+	}
+	return nil
 }
 
 // defaultOCROptions returns the options used when a caller does not tune
@@ -120,6 +208,11 @@ func recognizeText(pngData []byte, imgWidth, imgHeight int, opts ocrOptions) ([]
 	if opts.Candidates < 1 {
 		opts.Candidates = 1
 	}
+	if opts.Region != nil && opts.Region.W > 0 && opts.Region.H > 0 {
+		if err := validateOCRRegion(opts.Region, imgWidth, imgHeight); err != nil {
+			return nil, err
+		}
+	}
 	nsData := foundation.NewDataWithBytesLength(pngData)
 	handler := vision.NewImageRequestHandlerWithDataOptions(nsData, nil)
 
@@ -130,6 +223,10 @@ func recognizeText(pngData []byte, imgWidth, imgHeight int, opts ocrOptions) ([]
 	}
 	request.SetRecognitionLevel(level)
 	request.SetUsesLanguageCorrection(opts.LanguageCorrection)
+
+	if opts.Region != nil && opts.Region.W > 0 && opts.Region.H > 0 {
+		request.VNImageBasedRequest.SetRegionOfInterest(roiToCGRect(opts.Region, imgWidth, imgHeight))
+	}
 
 	ok, err := handler.PerformRequestsError([]vision.VNRequest{request.VNImageBasedRequest.VNRequest})
 	if err != nil {
@@ -150,12 +247,9 @@ func recognizeText(pngData []byte, imgWidth, imgHeight int, opts ocrOptions) ([]
 			if float32(c.Confidence()) < opts.MinConfidence {
 				continue
 			}
-			// Vision bounding boxes are normalized (0-1), origin at bottom-left.
-			// Convert to pixel coordinates with origin at top-left.
-			px := int(math.Round(bb.Origin.X * float64(imgWidth)))
-			py := int(math.Round((1 - bb.Origin.Y - bb.Size.Height) * float64(imgHeight)))
-			pw := int(math.Round(bb.Size.Width * float64(imgWidth)))
-			ph := int(math.Round(bb.Size.Height * float64(imgHeight)))
+			// Vision bounding boxes are normalized to the ROI (0-1), origin at bottom-left.
+			// Map back to pixel coordinates in full image space with origin at top-left.
+			px, py, pw, ph := mapOBSToPixel(bb, opts.Region, imgWidth, imgHeight)
 			key := fmt.Sprintf("%s|%d|%d|%d|%d", c.String(), px, py, pw, ph)
 			if seen[key] {
 				continue
