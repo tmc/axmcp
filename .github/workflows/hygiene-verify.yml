@@ -141,17 +141,22 @@ jobs:
       - name: go build
         run: go build ./...
 
-      # Vet ceiling: the v0.2.0 audit baseline was 8 warnings on darwin (mostly
-      # unsafe.Pointer in coresim siblings and ghostcursor:992). Treat 8 as the
-      # floor; any new warning fails the gate.
-      - name: go vet (ceiling 8)
+      # Vet ceiling: the v0.3.0 audit baseline is 31 unsafeptr warnings on
+      # darwin, up from 8 at v0.2.0. The rise is a type change, not new unsafe
+      # code: apple v0.6.18 redefined corefoundation.CFTypeRef from
+      # kernel.Pointer to an alias for unsafe.Pointer, so every existing
+      # CFRelease(CFTypeRef(handle)) call became an unsafe.Pointer(uintptr)
+      # conversion. Those handles are CoreFoundation allocations, never Go
+      # pointers, so the analyzer cannot apply. Treat 31 as the floor; any new
+      # warning fails the gate.
+      - name: go vet (ceiling 31)
         run: |
           set -euo pipefail
           go vet ./... > vet.out 2>&1 || true
           count=$(wc -l < vet.out | tr -d ' ')
-          echo "vet warnings: $count (ceiling 8)"
-          if [ "$count" -gt 8 ]; then
-            echo "FAIL: vet regression (count=$count > 8)" >&2
+          echo "vet warnings: $count (ceiling 31)"
+          if [ "$count" -gt 31 ]; then
+            echo "FAIL: vet regression (count=$count > 31)" >&2
             cat vet.out >&2
             exit 1
           fi
