@@ -7,7 +7,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.4.0
 	github.com/spf13/cobra v1.10.2
 	github.com/tmc/apple v0.6.18
-	github.com/tmc/macgo v0.1.2
+	github.com/tmc/macgo v0.1.4
 	golang.org/x/image v0.38.0
 	golang.org/x/sys v0.43.0
 )
