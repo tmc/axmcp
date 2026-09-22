@@ -644,31 +644,40 @@ func dragScreenPoint(startX, startY, endX, endY int, button int32, steps int, du
 	cgEventPost(cgHIDEventTap, mouseDown)
 	corefoundation.CFRelease(corefoundation.CFTypeRef(mouseDown))
 
+	// Once the button is down, every return must release it, or the system
+	// is left mid-drag.
+	lastX, lastY := startX, startY
+	release := func() error {
+		mouseUp := cgEventCreateMouseEvent(0, upType, float64(lastX), float64(lastY), button)
+		if mouseUp == 0 {
+			ghostcursor.Hide()
+			return fmt.Errorf("failed to create mouse up event")
+		}
+		cgEventPost(cgHIDEventTap, mouseUp)
+		corefoundation.CFRelease(corefoundation.CFTypeRef(mouseUp))
+		ghostcursor.ReleaseAt(lastX, lastY)
+		return nil
+	}
+
 	for i := 1; i < len(path); i++ {
 		x := int(math.Round(path[i].X))
 		y := int(math.Round(path[i].Y))
 		ghostcursor.DragTo(x, y)
 		dragged := cgEventCreateMouseEvent(0, draggedType, float64(x), float64(y), button)
 		if dragged == 0 {
-			ghostcursor.Hide()
+			release()
 			return fmt.Errorf("failed to create mouse drag event")
 		}
 		cgEventPost(cgHIDEventTap, dragged)
 		corefoundation.CFRelease(corefoundation.CFTypeRef(dragged))
+		lastX, lastY = x, y
 		if i+1 < len(path) {
 			time.Sleep(interval)
 		}
 	}
 
-	mouseUp := cgEventCreateMouseEvent(0, upType, float64(endX), float64(endY), button)
-	if mouseUp == 0 {
-		ghostcursor.Hide()
-		return fmt.Errorf("failed to create mouse up event")
-	}
-	cgEventPost(cgHIDEventTap, mouseUp)
-	corefoundation.CFRelease(corefoundation.CFTypeRef(mouseUp))
-	ghostcursor.ReleaseAt(endX, endY)
-	return nil
+	lastX, lastY = endX, endY
+	return release()
 }
 
 func dragEventTypes(button int32) (downType, draggedType, upType int32, err error) {
