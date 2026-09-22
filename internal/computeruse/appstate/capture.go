@@ -10,7 +10,6 @@ import (
 	"math"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -161,15 +160,7 @@ func windowCaptureGeometry(ctx context.Context, window *axuiautomation.Element) 
 func captureWindowPNG(ctx context.Context, window uint32) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-	dir := filepath.Join(home, "tmp")
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return nil, err
-	}
-	f, err := os.CreateTemp(dir, "computer-use-window-*.png")
+	f, err := os.CreateTemp("", "computer-use-window-*.png")
 	if err != nil {
 		return nil, err
 	}

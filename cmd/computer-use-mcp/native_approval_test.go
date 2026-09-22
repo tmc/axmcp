@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -32,16 +31,7 @@ func (b *nativeApprovalTestBackend) Authorize(ctx context.Context, req *mcp.Call
 func TestNativeRequestApproval(t *testing.T) {
 	for _, decision := range []string{"accept", "decline", "cancel", "unsupported"} {
 		t.Run(decision, func(t *testing.T) {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				t.Fatal(err)
-			}
-			dir, err := os.MkdirTemp(filepath.Join(home, "tmp"), "native-approval-")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer os.RemoveAll(dir)
-			path := filepath.Join(dir, "approvals.json")
+			path := filepath.Join(t.TempDir(), "approvals.json")
 			store, err := approval.Open(path)
 			if err != nil {
 				t.Fatal(err)
