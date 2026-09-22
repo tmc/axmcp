@@ -48,3 +48,10 @@ func ExampleBuilder_BuildWindow() {
 	fmt.Println(err)
 	// Output: pid must be positive
 }
+
+func ExampleBuilder_BuildWindowElement() {
+	builder := NewBuilder()
+	_, err := builder.BuildWindowElement(context.Background(), 1, nil, nil)
+	fmt.Println(err)
+	// Output: window is required
+}

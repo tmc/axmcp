@@ -84,6 +84,9 @@ func nativeProcessStart(pid int) (nativeStart, error) {
 	return nativeStart{Seconds: p.Proc.P_starttime.Sec, Microseconds: int64(p.Proc.P_starttime.Usec)}, nil
 }
 func (b *nativeOSBackend) Capture(ctx context.Context, app computeruse.AppInfo, window uint32) (session.Snapshot, nativeTarget, error) {
+	return b.capture(ctx, app, window, nil, nil)
+}
+func (b *nativeOSBackend) capture(ctx context.Context, app computeruse.AppInfo, window uint32, element *axuiautomation.Element, expectedStart *nativeStart) (session.Snapshot, nativeTarget, error) {
 	var target nativeTarget
 	if err := ctx.Err(); err != nil {
 		return nil, target, err
@@ -92,10 +95,18 @@ func (b *nativeOSBackend) Capture(ctx context.Context, app computeruse.AppInfo, 
 	if err != nil {
 		return nil, target, err
 	}
+	if expectedStart != nil && before != *expectedStart {
+		return nil, target, fmt.Errorf("process changed since discovery")
+	}
 	if b.rt == nil || b.rt.builder == nil {
 		return nil, target, fmt.Errorf("native snapshot builder unavailable")
 	}
-	snapshot, err := b.rt.builder.BuildWindow(ctx, int32(app.PID), window, b.rt.instructions)
+	var snapshot *appstate.Snapshot
+	if element != nil {
+		snapshot, err = b.rt.builder.BuildWindowElement(ctx, int32(app.PID), element, b.rt.instructions)
+	} else {
+		snapshot, err = b.rt.builder.BuildWindow(ctx, int32(app.PID), window, b.rt.instructions)
+	}
 	if err != nil {
 		return nil, target, err
 	}

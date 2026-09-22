@@ -93,10 +93,31 @@ func (b *Builder) BuildWindow(ctx context.Context, pid int32, windowID uint32, i
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return b.buildWindow(ctx, pid, windowID, instructions)
+	return b.buildWindow(ctx, pid, windowID, nil, instructions)
 }
 
-func (b *Builder) buildWindow(ctx context.Context, pid int32, windowID uint32, instructions computeruse.InstructionProvider) (*Snapshot, error) {
+// BuildWindowElement captures the live window matching a retained accessibility
+// element in the exact process's window list. It never falls back to a window
+// title, numeric ID, or focused window. The caller retains ownership of window;
+// the returned snapshot independently owns its enumerated handles. The caller
+// holds window alive and validates the process instance across capture.
+func (b *Builder) BuildWindowElement(ctx context.Context, pid int32, window *axuiautomation.Element, instructions computeruse.InstructionProvider) (*Snapshot, error) {
+	if pid <= 0 {
+		return nil, fmt.Errorf("pid must be positive")
+	}
+	if window == nil || window.Ref() == 0 {
+		return nil, fmt.Errorf("window is required")
+	}
+	if err := boundAXTimeout(ctx, window); err != nil {
+		return nil, err
+	}
+	if !window.Exists() {
+		return nil, fmt.Errorf("window is unavailable")
+	}
+	return b.buildWindow(ctx, pid, 0, window, instructions)
+}
+
+func (b *Builder) buildWindow(ctx context.Context, pid int32, windowID uint32, expected *axuiautomation.Element, instructions computeruse.InstructionProvider) (*Snapshot, error) {
 	app := axuiautomation.NewApplicationFromPID(pid)
 	if app == nil {
 		return nil, fmt.Errorf("cannot connect to pid %d", pid)
@@ -105,7 +126,7 @@ func (b *Builder) buildWindow(ctx context.Context, pid int32, windowID uint32, i
 	if err := boundAXTimeout(ctx, app.Root()); err != nil {
 		return fail(err)
 	}
-	if windowID == 0 {
+	if windowID == 0 && expected == nil {
 		focused := app.FocusedElement()
 		for depth := 0; focused != nil && depth < 64; depth++ {
 			if err := boundAXTimeout(ctx, focused); err != nil {
@@ -146,6 +167,9 @@ func (b *Builder) buildWindow(ctx context.Context, pid int32, windowID uint32, i
 		ids[i] = window.WindowID()
 	}
 	index, err := exactWindowIndex(ids, windowID)
+	if expected != nil {
+		index, err = matchingWindowIndex(windows, expected)
+	}
 	if scanErr != nil {
 		err = scanErr
 	}
@@ -158,7 +182,52 @@ func (b *Builder) buildWindow(ctx context.Context, pid int32, windowID uint32, i
 		return fail(err)
 	}
 	info := lookupAppInfo(ctx, pid, app.BundleID(), strconv.Itoa(int(pid)))
-	return finishSnapshot(ctx, app, info, windows[index], instructions)
+	snapshot, err := finishSnapshot(ctx, app, info, windows[index], instructions)
+	if err != nil || expected == nil {
+		return snapshot, err
+	}
+	// Capture can pump the target application. Check membership again after it
+	// returns so a closed or replaced window cannot produce a published state.
+	if err := boundAXTimeout(ctx, expected); err != nil {
+		snapshot.Close()
+		return nil, err
+	}
+	if err := boundAXTimeout(ctx, app.Root()); err != nil {
+		snapshot.Close()
+		return nil, err
+	}
+	current := app.WindowList()
+	_, matchErr := matchingWindowIndex(current, expected)
+	for _, window := range current {
+		if window != nil {
+			window.Release()
+		}
+	}
+	if matchErr != nil || !expected.Exists() {
+		snapshot.Close()
+		return nil, fmt.Errorf("window changed during observation")
+	}
+	return snapshot, nil
+}
+
+func matchingWindowIndex(windows []*axuiautomation.Element, expected *axuiautomation.Element) (int, error) {
+	if expected == nil || expected.Ref() == 0 {
+		return -1, fmt.Errorf("window is required")
+	}
+	found := -1
+	for i, window := range windows {
+		if window == nil || window.Ref() == 0 || !corefoundation.CFEqual(corefoundation.CFTypeRef(window.Ref()), corefoundation.CFTypeRef(expected.Ref())) {
+			continue
+		}
+		if found >= 0 {
+			return -1, fmt.Errorf("window reference is ambiguous")
+		}
+		found = i
+	}
+	if found < 0 {
+		return -1, fmt.Errorf("window reference is unavailable")
+	}
+	return found, nil
 }
 
 func exactWindowIndex(ids []uint32, want uint32) (int, error) {

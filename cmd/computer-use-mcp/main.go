@@ -109,7 +109,7 @@ func main() {
 			log.Printf("server error: %v", err)
 		}
 		if rt.native != nil {
-			_ = rt.native.store.Close()
+			_ = rt.native.close()
 		}
 		if rt.sessions != nil {
 			_ = rt.sessions.Close()
@@ -225,8 +225,9 @@ func computerUseInstructions() string {
 		"Begin each turn with `native_observe` for `native_act`, or `get_app_state` for the legacy action tools. Use the state_id from the matching observation API.",
 		"Pass the returned `state_id` to every action tool. If a legacy action reports `requires_refresh`, call `get_app_state` again before deciding whether to act. Never replay an action whose effects are uncertain.",
 		"",
+		"Use native_discover to list approved app windows without activating them. Pass its selection_id to native_observe on the same connection within 60 seconds. Discovery does not replace the current observation; a selection_id cannot be used directly for actions.",
 		"Use native_observe/native_act for exact process/window identity, single-use observations and separate execution/observation/postcondition outcomes. A completed native call does not prove application effect. Never replay an uncertain native action.",
-		"The available tools are native_observe, native_act, list_apps, get_app_state, click, perform_secondary_action, scroll, drag, type_text, press_key, and set_value. If any of these are not available in your environment, use tool_search to surface one before calling any Computer Use action tools.",
+		"The available tools are native_discover, native_observe, native_act, list_apps, get_app_state, click, perform_secondary_action, scroll, drag, type_text, press_key, and set_value. If any of these are not available in your environment, use tool_search to surface one before calling any Computer Use action tools.",
 		"",
 		"Computer Use tools allow you to use the user's apps in the background, so while you're using an app, the user can continue to use other apps on their computer. Avoid doing anything that would disrupt the user's active session, such as overwriting the contents of their clipboard, unless they asked you to!",
 		"",

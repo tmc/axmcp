@@ -24,9 +24,10 @@ type nativeTarget struct {
 	Window computeruse.WindowInfo
 }
 type nativeObserveInput struct {
-	App       string `json:"app"`
-	WindowID  uint32 `json:"window_id,omitempty"`
-	TimeoutMS int    `json:"timeout_ms,omitempty"`
+	App         string `json:"app,omitempty"`
+	SelectionID string `json:"selection_id,omitempty"`
+	WindowID    uint32 `json:"window_id,omitempty"`
+	TimeoutMS   int    `json:"timeout_ms,omitempty"`
 }
 type nativeObservationOutput struct {
 	computeruse.AppState
@@ -82,14 +83,19 @@ type nativeObservation struct {
 	target nativeTarget
 }
 type nativeRunner struct {
-	backend     nativeBackend
-	store       *session.Store
-	gate        chan struct{}
-	observation *nativeObservation
+	backend      nativeBackend
+	store        *session.Store
+	gate         chan struct{}
+	observation  *nativeObservation
+	discoveries  map[*mcp.ServerSession]*nativeDiscovery
+	watched      map[*mcp.ServerSession]bool
+	now          func() time.Time
+	discoveryTTL time.Duration
+	closed       bool
 }
 
 func newNativeRunner(backend nativeBackend) *nativeRunner {
-	return &nativeRunner{backend: backend, store: session.NewStore(), gate: make(chan struct{}, 1)}
+	return &nativeRunner{backend: backend, store: session.NewStore(), gate: make(chan struct{}, 1), discoveries: make(map[*mcp.ServerSession]*nativeDiscovery), watched: make(map[*mcp.ServerSession]bool), now: time.Now, discoveryTTL: 60 * time.Second}
 }
 func (r *nativeRunner) run(ctx context.Context, ms int, f func(context.Context) error) error {
 	if ms < 0 || ms > 60000 {
@@ -109,11 +115,22 @@ func (r *nativeRunner) run(ctx context.Context, ms int, f func(context.Context) 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if r.closed {
+		return fmt.Errorf("native runner is closed")
+	}
 	return f(ctx)
 }
 func (r *nativeRunner) observe(ctx context.Context, req *mcp.CallToolRequest, in nativeObserveInput) (nativeObservationOutput, error) {
 	var out nativeObservationOutput
 	err := r.run(ctx, in.TimeoutMS, func(ctx context.Context) error {
+		if in.SelectionID != "" {
+			if in.App != "" || in.WindowID != 0 {
+				return fmt.Errorf("selection_id cannot be combined with app or window_id")
+			}
+			var err error
+			out, err = r.observeSelection(ctx, req, in.SelectionID)
+			return err
+		}
 		info, err := r.backend.Resolve(ctx, in.App)
 		if err != nil {
 			return err
@@ -315,7 +332,12 @@ func nativeMatches(nodes []computeruse.ElementNode, expect nativeExpect) bool {
 	return matches == 1 && value == expect.Text
 }
 func registerNativeTools(server *mcp.Server, r *nativeRunner) {
-	mcp.AddTool(server, &mcp.Tool{Name: "native_observe", Description: "Observe an exact running app and window. Use a unique full name, bundle ID or PID. A missing window_id selects the focused window only. Returns opaque state_id and target_id; denied permissions grant no action token.", Annotations: readOnlyToolAnnotations()},
+	mcp.AddTool(server, &mcp.Tool{Name: "native_discover", Description: "List windows of exactly one running app without launching, activating, capturing screenshots, or requesting new approval. Returns session-scoped selection_id tokens valid for 60 seconds; a new discovery replaces this client’s previous candidates. At most 128 windows, with truncated=true when more exist. Discovery does not invalidate the current observation.", Annotations: readOnlyToolAnnotations()},
+		func(ctx context.Context, req *mcp.CallToolRequest, in nativeDiscoverInput) (*mcp.CallToolResult, nativeDiscoverOutput, error) {
+			out, err := r.discover(ctx, req, in)
+			return nil, out, err
+		})
+	mcp.AddTool(server, &mcp.Tool{Name: "native_observe", Description: "Observe an exact running app and window. Use selection_id from native_discover, or a unique full app name, bundle ID or PID; never combine the modes. A missing window_id selects the focused window only. Returns opaque state_id and target_id; denied permissions grant no action token.", Annotations: readOnlyToolAnnotations()},
 		func(ctx context.Context, req *mcp.CallToolRequest, in nativeObserveInput) (*mcp.CallToolResult, nativeObservationOutput, error) {
 			out, err := r.observe(ctx, req, in)
 			if err != nil {

@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | `cmd/axmcp` | Any running macOS app via AX tree, OCR, pointer, keyboard, windows | Open primitive surface |
 | `cmd/xcmcp` | Xcode, simulators, physical devices, previews, App Store Connect | Toolset-gated, ~40 tools on demand |
-| `cmd/computer-use-mcp` | Codex Computer Use contract on top of axmcp primitives | Legacy 9-tool surface plus native observation/action pair |
+| `cmd/computer-use-mcp` | Codex Computer Use contract on top of axmcp primitives | Legacy 9-tool surface plus native discovery, observation and action tools |
 
 If you want an LLM to click through a real app: `axmcp`. If you want it to build, test, boot a simulator, or add an Xcode target via the File > New UI: `xcmcp`. If you need a drop-in for the Codex Computer Use tool contract: `computer-use-mcp`.
 

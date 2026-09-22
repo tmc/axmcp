@@ -46,7 +46,7 @@ func computerUseCompatibilityMiddleware() mcp.Middleware {
 				}
 				tools := orderedComputerUseTools()
 				for _, tool := range listed.Tools {
-					if tool.Name == "native_observe" || tool.Name == "native_act" {
+					if tool.Name == "native_observe" || tool.Name == "native_act" || tool.Name == "native_discover" {
 						tools = append(tools, tool)
 					}
 				}

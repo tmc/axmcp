@@ -1,9 +1,43 @@
 # Native observations and actions
 
-The `computer-use-mcp` server provides `native_observe` and `native_act` for
+The `computer-use-mcp` server provides `native_discover`, `native_observe` and
+`native_act` for
 interactions tied to one process instance and window. Start each turn with an
 observation. Existing `get_app_state` and legacy action tools remain separate;
 their state tokens cannot be used with the native pair.
+
+Discover the windows of one running app with `native_discover`:
+
+```json
+{"app":"12345"}
+```
+
+Discovery requires existing system permissions and app approval; it never asks
+for new approval, launches or activates an app, or captures a screenshot. The
+result includes process start time, window metadata and an opaque `selection_id`
+for each available window. At most 128 candidates are returned; `truncated: true`
+means the window list exceeded that limit.
+
+Pass a selection to `native_observe` on the same MCP connection:
+
+```json
+{"selection_id":"returned selection_id"}
+```
+
+Do not combine `selection_id` with `app` or `window_id`. Selection matches the
+retained accessibility window reference against a fresh window list, with no
+name or numeric-ID fallback. It checks the process start time before and after
+capture. Same-title replacement rejection has been exercised in an AppKit
+fixture; actual numeric window-ID reuse and other accessibility servers remain
+unqualified. Checks and capture are not an atomic operation with the target app.
+
+Candidates expire 60 seconds after discovery, without renewal on selection. A
+successful new discovery replaces that client's candidates. Expiry, disconnect
+and server shutdown release discovery handles after any in-flight operation
+using them finishes. A new discovery or failed selection leaves the current
+observation intact. A successful observation replaces it. The native backend
+still has one current action observation; it is not a multi-surface state store.
+A selection token alone can never authorize `native_act`.
 
 Observe a running app by its PID, unique full name or bundle identifier:
 
@@ -12,7 +46,8 @@ Observe a running app by its PID, unique full name or bundle identifier:
 ```
 
 Omitting `window_id` selects the app's focused window. An explicit ID must exist
-in that app; observation never launches an app or selects a replacement window.
+in that app. Direct observation never launches an app; use a discovery selection
+when identity must remain bound across listing and capture.
 The result includes the accessibility tree, screenshot, `state_id`, `target_id`
 and process start time. Permissions and app approval must be granted before
 observation returns an action token.
