@@ -131,6 +131,9 @@ func (r *nativeRunner) releaseTarget(owner *mcp.ServerSession, id string) bool {
 	if target == nil {
 		return false
 	}
+	if r.recoveryOwner == owner && r.recoveryHandle == id {
+		_ = r.pointerRecovery.stop()
+	}
 	delete(r.targets[owner], id)
 	if len(r.targets[owner]) == 0 {
 		delete(r.targets, owner)
@@ -150,7 +153,13 @@ func (r *nativeRunner) clearTargets(owner *mcp.ServerSession) {
 func (r *nativeRunner) release(ctx context.Context, req *mcp.CallToolRequest, in nativeReleaseInput) (nativeReleaseOutput, error) {
 	var out nativeReleaseOutput
 	err := r.run(ctx, 0, func(context.Context) error {
-		out.Released = r.releaseTarget(nativeOwner(req), in.TargetHandle)
+		owner := nativeOwner(req)
+		out.Released = r.releaseTarget(owner, in.TargetHandle)
+		if out.Released && r.recoveryOwner == owner && r.recoveryHandle == in.TargetHandle {
+			if err := r.pointerRecovery.blocked(); err != nil {
+				return fmt.Errorf("target released with unfinished pointer cleanup: %w", err)
+			}
+		}
 		return nil
 	})
 	return out, err

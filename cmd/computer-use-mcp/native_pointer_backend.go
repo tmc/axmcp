@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -25,12 +26,32 @@ func performNativePointer(ctx context.Context, target nativeTarget, lease *sessi
 		return false, err
 	}
 	info := lease.State().ScreenshotMetadata
-	return nativePointerSequence(ctx, in, func(eventCtx context.Context, event nativePointerEvent, cleanup bool) (bool, error) {
-		return postNativePointer(eventCtx, target, root, info, event, cleanup, guard)
+	var pending *nativePointerEvent
+	attempted, err := nativePointerSequence(ctx, in, func(eventCtx context.Context, event nativePointerEvent, cleanup bool) (bool, error) {
+		sent, err := postNativePointer(eventCtx, target, root, info, event, cleanup, guard)
+		if cleanup {
+			pending = nil
+			if !sent {
+				copy := event
+				pending = &copy
+			}
+		}
+		return sent, err
 	})
+	if pending != nil {
+		if start, ok := ctx.Value(nativePointerRecoveryKey{}).(nativePointerRecoveryStart); ok {
+			err = errors.Join(err, start(*pending))
+		} else {
+			err = errors.Join(err, fmt.Errorf("pending pointer recovery unavailable"))
+		}
+	}
+	return attempted, err
 }
 
 func postNativePointer(ctx context.Context, target nativeTarget, root *axuiautomation.Element, info *computeruse.ScreenshotInfo, event nativePointerEvent, cleanup bool, guard func() error) (bool, error) {
+	if info == nil || info.TargetWindow != target.Window.WindowID {
+		return false, fmt.Errorf("pointer target does not match screenshot window")
+	}
 	local, global, err := mapNativePoint(info, event.Point)
 	if err != nil {
 		return false, err
@@ -76,7 +97,7 @@ func postNativePointer(ctx context.Context, target nativeTarget, root *axuiautom
 		// Own-up may finish after cancellation or revoked approval. It must still
 		// address the exact original process/window and captured geometry.
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		ctx, cancel = context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		if event.Kind != "up" {
 			return false, fmt.Errorf("cleanup only permits mouse-up")

@@ -297,11 +297,19 @@ func (b *nativeOSBackend) Perform(ctx context.Context, target nativeTarget, leas
 			if err != nil {
 				return computeruse.WindowInfo{}, false, err
 			}
-			if err := nativeAXBudget(ctx, root); err != nil {
+			// A pointer gesture must not spend five seconds in an AX query
+			// before it can notice cancellation and release its owned down.
+			readCtx := ctx
+			if nativeHasCoordinates(in) {
+				var cancel context.CancelFunc
+				readCtx, cancel = context.WithTimeout(ctx, 250*time.Millisecond)
+				defer cancel()
+			}
+			if err := nativeAXBudget(readCtx, root); err != nil {
 				return computeruse.WindowInfo{}, false, err
 			}
 			window, exists := readNativeWindow(root)
-			return window, exists, nil
+			return window, exists, readCtx.Err()
 		},
 		focusedWindow: func() (uint32, error) {
 			root, _, err := lease.Resolve(0)
@@ -320,7 +328,9 @@ func (b *nativeOSBackend) Perform(ctx context.Context, target nativeTarget, leas
 			if err != nil {
 				return err
 			}
-			return appstate.CheckScreenshotGeometry(ctx, root, lease.State().ScreenshotMetadata)
+			geometryCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+			defer cancel()
+			return appstate.CheckScreenshotGeometry(geometryCtx, root, lease.State().ScreenshotMetadata)
 		}
 		return nil
 	}

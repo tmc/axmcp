@@ -72,3 +72,15 @@ func ExampleLease_Close() {
 	// <nil>
 	// <nil>
 }
+
+func ExampleLease_Retain() {
+	store := session.NewStore()
+	defer store.Close()
+	state, _ := store.Bind(exampleSnapshot{})
+	original, _ := store.Take(state.StateID)
+	retained, _ := original.Retain()
+	original.Close()
+	defer retained.Close()
+	fmt.Println(retained.State().App.BundleID)
+	// Output: com.example.app
+}

@@ -109,7 +109,9 @@ func main() {
 			log.Printf("server error: %v", err)
 		}
 		if rt.native != nil {
-			_ = rt.native.close()
+			if err := rt.native.close(); err != nil {
+				log.Printf("native cleanup: %v", err)
+			}
 		}
 		if rt.sessions != nil {
 			_ = rt.sessions.Close()
@@ -234,7 +236,7 @@ func computerUseInstructions() string {
 		"Use native_request_approval to explicitly request persistent approval for one running app before discovery. This does not grant macOS permissions, capture a window, or perform an action.",
 		"Use native_discover to list approved app windows without activating them. Pass its selection_id to native_observe on the same connection within 60 seconds. Discovery does not replace the current observation; a selection_id cannot be used directly for actions.",
 		"Use native_observe/native_act for exact process/window identity, single-use observations and separate execution/observation/postcondition outcomes. A completed native call does not prove application effect. Never replay an uncertain native action.",
-		"Use native_select before candidate expiry to retain an exact window; observe its target_handle on the same connection and native_release it when finished. Handles survive discovery expiry but not disconnect. The available tools are native_revoke_approval, native_request_approval, native_discover, native_select, native_release, native_observe, native_act, list_apps, get_app_state, click, perform_secondary_action, scroll, drag, type_text, press_key, and set_value. If any of these are not available in your environment, use tool_search to surface one before calling any Computer Use action tools.",
+		"Use native_select before candidate expiry to retain an exact window; observe its target_handle on the same connection and native_release it when finished. Handles survive discovery expiry but not disconnect. The available tools are native_revoke_approval, native_request_approval, native_discover, native_select, native_release, native_observe, native_act, native_recover_pointer, list_apps, get_app_state, click, perform_secondary_action, scroll, drag, type_text, press_key, and set_value. If any of these are not available in your environment, use tool_search to surface one before calling any Computer Use action tools.",
 		"",
 		"Computer Use tools allow you to use the user's apps in the background, so while you're using an app, the user can continue to use other apps on their computer. Avoid doing anything that would disrupt the user's active session, such as overwriting the contents of their clipboard, unless they asked you to!",
 		"",

@@ -131,6 +131,11 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 		if res, payload, ok := actionBlockedForIntervention(rt, "click"); ok {
 			return res, payload, nil
 		}
+		finish, err := beginLegacyNativeAction(ctx, rt)
+		if err != nil {
+			return toolError(err), nil, nil
+		}
+		defer finish()
 		lease, err := stateForAction(ctx, rt, "click", args.App, args.StateID)
 		if err != nil {
 			return staleStateResult("click", err)
@@ -205,6 +210,11 @@ func registerPerformSecondaryAction(s *mcp.Server, rt *runtimeState) {
 		if res, payload, ok := actionBlockedForIntervention(rt, args.Action); ok {
 			return res, payload, nil
 		}
+		finish, err := beginLegacyNativeAction(ctx, rt)
+		if err != nil {
+			return toolError(err), nil, nil
+		}
+		defer finish()
 		lease, err := stateForAction(ctx, rt, args.Action, args.App, args.StateID)
 		if err != nil {
 			return staleStateResult(args.Action, err)
@@ -250,6 +260,11 @@ func registerSetValue(s *mcp.Server, rt *runtimeState) {
 		if res, payload, ok := actionBlockedForIntervention(rt, "set_value"); ok {
 			return res, payload, nil
 		}
+		finish, err := beginLegacyNativeAction(ctx, rt)
+		if err != nil {
+			return toolError(err), nil, nil
+		}
+		defer finish()
 		lease, err := stateForAction(ctx, rt, "set_value", args.App, args.StateID)
 		if err != nil {
 			return staleStateResult("set_value", err)
@@ -296,6 +311,11 @@ func registerScroll(s *mcp.Server, rt *runtimeState) {
 		if res, payload, ok := actionBlockedForIntervention(rt, "scroll"); ok {
 			return res, payload, nil
 		}
+		finish, err := beginLegacyNativeAction(ctx, rt)
+		if err != nil {
+			return toolError(err), nil, nil
+		}
+		defer finish()
 		lease, err := stateForAction(ctx, rt, "scroll", args.App, args.StateID)
 		if err != nil {
 			return staleStateResult("scroll", err)
@@ -343,6 +363,11 @@ func registerDrag(s *mcp.Server, rt *runtimeState) {
 		if res, payload, ok := actionBlockedForIntervention(rt, "drag"); ok {
 			return res, payload, nil
 		}
+		finish, err := beginLegacyNativeAction(ctx, rt)
+		if err != nil {
+			return toolError(err), nil, nil
+		}
+		defer finish()
 		lease, err := stateForAction(ctx, rt, "drag", args.App, args.StateID)
 		if err != nil {
 			return staleStateResult("drag", err)
@@ -395,6 +420,11 @@ func registerPressKey(s *mcp.Server, rt *runtimeState) {
 		if res, payload, ok := actionBlockedForIntervention(rt, "press_key"); ok {
 			return res, payload, nil
 		}
+		finish, err := beginLegacyNativeAction(ctx, rt)
+		if err != nil {
+			return toolError(err), nil, nil
+		}
+		defer finish()
 		lease, err := stateForAction(ctx, rt, "press_key", args.App, args.StateID)
 		if err != nil {
 			return staleStateResult("press_key", err)
@@ -432,6 +462,11 @@ func registerTypeText(s *mcp.Server, rt *runtimeState) {
 		if res, payload, ok := actionBlockedForIntervention(rt, "type_text"); ok {
 			return res, payload, nil
 		}
+		finish, err := beginLegacyNativeAction(ctx, rt)
+		if err != nil {
+			return toolError(err), nil, nil
+		}
+		defer finish()
 		lease, err := stateForAction(ctx, rt, "type_text", args.App, args.StateID)
 		if err != nil {
 			return staleStateResult("type_text", err)

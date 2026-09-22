@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
 
@@ -75,6 +76,9 @@ func (r *nativeRunner) watchNativeSession(owner *mcp.ServerSession) {
 		_ = owner.Wait()
 		r.gate <- struct{}{}
 		defer func() { <-r.gate }()
+		if r.recoveryOwner == owner {
+			_ = r.pointerRecovery.stop()
+		}
 		r.clearDiscovery(owner)
 		r.clearTargets(owner)
 		delete(r.watched, owner)
@@ -106,6 +110,7 @@ func (r *nativeRunner) close() error {
 		return nil
 	}
 	r.closed = true
+	recoveryErr := r.pointerRecovery.close()
 	for owner := range r.discoveries {
 		r.clearDiscovery(owner)
 	}
@@ -113,7 +118,7 @@ func (r *nativeRunner) close() error {
 		r.clearTargets(owner)
 	}
 	r.observation = nil
-	return r.store.Close()
+	return errors.Join(recoveryErr, r.store.Close())
 }
 
 func (r *nativeRunner) discover(ctx context.Context, req *mcp.CallToolRequest, in nativeDiscoverInput) (nativeDiscoverOutput, error) {

@@ -153,10 +153,28 @@ new down or movement event, and posts each event once to the original process
 and window. It does not explicitly activate the app. Cleanup sends only the
 matching up for a down this action posted; if the original instance or geometry
 cannot be verified, cleanup reports an error instead of releasing into another
-target. If an app stops responding after a down, its AX geometry check can fail
-and leave the matching up undispatched. The action reports the cleanup error;
-it does not retain pending input for later recovery. A bounded cleanup wait
-does not establish that the app received a release.
+target. If an app stops responding after a down, the backend retains the last
+undispatched matching up and its original snapshot. Each automatic recovery
+round lasts up to 30 seconds and retries only after verifying the original process, window and captured geometry.
+Native and compatibility actions are blocked while recovery is pending or
+unresolved. Recovery never replays a down or retries an uncertain post.
+
+`pointer_recovery` reports `pending`, `recovered` or `unresolved` when applicable,
+with a `recovery_id` identifying that gesture. Call `native_recover_pointer` with
+`mode: "status"` to inspect the owning client's recovery. If it reports
+`retryable: true`, `mode: "retry"` with that exact `recovery_id` starts another
+30-second round for the original unsent mouse-up. It does not change targets or
+allow a new mouse-down. Only one unresolved snapshot is retained per backend;
+it stays alive after a round expires until recovery succeeds or the owning
+target/session closes. A possibly sent release cannot be retried.
+It is the status at response time, not a later update to that response. Recovery
+does not turn an uncertain action into a completed action or prove an app effect.
+Releasing the matching target or disconnecting cancels and joins recovery; an
+unfinished release reports an error. Process shutdown reports cleanup errors on
+stderr. An unresolved recovery blocks further actions in that backend, and
+releasing its target or disconnecting does not lift the block; only restarting
+the server does. A forced
+process kill cannot run cleanup. No blanket mouse-up is sent to another target.
 
 Mouse events carry uptime timestamps and matching event numbers for each down/up
 pair. Drag scheduling includes validation work rather than adding a fixed delay
@@ -183,7 +201,6 @@ approval for future sessions; decline and cancel grant no approval. The result
 preserves approval and permission status, including persistence errors.
 Accessibility and Screen Recording permissions must be granted separately.
 `native_discover` continues to list only approved windows without prompting.
-There is currently no tool for revoking stored app approvals.
 
 ### Withdrawing approval
 

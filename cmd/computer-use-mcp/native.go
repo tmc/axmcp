@@ -62,11 +62,13 @@ type nativeActInput struct {
 	TimeoutMS       int           `json:"timeout_ms,omitempty"`
 }
 type nativeActOutput struct {
-	Execution     string                   `json:"execution"`
-	Observation   string                   `json:"observation"`
-	Postcondition string                   `json:"postcondition"`
-	FreshState    *nativeObservationOutput `json:"fresh_state,omitempty"`
-	ErrorText     string                   `json:"error_text,omitempty"`
+	RecoveryID      string                   `json:"recovery_id,omitempty"`
+	PointerRecovery string                   `json:"pointer_recovery,omitempty"`
+	Execution       string                   `json:"execution"`
+	Observation     string                   `json:"observation"`
+	Postcondition   string                   `json:"postcondition"`
+	FreshState      *nativeObservationOutput `json:"fresh_state,omitempty"`
+	ErrorText       string                   `json:"error_text,omitempty"`
 }
 
 // nativeBackend is used by the real OS adapter and deterministic tests alike.
@@ -86,16 +88,19 @@ type nativeObservation struct {
 	owner  *mcp.ServerSession
 }
 type nativeRunner struct {
-	backend      nativeBackend
-	store        *session.Store
-	gate         chan struct{}
-	observation  *nativeObservation
-	discoveries  map[*mcp.ServerSession]*nativeDiscovery
-	watched      map[*mcp.ServerSession]bool
-	now          func() time.Time
-	discoveryTTL time.Duration
-	targets      map[*mcp.ServerSession]map[string]*nativeRetainedTarget
-	closed       bool
+	pointerRecovery nativePointerRecovery
+	recoveryOwner   *mcp.ServerSession
+	recoveryHandle  string
+	backend         nativeBackend
+	store           *session.Store
+	gate            chan struct{}
+	observation     *nativeObservation
+	discoveries     map[*mcp.ServerSession]*nativeDiscovery
+	watched         map[*mcp.ServerSession]bool
+	now             func() time.Time
+	discoveryTTL    time.Duration
+	targets         map[*mcp.ServerSession]map[string]*nativeRetainedTarget
+	closed          bool
 }
 
 func newNativeRunner(backend nativeBackend) *nativeRunner {
@@ -197,6 +202,15 @@ func (r *nativeRunner) act(ctx context.Context, req *mcp.CallToolRequest, in nat
 		out.Postcondition = "unknown"
 	}
 	err := r.run(ctx, in.TimeoutMS, func(ctx context.Context) error {
+		// Snapshot recovery metadata while the gate still protects its owner.
+		defer func() {
+			if r.recoveryOwner == nativeOwner(req) {
+				out.RecoveryID, out.PointerRecovery, _, _ = r.pointerRecovery.details()
+			}
+		}()
+		if err := r.pointerRecovery.blocked(); err != nil {
+			return err
+		}
 		old := r.observation
 		if old == nil || in.StateID == "" || old.output.StateID != in.StateID {
 			return fmt.Errorf("unknown or consumed state_id; call native_observe")
@@ -229,7 +243,9 @@ func (r *nativeRunner) act(ctx context.Context, req *mcp.CallToolRequest, in nat
 		if err := r.backend.Check(ctx, old.target, lease, in); err != nil {
 			return err
 		}
-		attempted, actionErr := r.backend.Perform(ctx, old.target, lease, in)
+		attempted, actionErr := r.backend.Perform(context.WithValue(ctx, nativePointerRecoveryKey{}, nativePointerRecoveryStart(func(event nativePointerEvent) error {
+			return r.recoverPointer(ctx, nativeOwner(req), old.handle, old.target, lease, event)
+		})), old.target, lease, in)
 		if attempted {
 			out.Execution = "dispatched_unknown"
 		}
@@ -358,6 +374,7 @@ func nativeMatches(nodes []computeruse.ElementNode, expect nativeExpect) bool {
 func registerNativeTools(server *mcp.Server, r *nativeRunner) {
 	registerNativeApprovalTool(server, r)
 	registerNativeRevokeTool(server, r)
+	registerNativePointerRecoveryTool(server, r)
 	registerNativeTargetTools(server, r)
 	mcp.AddTool(server, &mcp.Tool{Name: "native_discover", Description: "List windows of exactly one running app without launching, activating, capturing screenshots, or requesting new approval. Returns session-scoped selection_id tokens valid for 60 seconds; a new discovery replaces this client’s previous candidates. At most 128 windows, with truncated=true when more exist. Discovery does not invalidate the current observation.", Annotations: readOnlyToolAnnotations()},
 		func(ctx context.Context, req *mcp.CallToolRequest, in nativeDiscoverInput) (*mcp.CallToolResult, nativeDiscoverOutput, error) {

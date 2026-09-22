@@ -197,6 +197,29 @@ type Lease struct {
 // State returns the captured metadata. It remains available after Close.
 func (l *Lease) State() computeruse.AppState { return l.entry.state }
 
+// Retain returns an independently owned lease for the same snapshot. It does
+// not restore a consumed state token or establish freshness. Close the returned
+// lease after its last use. Retaining a closed lease or a lease from a closed
+// store returns an error. Retained handles must not be used concurrently unless
+// the snapshot implementation permits it.
+func (l *Lease) Retain() (*Lease, error) {
+	if l == nil {
+		return nil, fmt.Errorf("snapshot lease is unavailable")
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed || l.store == nil || l.entry == nil {
+		return nil, fmt.Errorf("snapshot lease is closed or unavailable")
+	}
+	l.store.mu.Lock()
+	defer l.store.mu.Unlock()
+	if l.store.closed {
+		return nil, fmt.Errorf("session store is closed")
+	}
+	l.entry.refs++
+	return &Lease{store: l.store, entry: l.entry}, nil
+}
+
 // Resolve returns a handle owned by the lease. The caller must finish all use
 // of the handle before closing the lease. Resolve after Close returns an error.
 func (l *Lease) Resolve(index int) (*axuiautomation.Element, computeruse.ElementNode, error) {
