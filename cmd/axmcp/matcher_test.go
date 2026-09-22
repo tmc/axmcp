@@ -233,6 +233,19 @@ func TestNoMatchMessageIncludesCandidates(t *testing.T) {
 	}
 }
 
+func TestNoMatchMessageReportsTruncatedTraversal(t *testing.T) {
+	msg := noMatchMessage(matchResult{
+		options:   searchOptions{Contains: "dismiss now"},
+		truncated: true,
+	})
+	if !strings.Contains(msg, "partially scanned") {
+		t.Fatalf("noMatchMessage lacks truncation note: %q", msg)
+	}
+	if strings.Contains(noMatchMessage(matchResult{options: searchOptions{Contains: "x"}}), "partially scanned") {
+		t.Fatal("noMatchMessage reported truncation for a complete traversal")
+	}
+}
+
 func TestSearchTraversalLimitUsesTraversalFloor(t *testing.T) {
 	if got := searchTraversalLimit(20); got != defaultSearchTraversalLimit {
 		t.Fatalf("searchTraversalLimit(20) = %d, want %d", got, defaultSearchTraversalLimit)
@@ -353,5 +366,21 @@ func TestNormalizeMatchStringFoldsEllipsis(t *testing.T) {
 
 	if normalizeMatchString("Export…") == normalizeMatchString("Import...") {
 		t.Error("normalizeMatchString folded two distinct titles together")
+	}
+}
+
+func TestNoMatchMessageReportsSilentAX(t *testing.T) {
+	// A wedged AX server answers every read with an empty value; those rows
+	// must not be presented as candidates.
+	result := matchResult{
+		options:    searchOptions{Contains: "dismiss now"},
+		candidates: []elementSnapshot{{record: elementRecord{}}},
+	}
+	msg := noMatchMessage(result)
+	if strings.Contains(msg, "Candidates") {
+		t.Fatalf("noMatchMessage listed content-free candidates: %q", msg)
+	}
+	if !strings.Contains(msg, "no usable accessibility data") {
+		t.Fatalf("noMatchMessage lacks silent-AX note: %q", msg)
 	}
 }

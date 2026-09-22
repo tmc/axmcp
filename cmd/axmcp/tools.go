@@ -28,7 +28,7 @@ import (
 // axTimeout is the AX messaging timeout applied to all opened apps.
 // If an app's accessibility implementation doesn't respond within this
 // duration, AX calls return kAXErrorCannotComplete instead of hanging.
-const axTimeout = 5 // seconds
+const axTimeout = 2 // seconds
 
 var (
 	axSetMessagingTimeout     func(element uintptr, timeoutInSeconds float32) int32

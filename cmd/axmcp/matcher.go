@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/tmc/apple/x/axuiautomation"
 )
@@ -60,6 +61,10 @@ type matchResult struct {
 	options    searchOptions
 	candidates []elementSnapshot
 	matches    []matchedElement
+	// truncated reports that the traversal stopped on the time budget
+	// rather than exhausting the tree, so an absent match may only mean
+	// the app answered too slowly.
+	truncated bool
 }
 
 type clickResolution struct {
@@ -88,10 +93,26 @@ func displayString(s string) string {
 	return strings.Join(strings.Fields(strings.TrimSpace(s)), " ")
 }
 
+// traversalBudget bounds the wall-clock time spent walking an app's AX tree.
+// An app whose accessibility implementation is wedged answers every attribute
+// read at the axTimeout limit, so a full traversal of defaultSearchTraversalLimit
+// elements can run for minutes and blow past the caller's own timeout. Stopping
+// early and saying so beats hanging.
+var traversalBudget = 15 * time.Second
+
 func collectSnapshots(root *axuiautomation.Element, limit int) []elementSnapshot {
+	snapshots, _ := collectSnapshotsWithin(root, limit, traversalBudget)
+	return snapshots
+}
+
+// collectSnapshotsWithin walks the tree breadth-first, stopping at limit
+// elements or when budget expires. It reports whether the budget cut the
+// traversal short.
+func collectSnapshotsWithin(root *axuiautomation.Element, limit int, budget time.Duration) (snapshots []elementSnapshot, truncated bool) {
 	if root == nil {
-		return nil
+		return nil, false
 	}
+	deadline := time.Now().Add(budget)
 	if limit <= 0 {
 		limit = 500
 	}
@@ -101,11 +122,14 @@ func collectSnapshots(root *axuiautomation.Element, limit int) []elementSnapshot
 		depth   int
 	}
 	queue := []queueItem{{element: root, depth: 0}}
-	snapshots := make([]elementSnapshot, 0, limit)
+	snapshots = make([]elementSnapshot, 0, limit)
 	index := 0
 	visited := 0
 
 	for len(queue) > 0 && visited < limit {
+		if budget > 0 && time.Now().After(deadline) {
+			return snapshots, true
+		}
 		item := queue[0]
 		queue = queue[1:]
 		if item.element == nil {
@@ -118,7 +142,7 @@ func collectSnapshots(root *axuiautomation.Element, limit int) []elementSnapshot
 			queue = append(queue, queueItem{element: child, depth: item.depth + 1})
 		}
 	}
-	return snapshots
+	return snapshots, false
 }
 
 func snapshotElement(element *axuiautomation.Element, depth, index int) elementSnapshot {
@@ -373,8 +397,10 @@ func matchElementsFromSnapshots(snapshots []elementSnapshot, options searchOptio
 }
 
 func findElements(root *axuiautomation.Element, options searchOptions) matchResult {
-	snapshots := collectSnapshots(root, searchTraversalLimit(options.Limit))
-	return matchElementsFromSnapshots(snapshots, options)
+	snapshots, truncated := collectSnapshotsWithin(root, searchTraversalLimit(options.Limit), traversalBudget)
+	result := matchElementsFromSnapshots(snapshots, options)
+	result.truncated = truncated
+	return result
 }
 
 func formatRecord(record elementRecord) string {
@@ -469,10 +495,16 @@ func hasWebContent(result matchResult) bool {
 func noMatchMessage(result matchResult) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s not found", describeSearch(result.options))
-	candidates := shortlistCandidates(result, 5)
+	if result.truncated {
+		b.WriteString(truncatedTraversalHint)
+	}
+	candidates := describedCandidates(shortlistCandidates(result, 5))
 	if len(candidates) == 0 {
 		if hasWebContent(result) {
 			b.WriteString(webContentHint)
+		}
+		if !result.truncated && len(result.candidates) > 0 {
+			b.WriteString(silentAXHint)
 		}
 		return b.String()
 	}
@@ -485,6 +517,31 @@ func noMatchMessage(result matchResult) string {
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
+
+// describedCandidates drops candidates that carry no descriptive text or
+// geometry. An app whose accessibility server is wedged answers every read
+// with an empty value, so listing those rows as "candidates" is noise that
+// reads like real UI.
+func describedCandidates(candidates []elementSnapshot) []elementSnapshot {
+	out := candidates[:0:0]
+	for _, c := range candidates {
+		r := c.record
+		if r.role == "" && r.title == "" && r.desc == "" && r.value == "" && r.identifier == "" && r.w == 0 && r.h == 0 {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+const silentAXHint = "\nNote: the app returned no usable accessibility data — its AX server is " +
+	"unresponsive or it exposes no elements. Use ax_ocr_click / ax_ocr to work from pixels instead."
+
+var truncatedTraversalHint = fmt.Sprintf(
+	"\nNote: the app answered accessibility queries too slowly to finish the search within %s, "+
+		"so the tree was only partially scanned. The element may exist. "+
+		"Scope the search with window, or use ax_ocr_click / ax_ocr to work from pixels instead.",
+	traversalBudget)
 
 const webContentHint = "\nNote: AXWebArea detected — this app uses a webview (e.g. Electron). " +
 	"Web-rendered UI elements may not appear in the AX tree. " +
