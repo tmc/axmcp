@@ -37,7 +37,8 @@ failed.
 
 | Action | Required arguments | Behavior |
 | --- | --- | --- |
-| `click` | `element_index` | Direct accessibility press; no coordinate fallback |
+| `click` | `element_index` or `point` plus `image_id` | Direct accessibility press or window-routed pointer input |
+| `drag` | `from_point`, `to_point`, `image_id` | Window-routed pointer drag |
 | `set_value` | `element_index`, `value` | Set AXValue; empty values are allowed |
 | `secondary_action` | `element_index`, `secondary_action` | Perform an exact advertised accessibility action |
 | `type_text` | `element_index`, nonempty `text` | Explicitly focus and verify the element, then post text to its process |
@@ -63,10 +64,56 @@ Read the three result fields independently:
 
 `timeout_ms` defaults to 30000 and accepts values from 0 through 60000. Cancellation
 stops future dispatch and bounds screenshot subprocesses and individual AX
-messaging waits. It cannot undo native calls already in flight or impose a hard
-wall-clock limit on the synchronous screenshot helper. Keyboard cleanup pairs
+messaging waits. It cannot undo native calls already in flight. Keyboard cleanup pairs
 only key-down events posted by this action to the original process instance.
 
 URL policy is checked from a fresh pre-action snapshot; it is not continuously
-refreshed between individual text events. Coordinate click and drag are not
-provided by this pair. These limitations matter when selecting a workflow.
+refreshed between individual text or pointer events. This limitation matters when
+selecting a workflow.
+
+Screenshots use the exact window ID, with shadows omitted. The optional
+`screenshot_metadata` binds the returned PNG to its SHA-256 `image_id`, raw pixel
+dimensions, unrounded global logical frame, pixel-to-point scales, and active
+display topology. The image is not a screen-region capture, so another window
+covering the target does not become the captured target.
+
+Capture requires consecutive matching geometry and image dimensions; changing
+pixel content is allowed. A final geometry check rejects observable movement or
+display changes during the accessibility tree walk. The image and tree are not an
+atomic snapshot: content can change, and movement away and back between checks
+can escape detection.
+
+For screenshot input, provide `image_id` from `screenshot_metadata` and points in
+raw PNG pixels. Both coordinates are required and must lie inside the image:
+`0 <= x < width`, `0 <= y < height`. Coordinates are not rounded or clamped.
+`click` accepts either `point` or `element_index`, never both. `mouse_button` is
+`left` (default), `right`, or `middle`; `click_count` is 1 (default), 2, or 3.
+Nondefault button/count options require a point. `drag` uses `from_point` and
+`to_point`, with `duration_ms` from 100 through 5000 (default 300).
+
+Pointer routing checks the captured geometry and display topology before each
+new down or movement event, and posts each event once to the original process
+and window. It does not explicitly activate the app. Cleanup sends only the
+matching up for a down this action posted; if the original instance or geometry
+cannot be verified, cleanup reports an error instead of releasing into another
+target. If an app stops responding after a down, its AX geometry check can fail
+and leave the matching up undispatched. The action reports the cleanup error;
+it does not retain pending input for later recovery. A bounded cleanup wait
+does not establish that the app received a release.
+
+Mouse events carry uptime timestamps and matching event numbers for each down/up
+pair. Drag scheduling includes validation work rather than adding a fixed delay
+after every check; slow system calls can still extend the requested duration.
+
+Native routing uses private macOS window-location support and returns an
+error when that support is unavailable. AppKit behavior may differ across controls;
+a native call returning is not evidence that a requested UI effect occurred. A
+background view can reject its first mouse event. Check the application effect;
+do not replay a click automatically or assume that a local event-monitor record
+means the view handled it.
+
+The native pair emits the PNG as MCP image content alongside structured state and
+text, without repeating its base64 in the JSON. An image-encoding failure after
+an action preserves the execution result and reports the observation unavailable.
+Transport/schema errors before the handler do not consume a token. Image identity
+and point bounds are validated in the handler after state consumption.

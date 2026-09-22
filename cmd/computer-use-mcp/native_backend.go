@@ -187,7 +187,7 @@ func nativeFocusedWindow(ctx context.Context, app *axuiautomation.Application) (
 // window. PID-directed events do not carry a window ID and still need focus.
 func checkNativeFocus(action string, windowID uint32, focused func() (uint32, error)) error {
 	switch action {
-	case "click", "set_value", "secondary_action":
+	case "click", "drag", "set_value", "secondary_action":
 		return nil
 	}
 	id, err := focused()
@@ -221,6 +221,12 @@ func (b *nativeOSBackend) Check(ctx context.Context, target nativeTarget, lease 
 	if !sameNativeWindow(target.Window, root) {
 		return fmt.Errorf("observed window disappeared or moved")
 	}
+	if nativeHasCoordinates(in) {
+		if err := appstate.CheckScreenshotGeometry(ctx, root, lease.State().ScreenshotMetadata); err != nil {
+			return err
+		}
+	}
+
 	if err := checkNativeFocus(in.Action, target.Window.WindowID, func() (uint32, error) {
 		return nativeFocusedWindow(ctx, root.Application())
 	}); err != nil {
@@ -291,9 +297,24 @@ func (b *nativeOSBackend) Perform(ctx context.Context, target nativeTarget, leas
 			return nativeFocusedWindow(ctx, root.Application())
 		},
 	}
-	guard := func() error { return checks.check(ctx, target, in.Action) }
+	guard := func() error {
+		if err := checks.check(ctx, target, in.Action); err != nil {
+			return err
+		}
+		if nativeHasCoordinates(in) {
+			root, _, err := lease.Resolve(0)
+			if err != nil {
+				return err
+			}
+			return appstate.CheckScreenshotGeometry(ctx, root, lease.State().ScreenshotMetadata)
+		}
+		return nil
+	}
 	if err := guard(); err != nil {
 		return false, err
+	}
+	if nativeHasCoordinates(in) {
+		return performNativePointer(ctx, target, lease, in, guard)
 	}
 	var el *axuiautomation.Element
 	if in.ElementIndex != nil {

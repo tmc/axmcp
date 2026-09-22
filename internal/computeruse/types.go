@@ -19,6 +19,36 @@ type WindowInfo struct {
 	ScreenshotHeight int    `json:"screenshot_height,omitempty"`
 }
 
+// CaptureRect describes an unrounded rectangle in global macOS logical points.
+type CaptureRect struct {
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+}
+
+// DisplayInfo records a display's logical bounds and physical pixel dimensions.
+type DisplayInfo struct {
+	ID          uint32      `json:"id"`
+	Bounds      CaptureRect `json:"bounds"`
+	PixelWidth  int         `json:"pixel_width"`
+	PixelHeight int         `json:"pixel_height"`
+}
+
+// ScreenshotInfo binds raw PNG pixels to the window geometry used at capture.
+// ScaleX and ScaleY are pixels per logical point, not claims about display DPI.
+type ScreenshotInfo struct {
+	ImageID      string        `json:"image_id"`
+	Width        int           `json:"width"`
+	Height       int           `json:"height"`
+	SourceKind   string        `json:"source_kind"`
+	TargetWindow uint32        `json:"target_window"`
+	GlobalRect   CaptureRect   `json:"global_rect"`
+	ScaleX       float64       `json:"scale_x"`
+	ScaleY       float64       `json:"scale_y"`
+	Displays     []DisplayInfo `json:"displays"`
+}
+
 // ElementNode is an indexed AX node in a returned app state.
 type ElementNode struct {
 	Index            int      `json:"index"`
@@ -83,6 +113,7 @@ type ApprovalState struct {
 
 // AppState is the canonical snapshot returned by get_app_state.
 type AppState struct {
+	ScreenshotMetadata  *ScreenshotInfo `json:"screenshot_metadata,omitempty"`
 	SessionID           string          `json:"session_id"`
 	StateID             string          `json:"state_id"`
 	App                 AppInfo         `json:"app"`

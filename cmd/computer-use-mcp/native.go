@@ -39,6 +39,13 @@ type nativeExpect struct {
 	Text       string `json:"text"`
 }
 type nativeActInput struct {
+	Point           *nativePoint  `json:"point,omitempty"`
+	FromPoint       *nativePoint  `json:"from_point,omitempty"`
+	ToPoint         *nativePoint  `json:"to_point,omitempty"`
+	ImageID         string        `json:"image_id,omitempty"`
+	MouseButton     string        `json:"mouse_button,omitempty"`
+	ClickCount      int           `json:"click_count,omitempty"`
+	DurationMS      int           `json:"duration_ms,omitempty"`
 	StateID         string        `json:"state_id"`
 	TargetID        string        `json:"target_id"`
 	Action          string        `json:"action"`
@@ -177,6 +184,9 @@ func (r *nativeRunner) act(ctx context.Context, req *mcp.CallToolRequest, in nat
 		if err := validateNativeInput(in); err != nil {
 			return err
 		}
+		if err := validateNativePointerImage(in, lease.State()); err != nil {
+			return err
+		}
 		permissions, approval, err := r.backend.Authorize(ctx, req, old.target.App, false)
 		if err != nil {
 			return err
@@ -246,8 +256,16 @@ func appendNativeError(out *nativeActOutput, where string, err error) {
 	out.ErrorText += err.Error()
 }
 func validateNativeInput(in nativeActInput) error {
+	if err := validateNativePointerInput(in); err != nil {
+		return err
+	}
 	switch in.Action {
-	case "click", "type_text", "set_value", "scroll", "secondary_action":
+	case "click":
+		if in.Point == nil && (in.ElementIndex == nil || *in.ElementIndex < 0) {
+			return fmt.Errorf("click requires element_index or point")
+		}
+	case "drag":
+	case "type_text", "set_value", "scroll", "secondary_action":
 		if in.ElementIndex == nil || *in.ElementIndex < 0 {
 			return fmt.Errorf("action requires a nonnegative element_index")
 		}
@@ -300,10 +318,18 @@ func registerNativeTools(server *mcp.Server, r *nativeRunner) {
 	mcp.AddTool(server, &mcp.Tool{Name: "native_observe", Description: "Observe an exact running app and window. Use a unique full name, bundle ID or PID. A missing window_id selects the focused window only. Returns opaque state_id and target_id; denied permissions grant no action token.", Annotations: readOnlyToolAnnotations()},
 		func(ctx context.Context, req *mcp.CallToolRequest, in nativeObserveInput) (*mcp.CallToolResult, nativeObservationOutput, error) {
 			out, err := r.observe(ctx, req, in)
-			return nil, out, err
+			if err != nil {
+				return nil, out, err
+			}
+			image, err := nativeImageContent(&out.AppState)
+			if err != nil {
+				return nil, out, err
+			}
+			result, err := nativeToolResult(out, image)
+			return result, out, err
 		})
-	mcp.AddTool(server, &mcp.Tool{Name: "native_act", Description: "Consume a native_observe state_id and target_id for a native action. Uses exact observed element_index; never retargets by name. Execution reports native call completion, not app effect. Read observation and postcondition separately; never replay an uncertain action. timeout_ms defaults to 30000, maximum 60000.", Annotations: actionToolAnnotations()},
+	mcp.AddTool(server, &mcp.Tool{Name: "native_act", Description: "Consume a native_observe state_id and target_id for a native action. Uses an exact observed element_index or image_id plus PNG-pixel point for click, or from_point/to_point for drag. Pointer mode accepts left/right/middle mouse_button; click_count 1..3 or drag duration_ms 100..5000. Never retargets by name. Execution reports native call completion, not app effect. Read observation and postcondition separately; never replay an uncertain action. timeout_ms defaults to 30000, maximum 60000.", Annotations: actionToolAnnotations()},
 		func(ctx context.Context, req *mcp.CallToolRequest, in nativeActInput) (*mcp.CallToolResult, nativeActOutput, error) {
-			return nil, r.act(ctx, req, in), nil
+			return nativeActResult(r.act(ctx, req, in))
 		})
 }

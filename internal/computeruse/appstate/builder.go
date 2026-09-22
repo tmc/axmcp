@@ -1,15 +1,10 @@
 package appstate
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
-	"image"
-	_ "image/png"
 	"math"
-	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +13,6 @@ import (
 	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/x/axuiautomation"
 	"github.com/tmc/axmcp/internal/computeruse"
-	"github.com/tmc/axmcp/internal/ghostcursor"
 	"github.com/tmc/axmcp/internal/macosapp"
 )
 
@@ -205,6 +199,15 @@ func finishSnapshot(ctx context.Context, app *axuiautomation.Application, info c
 // boundAXTimeout bounds each subsequent AX exchange. It cannot undo a call
 // already in flight. Descendant handles get their own remaining-budget timeout.
 func boundAXTimeout(ctx context.Context, el *axuiautomation.Element) error {
+	return boundAXCalls(ctx, el, 1)
+}
+
+// boundAXCalls divides the remaining budget across calls that an AX wrapper
+// performs without returning control to its caller between requests.
+func boundAXCalls(ctx context.Context, el *axuiautomation.Element, calls int) error {
+	if calls < 1 {
+		return fmt.Errorf("invalid accessibility call count")
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -213,7 +216,7 @@ func boundAXTimeout(ctx context.Context, el *axuiautomation.Element) error {
 	}
 	timeout := float32(axTimeout)
 	if deadline, ok := ctx.Deadline(); ok {
-		left := time.Until(deadline).Seconds()
+		left := time.Until(deadline).Seconds() / float64(calls)
 		if left <= 0 {
 			return context.DeadlineExceeded
 		}
@@ -270,14 +273,13 @@ func buildState(ctx context.Context, app computeruse.AppInfo, window *axuiautoma
 	if err := boundAXTimeout(ctx, window); err != nil {
 		return computeruse.AppState{}, nil, nil, err
 	}
-	frame := window.Frame()
-	png, err := captureWindow(ctx, window)
+	png, metadata, err := captureWindow(ctx, window)
 	if err != nil {
 		return computeruse.AppState{}, nil, nil, err
 	}
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(png))
-	if err != nil {
-		return computeruse.AppState{}, nil, nil, fmt.Errorf("decode screenshot: %w", err)
+	frame := axuiautomation.Rect{
+		Origin: axuiautomation.Point{X: metadata.GlobalRect.X, Y: metadata.GlobalRect.Y},
+		Size:   axuiautomation.Size{Width: metadata.GlobalRect.Width, Height: metadata.GlobalRect.Height},
 	}
 
 	type queueItem struct {
@@ -333,16 +335,17 @@ func buildState(ctx context.Context, app computeruse.AppInfo, window *axuiautoma
 	}
 
 	state := computeruse.AppState{
-		App: app,
+		App:                app,
+		ScreenshotMetadata: metadata,
 		Window: computeruse.WindowInfo{
-			WindowID:         window.WindowID(),
+			WindowID:         metadata.TargetWindow,
 			Title:            window.Title(),
 			X:                int(math.Round(frame.Origin.X)),
 			Y:                int(math.Round(frame.Origin.Y)),
 			Width:            int(math.Round(frame.Size.Width)),
 			Height:           int(math.Round(frame.Size.Height)),
-			ScreenshotWidth:  cfg.Width,
-			ScreenshotHeight: cfg.Height,
+			ScreenshotWidth:  metadata.Width,
+			ScreenshotHeight: metadata.Height,
 		},
 		Tree:                tree,
 		ScreenshotPNGBase64: base64.StdEncoding.EncodeToString(png),
@@ -357,6 +360,13 @@ func buildState(ctx context.Context, app computeruse.AppInfo, window *axuiautoma
 	if instructions != nil {
 		state.Instructions = instructions.Instructions(app)
 	}
+	if err := ctx.Err(); err != nil {
+		return computeruse.AppState{}, nil, nil, err
+	}
+	if err := CheckScreenshotGeometry(ctx, window, metadata); err != nil {
+		return computeruse.AppState{}, nil, nil, err
+	}
+
 	if err := ctx.Err(); err != nil {
 		return computeruse.AppState{}, nil, nil, err
 	}
@@ -440,58 +450,6 @@ func isSettableRole(role string) bool {
 	default:
 		return false
 	}
-}
-
-func captureWindow(ctx context.Context, window *axuiautomation.Element) ([]byte, error) {
-	if window == nil {
-		return nil, fmt.Errorf("nil window")
-	}
-	if err := boundAXTimeout(ctx, window); err != nil {
-		return nil, err
-	}
-	frame := window.Frame()
-	if png, err := window.Screenshot(); err == nil && len(png) > 0 {
-		ghostcursor.FlashCaptureRect(corefoundation.CGRect{
-			Origin: corefoundation.CGPoint{X: frame.Origin.X, Y: frame.Origin.Y},
-			Size:   corefoundation.CGSize{Width: frame.Size.Width, Height: frame.Size.Height},
-		})
-		return png, nil
-	}
-	rectArg := fmt.Sprintf("%d,%d,%d,%d",
-		int(frame.Origin.X),
-		int(frame.Origin.Y),
-		int(frame.Size.Width),
-		int(frame.Size.Height),
-	)
-	f, err := os.CreateTemp("", "computer-use-window-*.png")
-	if err != nil {
-		return nil, fmt.Errorf("create temp file: %w", err)
-	}
-	name := f.Name()
-	if err := f.Close(); err != nil {
-		os.Remove(name)
-		return nil, fmt.Errorf("close temp file: %w", err)
-	}
-	defer os.Remove(name)
-
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "screencapture", "-x", "-R", rectArg, "-t", "png", name)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("screencapture %s: %w: %s", rectArg, err, strings.TrimSpace(string(out)))
-	}
-	data, err := os.ReadFile(name)
-	if err != nil {
-		return nil, fmt.Errorf("read temp screenshot: %w", err)
-	}
-	if len(data) == 0 {
-		return nil, fmt.Errorf("empty screenshot")
-	}
-	ghostcursor.FlashCaptureRect(corefoundation.CGRect{
-		Origin: corefoundation.CGPoint{X: frame.Origin.X, Y: frame.Origin.Y},
-		Size:   corefoundation.CGSize{Width: frame.Size.Width, Height: frame.Size.Height},
-	})
-	return data, nil
 }
 
 func selectWindow(app *axuiautomation.Application, title string) (*axuiautomation.Element, error) {
