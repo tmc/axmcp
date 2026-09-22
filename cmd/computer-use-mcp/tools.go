@@ -567,13 +567,22 @@ func elicitApproval(ctx context.Context, req *mcp.CallToolRequest, rt *runtimeSt
 	if name == "" {
 		name = info.BundleID
 	}
+	meta := mcp.Meta{"persist": []string{"always"}}
+	if req.Params != nil {
+		if request, ok := req.Params.Meta["tmc.dev/approval-request"].(string); ok && request != "" {
+			meta["tmc.dev/approval-request"] = request
+		}
+	}
 	res, err := req.Session.Elicit(ctx, &mcp.ElicitParams{
-		Meta:            mcp.Meta{"persist": []string{"always"}},
-		Message:         fmt.Sprintf("Allow Codex to use %s?", name),
+		Meta:            meta,
+		Message:         fmt.Sprintf("Allow computer-use-mcp to control %s (%s)? This approval will be stored and apply to future sessions.", name, info.BundleID),
 		RequestedSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 	})
 	if err != nil {
 		return computeruse.ApprovalState{}, fmt.Errorf("request approval for %s: %w", info.BundleID, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return computeruse.ApprovalState{}, err
 	}
 	decision, err := approvalDecisionFromElicit(res)
 	if err != nil {

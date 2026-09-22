@@ -43,14 +43,14 @@ func TestComputerUseSpecParity(t *testing.T) {
 		t.Fatalf("ListTools: %v", err)
 	}
 	want := orderedComputerUseTools()
-	if len(got.Tools) != len(want)+5 {
-		t.Fatalf("tool count=%d, want %d", len(got.Tools), len(want)+5)
+	if len(got.Tools) != len(want)+6 {
+		t.Fatalf("tool count=%d, want %d", len(got.Tools), len(want)+6)
 	}
 	extra := map[string]bool{}
 	for _, tool := range got.Tools[len(want):] {
 		extra[tool.Name] = true
 	}
-	if !extra["native_observe"] || !extra["native_act"] || !extra["native_discover"] || !extra["native_select"] || !extra["native_release"] {
+	if !extra["native_request_approval"] || !extra["native_observe"] || !extra["native_act"] || !extra["native_discover"] || !extra["native_select"] || !extra["native_release"] {
 		t.Fatalf("native tools missing: %v", extra)
 	}
 	if !reflect.DeepEqual(normalizeJSON(t, got.Tools[:len(want)]), normalizeJSON(t, want)) {

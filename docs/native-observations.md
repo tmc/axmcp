@@ -174,3 +174,13 @@ text, without repeating its base64 in the JSON. An image-encoding failure after
 an action preserves the execution result and reports the observation unavailable.
 Transport/schema errors before the handler do not consume a token. Image identity
 and point bounds are validated in the handler after state consumption.
+
+To approve an app before discovering its windows, explicitly call
+`native_request_approval` with the app name, bundle ID or PID. It resolves one
+running app and requests persistent approval through MCP form elicitation.
+It does not launch, activate, capture or act on the app. Acceptance stores
+approval for future sessions; decline and cancel grant no approval. The result
+preserves approval and permission status, including persistence errors.
+Accessibility and Screen Recording permissions must be granted separately.
+`native_discover` continues to list only approved windows without prompting.
+There is currently no tool for revoking stored app approvals.
