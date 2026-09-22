@@ -108,6 +108,15 @@ func main() {
 		if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 			log.Printf("server error: %v", err)
 		}
+		if rt.native != nil {
+			_ = rt.native.store.Close()
+		}
+		if rt.sessions != nil {
+			_ = rt.sessions.Close()
+		}
+		if rt.intervention != nil {
+			rt.intervention.Close()
+		}
 		ui.WaitForWindows()
 		os.Exit(0)
 	}()
@@ -213,10 +222,11 @@ func computerUseInstructions() string {
 		"",
 		"Some apps might have a separate dedicated plugin or skill. You may want to use that plugin or skill instead of Computer Use when it seems like a good fit for the task. While the separate plugin or skill may not expose every feature in the app, if the plugin can perform the task with its available features, prefer it. If the needed capability is not exposed there, use Computer Use may be appropriate for the missing interaction.",
 		"",
-		"Begin by calling `get_app_state` every turn you want to use Computer Use to get the latest state before acting. Codex will automatically stop the session after each assistant turn, so this step is required before interacting with apps in a new assistant turn.",
-		"Pass the returned `state_id` to every action tool. If an action reports `requires_refresh`, call `get_app_state` again and retry against the fresh state.",
+		"Begin each turn with `native_observe` for `native_act`, or `get_app_state` for the legacy action tools. Use the state_id from the matching observation API.",
+		"Pass the returned `state_id` to every action tool. If a legacy action reports `requires_refresh`, call `get_app_state` again before deciding whether to act. Never replay an action whose effects are uncertain.",
 		"",
-		"The available tools are list_apps, get_app_state, click, perform_secondary_action, scroll, drag, type_text, press_key, and set_value. If any of these are not available in your environment, use tool_search to surface one before calling any Computer Use action tools.",
+		"Use native_observe/native_act for exact process/window identity, single-use observations and separate execution/observation/postcondition outcomes. A completed native call does not prove application effect. Never replay an uncertain native action.",
+		"The available tools are native_observe, native_act, list_apps, get_app_state, click, perform_secondary_action, scroll, drag, type_text, press_key, and set_value. If any of these are not available in your environment, use tool_search to surface one before calling any Computer Use action tools.",
 		"",
 		"Computer Use tools allow you to use the user's apps in the background, so while you're using an app, the user can continue to use other apps on their computer. Avoid doing anything that would disrupt the user's active session, such as overwriting the contents of their clipboard, unless they asked you to!",
 		"",

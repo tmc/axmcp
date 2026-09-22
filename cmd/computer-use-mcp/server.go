@@ -22,6 +22,10 @@ func newComputerUseServer(rt *runtimeState) *mcp.Server {
 		},
 	})
 	registerComputerUseTools(server, rt)
+	if rt.native == nil {
+		rt.native = newNativeRunner(&nativeOSBackend{rt: rt})
+	}
+	registerNativeTools(server, rt.native)
 	registerPermissionResource(server)
 	server.AddReceivingMiddleware(computerUseCompatibilityMiddleware())
 	return server
@@ -32,7 +36,21 @@ func computerUseCompatibilityMiddleware() mcp.Middleware {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 			switch method {
 			case "tools/list":
-				return &mcp.ListToolsResult{Tools: orderedComputerUseTools()}, nil
+				result, err := next(ctx, method, req)
+				if err != nil {
+					return nil, err
+				}
+				listed, ok := result.(*mcp.ListToolsResult)
+				if !ok {
+					return nil, fmt.Errorf("unexpected tool listing")
+				}
+				tools := orderedComputerUseTools()
+				for _, tool := range listed.Tools {
+					if tool.Name == "native_observe" || tool.Name == "native_act" {
+						tools = append(tools, tool)
+					}
+				}
+				return &mcp.ListToolsResult{Tools: tools}, nil
 			case "resources/templates/list":
 				return nil, methodNotFoundError(method)
 			default:

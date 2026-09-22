@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | `cmd/axmcp` | Any running macOS app via AX tree, OCR, pointer, keyboard, windows | Open primitive surface |
 | `cmd/xcmcp` | Xcode, simulators, physical devices, previews, App Store Connect | Toolset-gated, ~40 tools on demand |
-| `cmd/computer-use-mcp` | Codex Computer Use contract on top of axmcp primitives | Exactly the 9-tool spec, session-stateful |
+| `cmd/computer-use-mcp` | Codex Computer Use contract on top of axmcp primitives | Legacy 9-tool surface plus native observation/action pair |
 
 If you want an LLM to click through a real app: `axmcp`. If you want it to build, test, boot a simulator, or add an Xcode target via the File > New UI: `xcmcp`. If you need a drop-in for the Codex Computer Use tool contract: `computer-use-mcp`.
 
@@ -235,7 +235,9 @@ Primitive tools cover element discovery, pointer and keyboard input, window mani
 
 `computer-use-mcp` is the stateful, session-oriented compatibility server. It holds the narrow Codex Computer Use tool contract on top of the same accessibility and screenshot primitives.
 
-It is tools-only — no MCP resources, no resource templates. The tool surface is app-scoped: call `get_app_state` first, then pass returned `element_index` strings to the action tools.
+Use `native_observe` and `native_act` for exact process/window targeting, single-use state tokens and separate execution, observation and postcondition results. See [Native observations and actions](docs/native-observations.md) for inputs, focus requirements and limitations.
+
+The legacy action surface starts with `get_app_state` and uses its returned state and element indices. The server also exposes the `mcp://permissions/status` resource; it has no resource templates.
 
 ### `xcmcp`
 

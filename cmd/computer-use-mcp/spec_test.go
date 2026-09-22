@@ -43,7 +43,17 @@ func TestComputerUseSpecParity(t *testing.T) {
 		t.Fatalf("ListTools: %v", err)
 	}
 	want := orderedComputerUseTools()
-	if !reflect.DeepEqual(normalizeJSON(t, got.Tools), normalizeJSON(t, want)) {
+	if len(got.Tools) != len(want)+2 {
+		t.Fatalf("tool count=%d, want %d", len(got.Tools), len(want)+2)
+	}
+	extra := map[string]bool{}
+	for _, tool := range got.Tools[len(want):] {
+		extra[tool.Name] = true
+	}
+	if !extra["native_observe"] || !extra["native_act"] {
+		t.Fatalf("native tools missing: %v", extra)
+	}
+	if !reflect.DeepEqual(normalizeJSON(t, got.Tools[:len(want)]), normalizeJSON(t, want)) {
 		gotJSON, _ := json.MarshalIndent(normalizeJSON(t, got.Tools), "", "  ")
 		wantJSON, _ := json.MarshalIndent(normalizeJSON(t, want), "", "  ")
 		t.Fatalf("tools/list mismatch\n got: %s\nwant: %s", gotJSON, wantJSON)

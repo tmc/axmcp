@@ -85,7 +85,111 @@ func (b *Builder) Build(ctx context.Context, selector, windowTitle string, instr
 		app.Close()
 		return nil, err
 	}
-	state, elements, nodes, err := buildState(info, window, instructions)
+	return finishSnapshot(ctx, app, info, window, instructions)
+}
+
+// BuildWindow captures one running process's exact window. A zero windowID
+// selects its focused window; a positive ID must match exactly. It never launches
+// an app or falls back to another window. The caller owns the returned snapshot.
+// Process-instance validation across capture is the action runner's responsibility.
+func (b *Builder) BuildWindow(ctx context.Context, pid int32, windowID uint32, instructions computeruse.InstructionProvider) (*Snapshot, error) {
+	if pid <= 0 {
+		return nil, fmt.Errorf("pid must be positive")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return b.buildWindow(ctx, pid, windowID, instructions)
+}
+
+func (b *Builder) buildWindow(ctx context.Context, pid int32, windowID uint32, instructions computeruse.InstructionProvider) (*Snapshot, error) {
+	app := axuiautomation.NewApplicationFromPID(pid)
+	if app == nil {
+		return nil, fmt.Errorf("cannot connect to pid %d", pid)
+	}
+	fail := func(err error) (*Snapshot, error) { app.Close(); return nil, err }
+	if err := boundAXTimeout(ctx, app.Root()); err != nil {
+		return fail(err)
+	}
+	if windowID == 0 {
+		focused := app.FocusedElement()
+		for depth := 0; focused != nil && depth < 64; depth++ {
+			if err := boundAXTimeout(ctx, focused); err != nil {
+				focused.Release()
+				return fail(err)
+			}
+			windowID = focused.WindowID()
+			if windowID != 0 {
+				focused.Release()
+				focused = nil
+				break
+			}
+			parent := focused.Parent()
+			focused.Release()
+			focused = parent
+		}
+		if focused != nil {
+			focused.Release()
+		}
+		if windowID == 0 {
+			return fail(fmt.Errorf("focused window unavailable"))
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
+	windows := app.WindowList()
+	ids := make([]uint32, len(windows))
+	var scanErr error
+	for i, window := range windows {
+		if window == nil {
+			continue
+		}
+		if err := boundAXTimeout(ctx, window); err != nil {
+			scanErr = err
+			break
+		}
+		ids[i] = window.WindowID()
+	}
+	index, err := exactWindowIndex(ids, windowID)
+	if scanErr != nil {
+		err = scanErr
+	}
+	for i, window := range windows {
+		if window != nil && (err != nil || i != index) {
+			window.Release()
+		}
+	}
+	if err != nil {
+		return fail(err)
+	}
+	info := lookupAppInfo(ctx, pid, app.BundleID(), strconv.Itoa(int(pid)))
+	return finishSnapshot(ctx, app, info, windows[index], instructions)
+}
+
+func exactWindowIndex(ids []uint32, want uint32) (int, error) {
+	if want == 0 {
+		return -1, fmt.Errorf("window identity unavailable")
+	}
+	found := -1
+	for i, id := range ids {
+		if id != want {
+			continue
+		}
+		if found >= 0 {
+			return -1, fmt.Errorf("window identity %d is ambiguous", want)
+		}
+		found = i
+	}
+	if found < 0 {
+		return -1, fmt.Errorf("window %d unavailable", want)
+	}
+	return found, nil
+}
+
+// finishSnapshot owns app and window on every path.
+func finishSnapshot(ctx context.Context, app *axuiautomation.Application, info computeruse.AppInfo, window *axuiautomation.Element, instructions computeruse.InstructionProvider) (*Snapshot, error) {
+	state, elements, nodes, err := buildState(ctx, info, window, instructions)
 	if err != nil {
 		window.Release()
 		app.Close()
@@ -95,13 +199,35 @@ func (b *Builder) Build(ctx context.Context, selector, windowTitle string, instr
 	for _, el := range elements {
 		owned = append(owned, el)
 	}
-	return &Snapshot{
-		state:    state,
-		app:      app,
-		elements: elements,
-		nodes:    nodes,
-		owned:    owned,
-	}, nil
+	return &Snapshot{state: state, app: app, elements: elements, nodes: nodes, owned: owned}, nil
+}
+
+// boundAXTimeout bounds each subsequent AX exchange. It cannot undo a call
+// already in flight. Descendant handles get their own remaining-budget timeout.
+func boundAXTimeout(ctx context.Context, el *axuiautomation.Element) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if el == nil {
+		return fmt.Errorf("accessibility element unavailable")
+	}
+	timeout := float32(axTimeout)
+	if deadline, ok := ctx.Deadline(); ok {
+		left := time.Until(deadline).Seconds()
+		if left <= 0 {
+			return context.DeadlineExceeded
+		}
+		if left < float64(timeout) {
+			timeout = float32(left)
+		}
+	}
+	if axSetMessagingTimeout == nil {
+		return fmt.Errorf("accessibility timeout API unavailable")
+	}
+	if code := axSetMessagingTimeout(el.Ref(), timeout); code != 0 {
+		return fmt.Errorf("set accessibility timeout: %d", code)
+	}
+	return nil
 }
 
 func (s *Snapshot) State() computeruse.AppState {
@@ -140,9 +266,12 @@ func (s *Snapshot) Close() error {
 	return nil
 }
 
-func buildState(app computeruse.AppInfo, window *axuiautomation.Element, instructions computeruse.InstructionProvider) (computeruse.AppState, map[int]*axuiautomation.Element, map[int]computeruse.ElementNode, error) {
+func buildState(ctx context.Context, app computeruse.AppInfo, window *axuiautomation.Element, instructions computeruse.InstructionProvider) (computeruse.AppState, map[int]*axuiautomation.Element, map[int]computeruse.ElementNode, error) {
+	if err := boundAXTimeout(ctx, window); err != nil {
+		return computeruse.AppState{}, nil, nil, err
+	}
 	frame := window.Frame()
-	png, err := captureWindow(window)
+	png, err := captureWindow(ctx, window)
 	if err != nil {
 		return computeruse.AppState{}, nil, nil, err
 	}
@@ -161,12 +290,34 @@ func buildState(app computeruse.AppInfo, window *axuiautomation.Element, instruc
 	nodes := make(map[int]computeruse.ElementNode)
 	tree := make([]computeruse.ElementNode, 0, 128)
 	index := 0
+	complete := false
+	defer func() {
+		if complete {
+			return
+		}
+		for _, el := range elements {
+			if el != window {
+				el.Release()
+			}
+		}
+		for _, item := range queue {
+			if item.el != nil && item.el != window {
+				item.el.Release()
+			}
+		}
+	}()
 
 	for len(queue) > 0 {
 		item := queue[0]
 		queue = queue[1:]
 		if item.el == nil {
 			continue
+		}
+		if err := boundAXTimeout(ctx, item.el); err != nil {
+			if item.el != window {
+				item.el.Release()
+			}
+			return computeruse.AppState{}, nil, nil, err
 		}
 		node := snapshotNode(item.el, item.parent, index, frame)
 		tree = append(tree, node)
@@ -184,7 +335,8 @@ func buildState(app computeruse.AppInfo, window *axuiautomation.Element, instruc
 	state := computeruse.AppState{
 		App: app,
 		Window: computeruse.WindowInfo{
-			Title:            strings.TrimSpace(window.Title()),
+			WindowID:         window.WindowID(),
+			Title:            window.Title(),
 			X:                int(math.Round(frame.Origin.X)),
 			Y:                int(math.Round(frame.Origin.Y)),
 			Width:            int(math.Round(frame.Size.Width)),
@@ -205,6 +357,10 @@ func buildState(app computeruse.AppInfo, window *axuiautomation.Element, instruc
 	if instructions != nil {
 		state.Instructions = instructions.Instructions(app)
 	}
+	if err := ctx.Err(); err != nil {
+		return computeruse.AppState{}, nil, nil, err
+	}
+	complete = true
 	return state, elements, nodes, nil
 }
 
@@ -213,7 +369,7 @@ func snapshotNode(el *axuiautomation.Element, parentIndex, index int, windowFram
 	x := int(math.Round(frame.Origin.X - windowFrame.Origin.X))
 	y := int(math.Round(frame.Origin.Y - windowFrame.Origin.Y))
 	role := strings.TrimSpace(el.Role())
-	value := strings.TrimSpace(el.Value())
+	value := el.Value()
 	if value == "" && (role == "AXCheckBox" || role == "AXSwitch" || role == "AXRadioButton") {
 		if el.IsChecked() {
 			value = "1"
@@ -225,10 +381,10 @@ func snapshotNode(el *axuiautomation.Element, parentIndex, index int, windowFram
 		Index:            index,
 		ParentIndex:      parentIndex,
 		Role:             role,
-		Title:            strings.TrimSpace(el.Title()),
+		Title:            el.Title(),
 		Value:            value,
 		Description:      strings.TrimSpace(el.Description()),
-		Identifier:       strings.TrimSpace(el.Identifier()),
+		Identifier:       el.Identifier(),
 		X:                x,
 		Y:                y,
 		Width:            int(math.Round(frame.Size.Width)),
@@ -286,9 +442,12 @@ func isSettableRole(role string) bool {
 	}
 }
 
-func captureWindow(window *axuiautomation.Element) ([]byte, error) {
+func captureWindow(ctx context.Context, window *axuiautomation.Element) ([]byte, error) {
 	if window == nil {
 		return nil, fmt.Errorf("nil window")
+	}
+	if err := boundAXTimeout(ctx, window); err != nil {
+		return nil, err
 	}
 	frame := window.Frame()
 	if png, err := window.Screenshot(); err == nil && len(png) > 0 {
@@ -315,7 +474,7 @@ func captureWindow(window *axuiautomation.Element) ([]byte, error) {
 	}
 	defer os.Remove(name)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "screencapture", "-x", "-R", rectArg, "-t", "png", name)
 	if out, err := cmd.CombinedOutput(); err != nil {

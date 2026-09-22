@@ -19,6 +19,7 @@ type runtimeState struct {
 	intervention *intervention.Monitor
 	urlPolicy    *policy.URLPolicy
 	sessions     *session.Store
+	native       *nativeRunner
 }
 
 type runtimeOptions struct {
