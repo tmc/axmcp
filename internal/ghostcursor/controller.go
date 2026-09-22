@@ -14,6 +14,7 @@ import (
 	"github.com/tmc/apple/foundation"
 	"github.com/tmc/apple/objectivec"
 	"github.com/tmc/apple/quartzcore"
+	"github.com/tmc/axmcp/internal/purego/cfhandle"
 )
 
 const (
@@ -61,6 +62,7 @@ type Controller struct {
 	interventionTap   corefoundation.CFMachPortRef
 	interventionSrc   corefoundation.CFRunLoopSourceRef
 	interventionID    uintptr
+	interventionLib   *cfhandle.Library
 	lastIntervention  atomic.Int64
 	moveGlowStarted   atomic.Int64
 }
@@ -613,12 +615,12 @@ func (c *Controller) startObservers() {
 func (c *Controller) stopObservers() {
 	if c.interventionSrc != 0 {
 		corefoundation.CFRunLoopRemoveSource(corefoundation.CFRunLoopGetMain(), c.interventionSrc, corefoundation.KCFRunLoopCommonModes)
-		corefoundation.CFRelease(corefoundation.CFTypeRef(c.interventionSrc))
+		c.interventionLib.Release(uintptr(c.interventionSrc))
 		c.interventionSrc = 0
 	}
 	if c.interventionTap != 0 {
 		corefoundation.CFMachPortInvalidate(c.interventionTap)
-		corefoundation.CFRelease(corefoundation.CFTypeRef(c.interventionTap))
+		c.interventionLib.Release(uintptr(c.interventionTap))
 		c.interventionTap = 0
 	}
 	if c.interventionID != 0 {

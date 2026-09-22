@@ -5,10 +5,11 @@ import (
 	"os"
 	"sync"
 	"time"
-	"unsafe"
 
+	"github.com/ebitengine/purego"
 	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/coregraphics"
+	"github.com/tmc/axmcp/internal/purego/cfhandle"
 )
 
 const (
@@ -27,14 +28,25 @@ func (c *Controller) startInterventionMonitor() {
 	if c.interventionTap != 0 {
 		return
 	}
+	lib, err := cfhandle.Open()
+	if err != nil {
+		return
+	}
+	create, err := loadInterventionTap()
+	if err != nil {
+		return
+	}
+	c.interventionLib = lib
 	id := registerInterventionController(c)
-	tap := coregraphics.CGEventTapCreate(
+	if id == 0 {
+		return
+	}
+	tap := create(
 		coregraphics.KCGSessionEventTap,
 		coregraphics.KCGHeadInsertEventTap,
 		eventTapOptionListenOnly,
 		mouseInterventionMask(),
-		ghostCursorInterventionCallback,
-		unsafe.Pointer(id),
+		id,
 	)
 	if tap == 0 {
 		unregisterInterventionController(id)
@@ -43,7 +55,7 @@ func (c *Controller) startInterventionMonitor() {
 	src := corefoundation.CFMachPortCreateRunLoopSource(0, tap, 0)
 	if src == 0 {
 		corefoundation.CFMachPortInvalidate(tap)
-		corefoundation.CFRelease(corefoundation.CFTypeRef(tap))
+		lib.Release(uintptr(tap))
 		unregisterInterventionController(id)
 		return
 	}
@@ -94,15 +106,15 @@ func mouseInterventionMask() coregraphics.CGEventMask {
 	return mask
 }
 
-func ghostCursorInterventionCallback(_ coregraphics.CGEventTapProxy, typ coregraphics.CGEventType, event coregraphics.CGEventRef, userInfo unsafe.Pointer) coregraphics.CGEventRef {
+func ghostCursorInterventionCallback(_ coregraphics.CGEventTapProxy, typ coregraphics.CGEventType, event coregraphics.CGEventRef, userInfo uintptr) coregraphics.CGEventRef {
 	switch typ {
 	case coregraphics.KCGEventTapDisabledByTimeout, coregraphics.KCGEventTapDisabledByUserInput:
-		if c := interventionController(unsafe.Pointer(userInfo)); c != nil && c.interventionTap != 0 {
+		if c := interventionController(userInfo); c != nil && c.interventionTap != 0 {
 			coregraphics.CGEventTapEnable(c.interventionTap, true)
 		}
 		return event
 	}
-	c := interventionController(unsafe.Pointer(userInfo))
+	c := interventionController(userInfo)
 	if c == nil || event == 0 {
 		return event
 	}
@@ -120,6 +132,9 @@ func registerInterventionController(c *Controller) uintptr {
 	if interventionRegistry.byID == nil {
 		interventionRegistry.byID = make(map[uintptr]*Controller)
 	}
+	if interventionRegistry.next == ^uintptr(0) {
+		return 0
+	}
 	interventionRegistry.next++
 	id := interventionRegistry.next
 	interventionRegistry.byID[id] = c
@@ -135,8 +150,8 @@ func unregisterInterventionController(id uintptr) {
 	interventionRegistry.Unlock()
 }
 
-func interventionController(userInfo unsafe.Pointer) *Controller {
-	id := uintptr(userInfo)
+func interventionController(userInfo uintptr) *Controller {
+	id := userInfo
 	if id == 0 {
 		return nil
 	}
@@ -144,3 +159,26 @@ func interventionController(userInfo unsafe.Pointer) *Controller {
 	defer interventionRegistry.Unlock()
 	return interventionRegistry.byID[id]
 }
+
+// The registry token stays an integer across the native boundary. It is never
+// dereferenced or converted to a Go pointer, and tokens are never reused.
+type interventionTapCreate func(coregraphics.CGEventTapLocation, coregraphics.CGEventTapPlacement, coregraphics.CGEventTapOptions, coregraphics.CGEventMask, uintptr) corefoundation.CFMachPortRef
+
+var loadInterventionTap = sync.OnceValues(func() (interventionTapCreate, error) {
+	lib, err := purego.Dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", purego.RTLD_NOW|purego.RTLD_LOCAL)
+	if err != nil {
+		return nil, err
+	}
+	symbol, err := purego.Dlsym(lib, "CGEventTapCreate")
+	if err != nil {
+		_ = purego.Dlclose(lib)
+		return nil, err
+	}
+	var create func(coregraphics.CGEventTapLocation, coregraphics.CGEventTapPlacement, coregraphics.CGEventTapOptions, coregraphics.CGEventMask, uintptr, uintptr) corefoundation.CFMachPortRef
+	purego.RegisterFunc(&create, symbol)
+	callback := purego.NewCallback(ghostCursorInterventionCallback)
+	// Keep the framework and callback trampoline for the process lifetime.
+	return func(location coregraphics.CGEventTapLocation, placement coregraphics.CGEventTapPlacement, options coregraphics.CGEventTapOptions, mask coregraphics.CGEventMask, token uintptr) corefoundation.CFMachPortRef {
+		return create(location, placement, options, mask, callback, token)
+	}, nil
+})

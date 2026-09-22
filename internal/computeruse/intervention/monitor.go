@@ -10,6 +10,7 @@ import (
 
 	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/coregraphics"
+	"github.com/tmc/axmcp/internal/purego/cfhandle"
 )
 
 const defaultQuietPeriod = 750 * time.Millisecond
@@ -31,12 +32,14 @@ type Status struct {
 // Monitor records that physical input happened recently.
 type Monitor struct {
 	quietPeriod time.Duration
+	lifecycle   sync.Mutex
 
 	mu        sync.Mutex
 	enabled   bool
 	lastInput time.Time
 	lastType  string
 
+	lib    *cfhandle.Library
 	tap    corefoundation.CFMachPortRef
 	source corefoundation.CFRunLoopSourceRef
 }
@@ -54,9 +57,22 @@ func New(cfg Config) *Monitor {
 }
 
 // Start installs a listen-only event tap when the monitor is enabled.
+// Calling Start on an already started monitor has no effect.
 func (m *Monitor) Start() error {
 	if m == nil || !m.isEnabled() {
 		return nil
+	}
+	m.lifecycle.Lock()
+	defer m.lifecycle.Unlock()
+	m.mu.Lock()
+	started := m.tap != 0
+	m.mu.Unlock()
+	if started {
+		return nil
+	}
+	lib, err := cfhandle.Open()
+	if err != nil {
+		return err
 	}
 	mask := eventMask(
 		coregraphics.KCGEventKeyDown,
@@ -79,13 +95,14 @@ func (m *Monitor) Start() error {
 	}
 	source := corefoundation.CFMachPortCreateRunLoopSource(0, tap, 0)
 	if source == 0 {
-		corefoundation.CFRelease(corefoundation.CFTypeRef(tap))
+		lib.Release(uintptr(tap))
 		return fmt.Errorf("create event tap run loop source")
 	}
 	corefoundation.CFRunLoopAddSource(corefoundation.CFRunLoopGetMain(), source, corefoundation.KCFRunLoopCommonModes)
 	coregraphics.CGEventTapEnable(tap, true)
 
 	m.mu.Lock()
+	m.lib = lib
 	m.tap = tap
 	m.source = source
 	m.mu.Unlock()
@@ -97,18 +114,23 @@ func (m *Monitor) Close() {
 	if m == nil {
 		return
 	}
+	m.lifecycle.Lock()
+	defer m.lifecycle.Unlock()
 	m.mu.Lock()
+	lib := m.lib
 	tap := m.tap
 	source := m.source
 	m.tap = 0
 	m.source = 0
 	m.mu.Unlock()
+	if source != 0 {
+		corefoundation.CFRunLoopRemoveSource(corefoundation.CFRunLoopGetMain(), source, corefoundation.KCFRunLoopCommonModes)
+		lib.Release(uintptr(source))
+	}
 	if tap != 0 {
 		coregraphics.CGEventTapEnable(tap, false)
-		corefoundation.CFRelease(corefoundation.CFTypeRef(tap))
-	}
-	if source != 0 {
-		corefoundation.CFRelease(corefoundation.CFTypeRef(source))
+		corefoundation.CFMachPortInvalidate(tap)
+		lib.Release(uintptr(tap))
 	}
 }
 
@@ -156,10 +178,14 @@ func (m *Monitor) isEnabled() bool {
 func (m *Monitor) callback(_ coregraphics.CGEventTapProxy, typ coregraphics.CGEventType, event coregraphics.CGEventRef, _ unsafe.Pointer) coregraphics.CGEventRef {
 	if typ == coregraphics.KCGEventTapDisabledByTimeout || typ == coregraphics.KCGEventTapDisabledByUserInput {
 		m.mu.Lock()
-		tap := m.tap
+		tap, lib := m.tap, m.lib
+		if tap != 0 {
+			lib.Retain(uintptr(tap))
+		}
 		m.mu.Unlock()
 		if tap != 0 {
 			coregraphics.CGEventTapEnable(tap, true)
+			lib.Release(uintptr(tap))
 		}
 		return event
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/tmc/apple/x/axuiautomation"
 	"github.com/tmc/axmcp/internal/computeruse"
 	"github.com/tmc/axmcp/internal/macosapp"
+	"github.com/tmc/axmcp/internal/purego/cfhandle"
 )
 
 const axTimeout = 5
@@ -214,9 +215,13 @@ func matchingWindowIndex(windows []*axuiautomation.Element, expected *axuiautoma
 	if expected == nil || expected.Ref() == 0 {
 		return -1, fmt.Errorf("window is required")
 	}
+	lib, err := cfhandle.Open()
+	if err != nil {
+		return -1, err
+	}
 	found := -1
 	for i, window := range windows {
-		if window == nil || window.Ref() == 0 || !corefoundation.CFEqual(corefoundation.CFTypeRef(window.Ref()), corefoundation.CFTypeRef(expected.Ref())) {
+		if window == nil || window.Ref() == 0 || !lib.Equal(window.Ref(), expected.Ref()) {
 			continue
 		}
 		if found >= 0 {
@@ -252,6 +257,11 @@ func exactWindowIndex(ids []uint32, want uint32) (int, error) {
 
 // finishSnapshot owns app and window on every path.
 func finishSnapshot(ctx context.Context, app *axuiautomation.Application, info computeruse.AppInfo, window *axuiautomation.Element, instructions computeruse.InstructionProvider) (*Snapshot, error) {
+	if _, err := cfhandle.Open(); err != nil {
+		window.Release()
+		app.Close()
+		return nil, err
+	}
 	state, elements, nodes, err := buildState(ctx, info, window, instructions)
 	if err != nil {
 		window.Release()
@@ -478,11 +488,15 @@ func actionNames(el *axuiautomation.Element) []string {
 	if el == nil || axCopyActionNames == nil {
 		return nil
 	}
+	lib, err := cfhandle.Open()
+	if err != nil {
+		return nil
+	}
 	var names uintptr
 	if axCopyActionNames(el.Ref(), &names) != 0 || names == 0 {
 		return nil
 	}
-	defer corefoundation.CFRelease(corefoundation.CFTypeRef(names))
+	defer lib.Release(names)
 
 	count := corefoundation.CFArrayGetCount(corefoundation.CFArrayRef(names))
 	out := make([]string, 0, count)

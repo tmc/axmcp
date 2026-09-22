@@ -8,12 +8,12 @@ import (
 	"time"
 
 	"github.com/ebitengine/purego"
-	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/coregraphics"
 	"github.com/tmc/apple/x/axuiautomation"
 	"github.com/tmc/axmcp/internal/computeruse"
 	"github.com/tmc/axmcp/internal/computeruse/coords"
 	"github.com/tmc/axmcp/internal/ghostcursor"
+	"github.com/tmc/axmcp/internal/purego/cfhandle"
 )
 
 type LocalPoint struct {
@@ -234,6 +234,10 @@ func SendKeyCombo(spec string) error {
 }
 
 func SendKeyComboToPID(pid int32, spec string) error {
+	lib, err := cfhandle.Open()
+	if err != nil {
+		return err
+	}
 	if pid <= 0 {
 		return fmt.Errorf("invalid pid %d", pid)
 	}
@@ -246,7 +250,7 @@ func SendKeyComboToPID(pid int32, spec string) error {
 	if keyDown == 0 {
 		return fmt.Errorf("failed to create key down event")
 	}
-	defer corefoundation.CFRelease(corefoundation.CFTypeRef(keyDown))
+	defer lib.Release(uintptr(keyDown))
 	coregraphics.CGEventSetFlags(keyDown, flags)
 	coregraphics.CGEventPostToPid(pid, keyDown)
 
@@ -256,7 +260,7 @@ func SendKeyComboToPID(pid int32, spec string) error {
 	if keyUp == 0 {
 		return fmt.Errorf("failed to create key up event")
 	}
-	defer corefoundation.CFRelease(corefoundation.CFTypeRef(keyUp))
+	defer lib.Release(uintptr(keyUp))
 	coregraphics.CGEventSetFlags(keyUp, flags)
 	coregraphics.CGEventPostToPid(pid, keyUp)
 	return nil
@@ -296,6 +300,10 @@ func elementCenter(el *axuiautomation.Element) LocalPoint {
 }
 
 func clickScreenPoint(point LocalPoint, downType, upType, button int32, clickCount int) error {
+	lib, err := cfhandle.Open()
+	if err != nil {
+		return err
+	}
 	initCGMouseEvents()
 	switch {
 	case cgWarpMouseCursorPosition == nil:
@@ -315,7 +323,7 @@ func clickScreenPoint(point LocalPoint, downType, upType, button int32, clickCou
 			return fmt.Errorf("failed to create mouse down event")
 		}
 		cgEventPost(cgHIDEventTap, mouseDown)
-		corefoundation.CFRelease(corefoundation.CFTypeRef(mouseDown))
+		lib.Release(uintptr(mouseDown))
 		time.Sleep(40 * time.Millisecond)
 		mouseUp := cgEventCreateMouseEvent(0, upType, float64(point.X), float64(point.Y), button)
 		if mouseUp == 0 {
@@ -323,7 +331,7 @@ func clickScreenPoint(point LocalPoint, downType, upType, button int32, clickCou
 			return fmt.Errorf("failed to create mouse up event")
 		}
 		cgEventPost(cgHIDEventTap, mouseUp)
-		corefoundation.CFRelease(corefoundation.CFTypeRef(mouseUp))
+		lib.Release(uintptr(mouseUp))
 		if i < clickCount-1 {
 			time.Sleep(40 * time.Millisecond)
 		}
@@ -333,6 +341,10 @@ func clickScreenPoint(point LocalPoint, downType, upType, button int32, clickCou
 }
 
 func dragScreenPoint(start, end LocalPoint, button int32) error {
+	lib, err := cfhandle.Open()
+	if err != nil {
+		return err
+	}
 	initCGMouseEvents()
 	switch {
 	case cgWarpMouseCursorPosition == nil:
@@ -380,7 +392,7 @@ func dragScreenPoint(start, end LocalPoint, button int32) error {
 		return fmt.Errorf("failed to create mouse down event")
 	}
 	cgEventPost(cgHIDEventTap, mouseDown)
-	corefoundation.CFRelease(corefoundation.CFTypeRef(mouseDown))
+	lib.Release(uintptr(mouseDown))
 	for i := 1; i < len(path); i++ {
 		x := int(math.Round(path[i].X))
 		y := int(math.Round(path[i].Y))
@@ -391,7 +403,7 @@ func dragScreenPoint(start, end LocalPoint, button int32) error {
 			return fmt.Errorf("failed to create mouse drag event")
 		}
 		cgEventPost(cgHIDEventTap, dragged)
-		corefoundation.CFRelease(corefoundation.CFTypeRef(dragged))
+		lib.Release(uintptr(dragged))
 		if i+1 < len(path) {
 			time.Sleep(stepSleep)
 		}
@@ -402,7 +414,7 @@ func dragScreenPoint(start, end LocalPoint, button int32) error {
 		return fmt.Errorf("failed to create mouse up event")
 	}
 	cgEventPost(cgHIDEventTap, mouseUp)
-	corefoundation.CFRelease(corefoundation.CFTypeRef(mouseUp))
+	lib.Release(uintptr(mouseUp))
 	ghostcursor.ReleaseAt(end.X, end.Y)
 	return nil
 }

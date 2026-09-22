@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/tmc/apple/corefoundation"
 	"github.com/tmc/apple/x/axuiautomation"
 	"github.com/tmc/axmcp/internal/computeruse"
 	"github.com/tmc/axmcp/internal/computeruse/session"
+	"github.com/tmc/axmcp/internal/purego/cfhandle"
 )
 
 func (b *nativeOSBackend) DiscoveryAccess(ctx context.Context, app computeruse.AppInfo) (computeruse.PermissionState, computeruse.ApprovalState, error) {
@@ -130,6 +130,10 @@ func (g *nativeOSWindowSet) Validate(ctx context.Context, index int) (nativeTarg
 	if g.app == nil || index < 0 || index >= len(g.windows) {
 		return nativeTarget{}, fmt.Errorf("discovery window unavailable")
 	}
+	lib, err := cfhandle.Open()
+	if err != nil {
+		return nativeTarget{}, err
+	}
 	target := g.targets[index]
 	before, err := nativeProcessStart(target.App.PID)
 	if err != nil {
@@ -154,7 +158,7 @@ func (g *nativeOSWindowSet) Validate(ctx context.Context, index int) (nativeTarg
 		if current == nil {
 			continue
 		}
-		if corefoundation.CFEqual(corefoundation.CFTypeRef(current.Ref()), corefoundation.CFTypeRef(window.Ref())) {
+		if lib.Equal(current.Ref(), window.Ref()) {
 			matches++
 		}
 		current.Release()
