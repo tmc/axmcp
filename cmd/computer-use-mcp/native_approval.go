@@ -23,19 +23,22 @@ func (r *nativeRunner) requestApproval(ctx context.Context, req *mcp.CallToolReq
 	var out nativeRequestApprovalOutput
 	err := r.run(ctx, in.TimeoutMS, func(ctx context.Context) error {
 		app, err := r.backend.Resolve(ctx, in.App)
-		if err != nil {
-			return err
-		}
 		out.App = app
-		out.Permissions, out.Approval, err = r.backend.Authorize(ctx, req, app, true)
-		if err != nil {
-			out.ErrorText = err.Error()
-		}
-		// Preserve denied/canceled/persistence status without minting a window
-		// handle or observation. Transport cancellation remains an error.
-		return ctx.Err()
+		return err
 	})
-	return out, err
+	if err != nil {
+		return out, err
+	}
+	// The prompt waits on a person, so it runs outside the runner's gate and
+	// deadline, which would otherwise stall other tools and cut the person
+	// off. The client bounds it by cancelling the request.
+	out.Permissions, out.Approval, err = r.backend.Authorize(ctx, req, out.App, true)
+	if err != nil {
+		out.ErrorText = err.Error()
+	}
+	// Preserve denied/canceled/persistence status without minting a window
+	// handle or observation. Transport cancellation remains an error.
+	return out, ctx.Err()
 }
 
 func registerNativeApprovalTool(server *mcp.Server, r *nativeRunner) {

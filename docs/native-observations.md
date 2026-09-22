@@ -196,6 +196,8 @@ and point bounds are validated in the handler after state consumption.
 To approve an app before discovering its windows, explicitly call
 `native_request_approval` with the app name, bundle ID or PID. It resolves one
 running app and requests persistent approval through MCP form elicitation.
+`timeout_ms` bounds resolving the app; the prompt itself waits until it is
+answered or the request is cancelled.
 It does not launch, activate, capture or act on the app. Acceptance stores
 approval for future sessions; decline and cancel grant no approval. The result
 preserves approval and permission status, including persistence errors.
