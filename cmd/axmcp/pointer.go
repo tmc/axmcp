@@ -665,23 +665,67 @@ func performDefaultClick(snapshot elementSnapshot) (string, error) {
 	if snapshot.element == nil {
 		return "", fmt.Errorf("target disappeared")
 	}
+	var pressErr error
 	if prefersAXPress(snapshot.record.role) {
-		if summary, err := performAXPress(snapshot); err == nil {
+		summary, err := performAXPress(snapshot)
+		if err == nil {
 			return summary, nil
 		}
+		pressErr = err
 	}
 
 	if x, y, ok := preferredClickPoint(snapshot); ok {
 		if err := clickLocalPoint(snapshot.element, x, y); err == nil {
-			return fmt.Sprintf("clicked %s at hit point %d,%d", formatSnapshot(snapshot), x, y), nil
+			return fmt.Sprintf("clicked %s at hit point %d,%d%s", formatSnapshot(snapshot), x, y, syntheticClickCaveat(snapshot, pressErr)), nil
 		}
 	}
 	if x, y, ok := centerClickPoint(snapshot); ok {
 		if err := clickLocalPoint(snapshot.element, x, y); err == nil {
-			return fmt.Sprintf("clicked %s at center %d,%d", formatSnapshot(snapshot), x, y), nil
+			return fmt.Sprintf("clicked %s at center %d,%d%s", formatSnapshot(snapshot), x, y, syntheticClickCaveat(snapshot, pressErr)), nil
 		}
 	}
 	return performAXPress(snapshot)
+}
+
+// syntheticClickCaveat explains a click that was posted as a global mouse event
+// rather than delivered to the element. Such a click lands wherever the
+// WindowServer says that screen point is on the *active* Space, so it silently
+// misses when the target window sits on another Space or display — and the post
+// itself always succeeds, so nothing else in the result says the click may not
+// have landed. pressErr, when non-nil, is why the reliable AXPress path was
+// skipped; it is usually the actionable half of the message.
+func syntheticClickCaveat(snapshot elementSnapshot, pressErr error) string {
+	if pressErr == nil {
+		return ""
+	}
+	caveat := fmt.Sprintf(" (AXPress failed: %v; posted a synthetic mouse click at screen coordinates instead", pressErr)
+	if offDisplays(snapshot) {
+		caveat += "; the target lies outside every attached display, so the click likely went elsewhere"
+	}
+	return caveat + ". Verify the effect — a posted click reports success even when it misses.)"
+}
+
+// offDisplays reports whether the center of the element's frame lies outside
+// every attached display, as it does for a window left on a disconnected
+// display. A window on another Space usually still lies on a display, so this
+// does not detect that case; see focusless.IsOffSpace.
+func offDisplays(snapshot elementSnapshot) bool {
+	r := snapshot.record
+	if r.w <= 0 || r.h <= 0 {
+		return false
+	}
+	displays := activeDisplayBounds()
+	if len(displays) == 0 {
+		return false
+	}
+	cx, cy := float64(r.x)+float64(r.w)/2, float64(r.y)+float64(r.h)/2
+	for _, d := range displays {
+		if cx >= d.Origin.X && cx < d.Origin.X+d.Size.Width &&
+			cy >= d.Origin.Y && cy < d.Origin.Y+d.Size.Height {
+			return false
+		}
+	}
+	return true
 }
 
 func performDefaultDoubleClick(snapshot elementSnapshot) (string, error) {

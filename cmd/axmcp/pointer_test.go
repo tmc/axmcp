@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/tmc/axmcp/internal/computeruse/magnify"
@@ -242,5 +244,34 @@ func TestZoomShortcutForAction(t *testing.T) {
 		if got != tt.want {
 			t.Fatalf("ShortcutForAction(%q) = %+v, want %+v", tt.action, got, tt.want)
 		}
+	}
+}
+
+func TestSyntheticClickCaveat(t *testing.T) {
+	// A click posted as a global mouse event after AXPress failed must say so,
+	// or a click that misses reads exactly like one that landed.
+	onscreen := elementSnapshot{record: elementRecord{role: "AXButton", w: 84, h: 24}}
+	if got := syntheticClickCaveat(onscreen, nil); got != "" {
+		t.Errorf("syntheticClickCaveat with no AXPress failure = %q, want empty", got)
+	}
+	got := syntheticClickCaveat(onscreen, errors.New("action unsupported"))
+	for _, want := range []string{"AXPress failed: action unsupported", "synthetic mouse click", "Verify the effect"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("syntheticClickCaveat = %q, missing %q", got, want)
+		}
+	}
+}
+
+func TestOffDisplays(t *testing.T) {
+	if offDisplays(elementSnapshot{record: elementRecord{w: 0, h: 0}}) {
+		t.Error("offDisplays reported a zero-sized element as off-display")
+	}
+	// A frame far outside any plausible display bounds is off-display wherever
+	// this test runs; a frame at the main display's origin never is.
+	if !offDisplays(elementSnapshot{record: elementRecord{x: 900000, y: 900000, w: 84, h: 24}}) {
+		t.Error("offDisplays missed a frame outside every display")
+	}
+	if offDisplays(elementSnapshot{record: elementRecord{x: 10, y: 10, w: 84, h: 24}}) {
+		t.Error("offDisplays reported a frame on the main display as off-display")
 	}
 }
