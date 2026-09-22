@@ -14,6 +14,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/tmc/apple/appkit"
+	"github.com/tmc/apple/dispatch"
 	"github.com/tmc/apple/foundation"
 	"github.com/tmc/axmcp/internal/cmdflag"
 	"github.com/tmc/axmcp/internal/computeruse/intervention"
@@ -94,18 +95,17 @@ func main() {
 		"computer-use-mcp server",
 	)
 
-	if permissions.Check(permissions.ReqAccessibility) != permissions.StatusGranted ||
-		permissions.Check(permissions.ReqScreenRecording) != permissions.StatusGranted {
-		if err := permissions.OnboardingWindow(context.Background(), permissions.ReqAccessibility, permissions.ReqScreenRecording); err != nil && err != context.Canceled {
-			failPermission(err)
-		}
-	}
-
 	go func() {
-		time.Sleep(100 * time.Millisecond)
 		procInfo.SetAutomaticTerminationSupportEnabled(false)
 		procInfo.DisableAutomaticTermination("computer-use-mcp server goroutine")
-		if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
+		if err := serveWithOnboarding(context.Background(), func(ctx context.Context) error {
+			return server.Run(ctx, &mcp.StdioTransport{})
+		}, func(ctx context.Context) error {
+			if permissions.Check(permissions.ReqAccessibility) != permissions.StatusGranted || permissions.Check(permissions.ReqScreenRecording) != permissions.StatusGranted {
+				return permissions.OnboardingWindow(ctx, permissions.ReqAccessibility, permissions.ReqScreenRecording)
+			}
+			return nil
+		}); err != nil {
 			log.Printf("server error: %v", err)
 		}
 		if rt.native != nil {
@@ -117,6 +117,11 @@ func main() {
 		if rt.intervention != nil {
 			rt.intervention.Close()
 		}
+		// Onboarding cancellation schedules window closure on the main queue.
+		// Join that queue before exit, including cancellation during window creation.
+		closed := make(chan struct{})
+		dispatch.MainQueue().Async(func() { close(closed) })
+		<-closed
 		ui.WaitForWindows()
 		os.Exit(0)
 	}()

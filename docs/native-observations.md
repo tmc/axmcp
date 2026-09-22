@@ -199,3 +199,12 @@ permissions, or undo an already-dispatched event. `revoked: false` with
 be visible despite a later durability error: inspect current state and never
 automatically retry. Optional `timeout_ms` uses the normal 30-second default and
 60-second maximum; it bounds lock waiting, not OS regular-file I/O.
+
+### Startup while permissions are pending
+
+The stdio server initializes independently of the permission onboarding window.
+Clients can discover tools and read pending permission status before granting
+access. Pending permissions still prevent window discovery and native actions.
+Closing the transport cancels onboarding and lets queued UI cleanup finish
+before the app exits. No direct-execution fallback is used to bypass bundle
+launch or macOS permissions.

@@ -248,10 +248,22 @@ func OnboardingWindow(ctx context.Context, reqs ...Requirement) error {
 		reqs = []Requirement{ReqAccessibility, ReqScreenRecording}
 	}
 	ready := make(chan *onboardingWindow, 1)
+	var created *onboardingWindow // Accessed only on the main queue.
+	closeWindow := func() {
+		if created != nil {
+			created.win.Close()
+			created = nil
+		}
+	}
 	dispatch.MainQueue().Async(func() {
+		if ctx.Err() != nil {
+			ready <- nil
+			return
+		}
 		ow := newOnboardingWindow(reqs)
+		created = ow
 		if ow.update() {
-			ow.win.Close()
+			closeWindow()
 			ready <- nil
 			return
 		}
@@ -260,6 +272,7 @@ func OnboardingWindow(ctx context.Context, reqs ...Requirement) error {
 	var ow *onboardingWindow
 	select {
 	case <-ctx.Done():
+		dispatch.MainQueue().Async(closeWindow)
 		return ctx.Err()
 	case ow = <-ready:
 		if ow == nil {
@@ -272,28 +285,26 @@ func OnboardingWindow(ctx context.Context, reqs ...Requirement) error {
 	for {
 		select {
 		case <-ctx.Done():
-			dispatch.MainQueue().Async(func() {
-				ow.win.Close()
-			})
+			dispatch.MainQueue().Async(closeWindow)
 			return ctx.Err()
 		case <-ticker.C:
 			result := make(chan bool, 1)
 			dispatch.MainQueue().Async(func() {
-				granted := ow.update()
+				if created == nil {
+					result <- true
+					return
+				}
+				granted := created.update()
 				if granted {
 					time.AfterFunc(900*time.Millisecond, func() {
-						dispatch.MainQueue().Async(func() {
-							ow.win.Close()
-						})
+						dispatch.MainQueue().Async(closeWindow)
 					})
 				}
 				result <- granted
 			})
 			select {
 			case <-ctx.Done():
-				dispatch.MainQueue().Async(func() {
-					ow.win.Close()
-				})
+				dispatch.MainQueue().Async(closeWindow)
 				return ctx.Err()
 			case granted := <-result:
 				if granted {
