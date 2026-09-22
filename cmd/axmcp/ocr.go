@@ -213,10 +213,15 @@ func recognizeText(pngData []byte, imgWidth, imgHeight int, opts ocrOptions) ([]
 			return nil, err
 		}
 	}
+	// These constructors return owned references with no finalizer; without
+	// the releases every call leaks a copy of the image.
 	nsData := foundation.NewDataWithBytesLength(pngData)
+	defer nsData.Release()
 	handler := vision.NewImageRequestHandlerWithDataOptions(nsData, nil)
+	defer handler.Release()
 
 	request := vision.NewVNRecognizeTextRequest()
+	defer request.Release()
 	level := vision.VNRequestTextRecognitionLevelAccurate
 	if opts.Fast {
 		level = vision.VNRequestTextRecognitionLevelFast

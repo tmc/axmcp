@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"image"
+	"image/png"
 	"strings"
 	"testing"
 
@@ -424,5 +427,20 @@ func TestValidateOCRRegion(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestRecognizeTextRepeated runs Vision several times on the same image so that
+// an over-release of the request objects crashes here rather than in a server.
+func TestRecognizeTextRepeated(t *testing.T) {
+	img := image.NewGray(image.Rect(0, 0, 200, 100))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if _, err := recognizeText(buf.Bytes(), 200, 100, defaultOCROptions()); err != nil {
+			t.Fatalf("recognizeText: %v", err)
+		}
 	}
 }
