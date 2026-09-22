@@ -4,15 +4,18 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/tmc/apple/x/axuiautomation"
+	"github.com/tmc/axmcp/internal/ghostcursor"
 )
 
 func registerAXWindowTools(s *mcp.Server) {
 	registerAXWindowClick(s)
 	registerAXWindowHover(s)
 	registerAXWindowDrag(s)
+	registerAXWindowDragPath(s)
 	registerAXWindowMove(s)
 	registerAXWindowRaise(s)
 	registerAXWindowAction(s)
@@ -88,6 +91,91 @@ func registerAXWindowDrag(s *mcp.Server) {
 		}
 		return textResult(fmt.Sprintf("dragged %s from local %d,%d to %d,%d", desc, args.StartX, args.StartY, args.EndX, args.EndY)), nil, nil
 	})
+}
+
+// ── ax_window_drag_path ───────────────────────────────────────────────────────
+
+type axWindowDragPathPoint struct {
+	X int `json:"x"`
+	Y int `json:"y"`
+}
+
+type axWindowDragPathInput struct {
+	App        string                  `json:"app"`
+	Window     string                  `json:"window,omitempty"`
+	Points     []axWindowDragPathPoint `json:"points"`
+	Button     string                  `json:"button,omitempty"`
+	Easing     string                  `json:"easing,omitempty"`
+	DurationMS int                     `json:"duration_ms,omitempty"`
+}
+
+func registerAXWindowDragPath(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "ax_window_drag_path",
+		Description: `Drag through a series of points in an application window as one continuous stroke, ` +
+			`using local coordinates from the window's top-left corner. ` +
+			`The button goes down at the first point, stays down through every later point, and comes up at the last, ` +
+			`so curved strokes on a canvas render as a single stroke instead of several disconnected drags. ` +
+			`Button can be "left" or "right" and defaults to "left". ` +
+			`Easing can be "linear" for straight segments or "curved" for a bezier arc between points, and defaults to "linear". ` +
+			`Duration_ms is the time budget per segment and defaults to 250.`,
+	}, func(_ context.Context, _ *mcp.CallToolRequest, args axWindowDragPathInput) (*mcp.CallToolResult, any, error) {
+		if len(args.Points) < 2 {
+			return nil, nil, fmt.Errorf("drag path needs at least 2 points, got %d", len(args.Points))
+		}
+		button, err := parseMouseButton(args.Button)
+		if err != nil {
+			return nil, nil, err
+		}
+		curve, err := parseDragEasing(args.Easing)
+		if err != nil {
+			return nil, nil, err
+		}
+		app, err := spinAndOpen(args.App)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer app.Close()
+
+		win, desc, err := resolveWindow(app, args.Window)
+		if err != nil {
+			return nil, nil, err
+		}
+		points := make([]dragPoint, len(args.Points))
+		for i, p := range args.Points {
+			points[i] = dragPoint{X: p.X, Y: p.Y}
+		}
+		if err := dragLocalPath(win, points, button, curve, time.Duration(args.DurationMS)*time.Millisecond); err != nil {
+			return nil, nil, fmt.Errorf("drag %s through %s: %w", desc, formatDragPath(points), err)
+		}
+		return textResult(fmt.Sprintf("dragged %s through %d local points %s", desc, len(points), formatDragPath(points))), nil, nil
+	})
+}
+
+// parseDragEasing maps the easing option to a cursor curve style. The empty
+// value means linear, so a caller that asks for a straight segment gets one.
+func parseDragEasing(easing string) (ghostcursor.CurveStyle, error) {
+	switch strings.ToLower(strings.TrimSpace(easing)) {
+	case "", "linear":
+		return ghostcursor.CurveLinear, nil
+	case "curved", "bezier":
+		return ghostcursor.CurveBezier, nil
+	case "ease", "ease-in-out":
+		return ghostcursor.CurveEaseInOut, nil
+	default:
+		return 0, fmt.Errorf("unsupported easing %q: want linear, curved, or ease", easing)
+	}
+}
+
+func formatDragPath(points []dragPoint) string {
+	var b strings.Builder
+	for i, p := range points {
+		if i > 0 {
+			b.WriteString(" -> ")
+		}
+		fmt.Fprintf(&b, "%d,%d", p.X, p.Y)
+	}
+	return b.String()
 }
 
 // ── ax_window_hover ───────────────────────────────────────────────────────────

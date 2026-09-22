@@ -378,6 +378,125 @@ func dragLocalPoint(el *axuiautomation.Element, startX, startY, endX, endY int, 
 	return dragScreenPoint(absStartX, absStartY, absEndX, absEndY, button, 0, 0)
 }
 
+// dragPoint is a point on a multi-segment drag path.
+type dragPoint struct {
+	X, Y int
+}
+
+// dragLocalPath drags through points, given in the element's local coordinates,
+// as a single press-drag-release gesture. curve and duration control how each
+// segment is interpolated; see dragScreenPath.
+func dragLocalPath(el *axuiautomation.Element, points []dragPoint, button int32, curve ghostcursor.CurveStyle, duration time.Duration) error {
+	screen := make([]dragPoint, len(points))
+	for i, p := range points {
+		if err := validateLocalPoint(el, p.X, p.Y); err != nil {
+			return err
+		}
+		x, y := localPointToScreen(el, p.X, p.Y)
+		screen[i] = dragPoint{X: x, Y: y}
+	}
+	return dragScreenPath(screen, button, curve, duration)
+}
+
+// dragScreenPath presses at points[0], drags through every later point, and
+// releases at the last one, so the whole path is a single stroke. Intermediate
+// samples are interpolated between consecutive points using curve; duration is
+// the time budget for each segment and defaults to 250ms.
+func dragScreenPath(points []dragPoint, button int32, curve ghostcursor.CurveStyle, duration time.Duration) error {
+	if len(points) < 2 {
+		return fmt.Errorf("drag path needs at least 2 points, got %d", len(points))
+	}
+	initCGMouseEvents()
+	switch {
+	case cgWarpMouseCursorPosition == nil:
+		return fmt.Errorf("CGWarpMouseCursorPosition not available")
+	case cgEventCreateMouseEvent == nil:
+		return fmt.Errorf("CGEventCreateMouseEvent not available")
+	case cgEventPost == nil:
+		return fmt.Errorf("CGEventPost not available")
+	}
+
+	downType, draggedType, upType, err := dragEventTypes(button)
+	if err != nil {
+		return err
+	}
+	if duration <= 0 {
+		duration = 250 * time.Millisecond
+	}
+
+	start := points[0]
+	ghostcursor.PressAt(start.X, start.Y)
+	noteCLIVisualFeedback()
+	cgWarpMouseCursorPosition(float64(start.X), float64(start.Y))
+	time.Sleep(10 * time.Millisecond)
+
+	mouseDown := cgEventCreateMouseEvent(0, downType, float64(start.X), float64(start.Y), button)
+	if mouseDown == 0 {
+		ghostcursor.Hide()
+		return fmt.Errorf("failed to create mouse down event")
+	}
+	cgEventPost(cgHIDEventTap, mouseDown)
+	corefoundation.CFRelease(corefoundation.CFTypeRef(mouseDown))
+
+	// Once the button is down, every return must release it, or the system
+	// is left mid-drag.
+	last := start
+	release := func() error {
+		mouseUp := cgEventCreateMouseEvent(0, upType, float64(last.X), float64(last.Y), button)
+		if mouseUp == 0 {
+			ghostcursor.Hide()
+			return fmt.Errorf("failed to create mouse up event")
+		}
+		cgEventPost(cgHIDEventTap, mouseUp)
+		corefoundation.CFRelease(corefoundation.CFTypeRef(mouseUp))
+		ghostcursor.ReleaseAt(last.X, last.Y)
+		return nil
+	}
+
+	for i := 1; i < len(points); i++ {
+		from, to := points[i-1], points[i]
+		path, err := ghostcursor.SamplePath(
+			ghostcursor.ScreenPosition(from.X, from.Y),
+			ghostcursor.ScreenPosition(to.X, to.Y),
+			ghostcursor.MoveOptions{
+				Duration:   duration,
+				Activity:   ghostcursor.ActivityDragging,
+				CurveStyle: curve,
+			},
+		)
+		if err != nil {
+			release()
+			return fmt.Errorf("sample drag path: %w", err)
+		}
+		interval := 10 * time.Millisecond
+		if len(path) > 1 {
+			interval = duration / time.Duration(len(path)-1)
+			if interval < 5*time.Millisecond {
+				interval = 5 * time.Millisecond
+			}
+		}
+		for j := 1; j < len(path); j++ {
+			x := int(math.Round(path[j].X))
+			y := int(math.Round(path[j].Y))
+			ghostcursor.DragTo(x, y)
+			dragged := cgEventCreateMouseEvent(0, draggedType, float64(x), float64(y), button)
+			if dragged == 0 {
+				release()
+				return fmt.Errorf("failed to create mouse drag event")
+			}
+			cgEventPost(cgHIDEventTap, dragged)
+			corefoundation.CFRelease(corefoundation.CFTypeRef(dragged))
+			last = dragPoint{X: x, Y: y}
+			if j+1 < len(path) || i+1 < len(points) {
+				time.Sleep(interval)
+			}
+		}
+	}
+
+	last = points[len(points)-1]
+	return release()
+}
+
 func doubleClickScreenPoint(x, y int, anchor clickAnchor) error {
 	initCGMouseEvents()
 	switch {
