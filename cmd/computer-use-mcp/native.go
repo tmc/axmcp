@@ -357,6 +357,7 @@ func nativeMatches(nodes []computeruse.ElementNode, expect nativeExpect) bool {
 }
 func registerNativeTools(server *mcp.Server, r *nativeRunner) {
 	registerNativeApprovalTool(server, r)
+	registerNativeRevokeTool(server, r)
 	registerNativeTargetTools(server, r)
 	mcp.AddTool(server, &mcp.Tool{Name: "native_discover", Description: "List windows of exactly one running app without launching, activating, capturing screenshots, or requesting new approval. Returns session-scoped selection_id tokens valid for 60 seconds; a new discovery replaces this client’s previous candidates. At most 128 windows, with truncated=true when more exist. Discovery does not invalidate the current observation.", Annotations: readOnlyToolAnnotations()},
 		func(ctx context.Context, req *mcp.CallToolRequest, in nativeDiscoverInput) (*mcp.CallToolResult, nativeDiscoverOutput, error) {

@@ -46,7 +46,7 @@ func computerUseCompatibilityMiddleware() mcp.Middleware {
 				}
 				tools := orderedComputerUseTools()
 				for _, tool := range listed.Tools {
-					if tool.Name == "native_request_approval" || tool.Name == "native_observe" || tool.Name == "native_act" || tool.Name == "native_discover" || tool.Name == "native_select" || tool.Name == "native_release" {
+					if tool.Name == "native_revoke_approval" || tool.Name == "native_request_approval" || tool.Name == "native_observe" || tool.Name == "native_act" || tool.Name == "native_discover" || tool.Name == "native_select" || tool.Name == "native_release" {
 						tools = append(tools, tool)
 					}
 				}

@@ -184,3 +184,18 @@ preserves approval and permission status, including persistence errors.
 Accessibility and Screen Recording permissions must be granted separately.
 `native_discover` continues to list only approved windows without prompting.
 There is currently no tool for revoking stored app approvals.
+
+### Withdrawing approval
+
+Call `native_revoke_approval` with an exact `bundle_id` to withdraw approval,
+including for a stopped app. Successful revocation removes persistent grants
+and invalidates session grants in cooperating backends sharing the same store.
+The current matching observation is invalidated; other backends check shared
+approval before dispatch. A later explicit acceptance can grant access again.
+
+This operation does not prompt, launch, capture, close windows, change macOS
+permissions, or undo an already-dispatched event. `revoked: false` with
+`error_text`, or an MCP error, means withdrawal was not confirmed. A write can
+be visible despite a later durability error: inspect current state and never
+automatically retry. Optional `timeout_ms` uses the normal 30-second default and
+60-second maximum; it bounds lock waiting, not OS regular-file I/O.
