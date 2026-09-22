@@ -12,6 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/tmc/apple/x/axuiautomation"
 	"github.com/tmc/axmcp/internal/computeruse"
+	"github.com/tmc/axmcp/internal/computeruse/approval"
 	"github.com/tmc/axmcp/internal/computeruse/intervention"
 	"github.com/tmc/axmcp/internal/computeruse/policy"
 	"github.com/tmc/axmcp/internal/computeruse/session"
@@ -121,8 +122,11 @@ func TestActionBlockedForIntervention(t *testing.T) {
 }
 
 func TestStateForActionRequiresFreshStateID(t *testing.T) {
-	rt := &runtimeState{sessions: session.NewStore()}
-	if _, err := stateForAction(rt, "click", "Finder", ""); err == nil {
+	rt := &runtimeState{sessions: session.NewStore(), approvals: approval.NewMemory()}
+	if _, err := rt.approvals.Approve(t.Context(), "com.apple.finder", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stateForAction(t.Context(), rt, "click", "Finder", ""); err == nil {
 		t.Fatalf("stateForAction without state_id = nil, want error")
 	}
 
@@ -132,7 +136,7 @@ func TestStateForActionRequiresFreshStateID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	got, err := stateForAction(rt, "click", "Finder", state.StateID)
+	got, err := stateForAction(t.Context(), rt, "click", "Finder", state.StateID)
 	if err != nil {
 		t.Fatalf("stateForAction fresh state: %v", err)
 	}
@@ -140,7 +144,7 @@ func TestStateForActionRequiresFreshStateID(t *testing.T) {
 	if got.State().StateID != state.StateID {
 		t.Fatalf("StateID = %q, want %q", got.State().StateID, state.StateID)
 	}
-	if _, err := stateForAction(rt, "click", "Safari", state.StateID); err == nil {
+	if _, err := stateForAction(t.Context(), rt, "click", "Safari", state.StateID); err == nil {
 		t.Fatalf("stateForAction mismatched app = nil, want error")
 	}
 }
@@ -161,7 +165,7 @@ func TestStateForActionAppliesURLPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if _, err := stateForAction(rt, "click", "Brave", state.StateID); err == nil {
+	if _, err := stateForAction(t.Context(), rt, "click", "Brave", state.StateID); err == nil {
 		t.Fatalf("stateForAction with blocked URL = nil, want error")
 	}
 }
@@ -216,14 +220,17 @@ func normalizeJSON(t *testing.T, v any) any {
 }
 
 func TestStateForActionRetainsSnapshot(t *testing.T) {
-	rt := &runtimeState{sessions: session.NewStore()}
+	rt := &runtimeState{sessions: session.NewStore(), approvals: approval.NewMemory()}
+	if _, err := rt.approvals.Approve(t.Context(), "com.apple.finder", false); err != nil {
+		t.Fatal(err)
+	}
 	defer rt.sessions.Close()
 	snapshot := &leasedActionSnapshot{state: computeruse.AppState{App: computeruse.AppInfo{Name: "Finder", BundleID: "com.apple.finder", PID: 123}}}
 	state, err := rt.sessions.Bind(snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := stateForAction(rt, "click", "Finder", state.StateID)
+	lease, err := stateForAction(t.Context(), rt, "click", "Finder", state.StateID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +283,7 @@ func TestStateForActionRejectionReleasesLease(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if lease, err := stateForAction(rt, "click", app, state.StateID); err == nil {
+			if lease, err := stateForAction(t.Context(), rt, "click", app, state.StateID); err == nil {
 				lease.Close()
 				t.Fatal("invalid action accepted")
 			}

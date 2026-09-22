@@ -52,7 +52,10 @@ func (b *nativeOSBackend) Authorize(ctx context.Context, req *mcp.CallToolReques
 	if b.rt == nil || b.rt.approvals == nil {
 		return p, computeruse.ApprovalState{}, fmt.Errorf("app approval store unavailable")
 	}
-	a := b.rt.approvals.Status(app.BundleID)
+	a, err := b.rt.approvals.Status(ctx, app.BundleID)
+	if err != nil {
+		return p, a, err
+	}
 	if err := ctx.Err(); err != nil {
 		return p, a, err
 	}

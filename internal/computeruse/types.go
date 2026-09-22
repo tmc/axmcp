@@ -1,5 +1,7 @@
 package computeruse
 
+import "context"
+
 // AppInfo identifies a running macOS application.
 type AppInfo struct {
 	Name     string `json:"name,omitempty"`
@@ -142,5 +144,5 @@ type InstructionProvider interface {
 
 // ApprovalStore manages app-control approvals.
 type ApprovalStore interface {
-	Resolve(bundleID string, decision ApprovalDecision) (ApprovalState, error)
+	Resolve(ctx context.Context, bundleID string, decision ApprovalDecision) (ApprovalState, error)
 }

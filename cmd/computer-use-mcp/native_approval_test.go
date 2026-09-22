@@ -18,11 +18,14 @@ type nativeApprovalTestBackend struct {
 }
 
 func (b *nativeApprovalTestBackend) Authorize(ctx context.Context, req *mcp.CallToolRequest, app computeruse.AppInfo, observe bool) (computeruse.PermissionState, computeruse.ApprovalState, error) {
-	state := b.rt.approvals.Status(app.BundleID)
+	state, err := b.rt.approvals.Status(ctx, app.BundleID)
+	if err != nil {
+		return computeruse.PermissionState{}, state, err
+	}
 	if state.Approved || !observe {
 		return computeruse.PermissionState{}, state, nil
 	}
-	state, err := elicitApproval(ctx, req, b.rt, app)
+	state, err = elicitApproval(ctx, req, b.rt, app)
 	return computeruse.PermissionState{}, state, err
 }
 
@@ -83,10 +86,10 @@ func TestNativeRequestApproval(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := decision == "accept"
-			if got := reloaded.Status("test.fixture"); got.Approved != want || got.Persistent != want {
+			if got, err := reloaded.Status(t.Context(), "test.fixture"); err != nil || got.Approved != want || got.Persistent != want {
 				t.Fatalf("persisted state=%+v", got)
 			}
-			if !want && store.Status("test.fixture").Approved {
+			if got, err := store.Status(t.Context(), "test.fixture"); err != nil || (!want && got.Approved) {
 				t.Fatal("negative decision approved app")
 			}
 			if decision != "unsupported" && calls != 1 {

@@ -15,7 +15,8 @@ func (b *nativeOSBackend) DiscoveryAccess(ctx context.Context, app computeruse.A
 	if b.rt == nil || b.rt.approvals == nil {
 		return permissions, computeruse.ApprovalState{}, fmt.Errorf("app approval store unavailable")
 	}
-	return permissions, b.rt.approvals.Status(app.BundleID), ctx.Err()
+	state, err := b.rt.approvals.Status(ctx, app.BundleID)
+	return permissions, state, err
 }
 
 // The group keeps the parent Application alive while its candidate Elements can

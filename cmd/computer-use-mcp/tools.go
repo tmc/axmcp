@@ -61,7 +61,10 @@ func registerGetAppState(s *mcp.Server, rt *runtimeState) {
 			return toolError(err), nil, nil
 		}
 		permissions := currentPermissions()
-		approval := rt.approvals.Status(info.BundleID)
+		approval, err := rt.approvals.Status(ctx, info.BundleID)
+		if err != nil {
+			return toolError(err), nil, nil
+		}
 		if permissions.Pending {
 			state := computeruse.AppState{
 				App:         info,
@@ -121,14 +124,14 @@ func registerClick(s *mcp.Server, rt *runtimeState) {
 			"x":             numberProperty("X coordinate in screenshot pixel coordinates"),
 			"y":             numberProperty("Y coordinate in screenshot pixel coordinates"),
 		}, "app", "state_id"),
-	}, func(_ context.Context, _ *mcp.CallToolRequest, args clickInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args clickInput) (*mcp.CallToolResult, any, error) {
 		if res, payload, ok := actionBlockedForPermissions("click"); ok {
 			return res, payload, nil
 		}
 		if res, payload, ok := actionBlockedForIntervention(rt, "click"); ok {
 			return res, payload, nil
 		}
-		lease, err := stateForAction(rt, "click", args.App, args.StateID)
+		lease, err := stateForAction(ctx, rt, "click", args.App, args.StateID)
 		if err != nil {
 			return staleStateResult("click", err)
 		}
@@ -195,14 +198,14 @@ func registerPerformSecondaryAction(s *mcp.Server, rt *runtimeState) {
 			"element_index": stringProperty("Element identifier"),
 			"state_id":      stringProperty("State token returned by get_app_state"),
 		}, "app", "state_id", "element_index", "action"),
-	}, func(_ context.Context, _ *mcp.CallToolRequest, args performSecondaryActionInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args performSecondaryActionInput) (*mcp.CallToolResult, any, error) {
 		if res, payload, ok := actionBlockedForPermissions(args.Action); ok {
 			return res, payload, nil
 		}
 		if res, payload, ok := actionBlockedForIntervention(rt, args.Action); ok {
 			return res, payload, nil
 		}
-		lease, err := stateForAction(rt, args.Action, args.App, args.StateID)
+		lease, err := stateForAction(ctx, rt, args.Action, args.App, args.StateID)
 		if err != nil {
 			return staleStateResult(args.Action, err)
 		}
@@ -240,14 +243,14 @@ func registerSetValue(s *mcp.Server, rt *runtimeState) {
 			"state_id":      stringProperty("State token returned by get_app_state"),
 			"value":         stringProperty("Value to assign"),
 		}, "app", "state_id", "element_index", "value"),
-	}, func(_ context.Context, _ *mcp.CallToolRequest, args setValueInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args setValueInput) (*mcp.CallToolResult, any, error) {
 		if res, payload, ok := actionBlockedForPermissions("set_value"); ok {
 			return res, payload, nil
 		}
 		if res, payload, ok := actionBlockedForIntervention(rt, "set_value"); ok {
 			return res, payload, nil
 		}
-		lease, err := stateForAction(rt, "set_value", args.App, args.StateID)
+		lease, err := stateForAction(ctx, rt, "set_value", args.App, args.StateID)
 		if err != nil {
 			return staleStateResult("set_value", err)
 		}
@@ -286,14 +289,14 @@ func registerScroll(s *mcp.Server, rt *runtimeState) {
 			"pages":         numberProperty("Number of pages to scroll. Fractional values are supported. Defaults to 1"),
 			"state_id":      stringProperty("State token returned by get_app_state"),
 		}, "app", "state_id", "element_index", "direction"),
-	}, func(_ context.Context, _ *mcp.CallToolRequest, args scrollInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args scrollInput) (*mcp.CallToolResult, any, error) {
 		if res, payload, ok := actionBlockedForPermissions("scroll"); ok {
 			return res, payload, nil
 		}
 		if res, payload, ok := actionBlockedForIntervention(rt, "scroll"); ok {
 			return res, payload, nil
 		}
-		lease, err := stateForAction(rt, "scroll", args.App, args.StateID)
+		lease, err := stateForAction(ctx, rt, "scroll", args.App, args.StateID)
 		if err != nil {
 			return staleStateResult("scroll", err)
 		}
@@ -333,14 +336,14 @@ func registerDrag(s *mcp.Server, rt *runtimeState) {
 			"to_x":     numberProperty("End X coordinate"),
 			"to_y":     numberProperty("End Y coordinate"),
 		}, "app", "state_id", "from_x", "from_y", "to_x", "to_y"),
-	}, func(_ context.Context, _ *mcp.CallToolRequest, args dragInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args dragInput) (*mcp.CallToolResult, any, error) {
 		if res, payload, ok := actionBlockedForPermissions("drag"); ok {
 			return res, payload, nil
 		}
 		if res, payload, ok := actionBlockedForIntervention(rt, "drag"); ok {
 			return res, payload, nil
 		}
-		lease, err := stateForAction(rt, "drag", args.App, args.StateID)
+		lease, err := stateForAction(ctx, rt, "drag", args.App, args.StateID)
 		if err != nil {
 			return staleStateResult("drag", err)
 		}
@@ -385,14 +388,14 @@ func registerPressKey(s *mcp.Server, rt *runtimeState) {
 			"key":      stringProperty("Key or key combination to press"),
 			"state_id": stringProperty("State token returned by get_app_state"),
 		}, "app", "state_id", "key"),
-	}, func(_ context.Context, _ *mcp.CallToolRequest, args pressKeyInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args pressKeyInput) (*mcp.CallToolResult, any, error) {
 		if res, payload, ok := actionBlockedForPermissions("press_key"); ok {
 			return res, payload, nil
 		}
 		if res, payload, ok := actionBlockedForIntervention(rt, "press_key"); ok {
 			return res, payload, nil
 		}
-		lease, err := stateForAction(rt, "press_key", args.App, args.StateID)
+		lease, err := stateForAction(ctx, rt, "press_key", args.App, args.StateID)
 		if err != nil {
 			return staleStateResult("press_key", err)
 		}
@@ -422,14 +425,14 @@ func registerTypeText(s *mcp.Server, rt *runtimeState) {
 			"state_id":      stringProperty("State token returned by get_app_state"),
 			"text":          stringProperty("Literal text to type"),
 		}, "app", "state_id", "text"),
-	}, func(_ context.Context, _ *mcp.CallToolRequest, args typeTextInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args typeTextInput) (*mcp.CallToolResult, any, error) {
 		if res, payload, ok := actionBlockedForPermissions("type_text"); ok {
 			return res, payload, nil
 		}
 		if res, payload, ok := actionBlockedForIntervention(rt, "type_text"); ok {
 			return res, payload, nil
 		}
-		lease, err := stateForAction(rt, "type_text", args.App, args.StateID)
+		lease, err := stateForAction(ctx, rt, "type_text", args.App, args.StateID)
 		if err != nil {
 			return staleStateResult("type_text", err)
 		}
@@ -588,7 +591,7 @@ func elicitApproval(ctx context.Context, req *mcp.CallToolRequest, rt *runtimeSt
 	if err != nil {
 		return computeruse.ApprovalState{}, err
 	}
-	state, resolveErr := rt.approvals.Resolve(info.BundleID, decision)
+	state, resolveErr := rt.approvals.Resolve(ctx, info.BundleID, decision)
 	return state, resolveErr
 }
 
@@ -624,7 +627,7 @@ func missingAppStateError(app string) error {
 	return fmt.Errorf("no current app state for %q; call get_app_state again", app)
 }
 
-func stateForAction(rt *runtimeState, action, app, stateID string) (*session.Lease, error) {
+func stateForAction(ctx context.Context, rt *runtimeState, action, app, stateID string) (*session.Lease, error) {
 	stateID = strings.TrimSpace(stateID)
 	if stateID == "" {
 		return nil, fmt.Errorf("%s requires state_id from get_app_state; call get_app_state again", action)
@@ -646,6 +649,18 @@ func stateForAction(rt *runtimeState, action, app, stateID string) (*session.Lea
 			_ = lease.Close()
 			return nil, err
 		}
+	}
+	if rt.approvals == nil {
+		lease.Close()
+		return nil, fmt.Errorf("app approval store unavailable")
+	}
+	approval, err := rt.approvals.Status(ctx, state.App.BundleID)
+	if err != nil || !approval.Approved {
+		lease.Close()
+		if err != nil {
+			return nil, fmt.Errorf("check app approval: %w", err)
+		}
+		return nil, fmt.Errorf("approval required for %s; call get_app_state again", state.App.BundleID)
 	}
 	return lease, nil
 }
