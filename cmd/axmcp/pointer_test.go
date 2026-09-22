@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tmc/axmcp/internal/computeruse/magnify"
 )
@@ -273,5 +274,56 @@ func TestOffDisplays(t *testing.T) {
 	}
 	if offDisplays(elementSnapshot{record: elementRecord{x: 10, y: 10, w: 84, h: 24}}) {
 		t.Error("offDisplays reported a frame on the main display as off-display")
+	}
+}
+
+func TestClickAnchorZeroValueKeepsCallerPoint(t *testing.T) {
+	// The OCR path has only a screen point — no element to re-read — so the
+	// zero anchor must pass the caller's coordinates straight through rather
+	// than resolving to the origin.
+	var a clickAnchor
+	if a.owner() != nil {
+		t.Error("zero clickAnchor.owner() != nil")
+	}
+	if x, y := a.resolve(4209, -876); x != 4209 || y != -876 {
+		t.Errorf("zero clickAnchor.resolve(4209,-876) = (%d,%d), want unchanged", x, y)
+	}
+}
+
+func TestClickAnchorTracksElement(t *testing.T) {
+	// anchorTo(nil, ...) must not claim to track; a nil element would resolve
+	// every click to (0,0), which is worse than the stale point.
+	if anchorTo(nil, 42, 12).tracks {
+		t.Error("anchorTo(nil) claims to track")
+	}
+	if x, y := anchorTo(nil, 42, 12).resolve(3993, -1100); x != 3993 || y != -1100 {
+		t.Errorf("nil anchor resolve = (%d,%d), want caller point", x, y)
+	}
+}
+
+func TestClampOffset(t *testing.T) {
+	// A control that shrinks mid-glide must still be hit, not clicked just
+	// past its edge.
+	tests := []struct{ v, size, want int }{
+		{42, 84, 42}, // inside, unchanged
+		{42, 30, 15}, // shrank past the offset: fall back to the new center
+		{29, 30, 29}, // last pixel inside
+		{-1, 30, 0},  // never negative
+	}
+	for _, tt := range tests {
+		if got := clampOffset(tt.v, tt.size); got != tt.want {
+			t.Errorf("clampOffset(%d, %d) = %d, want %d", tt.v, tt.size, got, tt.want)
+		}
+	}
+}
+
+func TestGlideTrackSegmentsDividesGlide(t *testing.T) {
+	// Segments must be long enough to animate and short enough to re-aim
+	// before a drifting control leaves the cursor behind.
+	if glideTrackSegments < 2 {
+		t.Fatalf("glideTrackSegments = %d, want at least 2 for tracking", glideTrackSegments)
+	}
+	if seg := defaultCursorGlide / glideTrackSegments; seg < 25*time.Millisecond {
+		t.Errorf("glide segment = %v, too short to animate", seg)
 	}
 }

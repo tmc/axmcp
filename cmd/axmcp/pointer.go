@@ -87,13 +87,53 @@ func glideCursorTo(x, y int, owner *axuiautomation.Element) {
 		return
 	}
 	primeGhostCursor()
+	glideSegment(x, y, cursorGlideDuration())
+}
+
+func glideSegment(x, y int, d time.Duration) {
 	_ = ghostcursor.Default().MoveTo(context.Background(),
 		ghostcursor.ScreenPosition(x, y),
 		ghostcursor.MoveOptions{
-			Duration:   cursorGlideDuration(),
+			Duration:   d,
 			Activity:   ghostcursor.ActivityMoving,
 			CurveStyle: ghostcursor.CurveBezier,
 		})
+}
+
+// glideTrackSegments is how many times a tracking glide re-aims at its target.
+// Each segment costs one AX frame read, so this trades round trips for how
+// closely the cursor follows a moving control: four segments of a 280ms glide
+// re-aim every 70ms, which keeps a control drifting at UI speeds within a few
+// pixels of the cursor without making the animation look stepped.
+const glideTrackSegments = 4
+
+// glideCursorToAnchor animates to the anchor's target while following it. A
+// control can move during the glide — a window grows as content is added, a
+// sheet slides in, a list re-lays out — and a glide aimed once at the original
+// point lands beside it. Re-aiming each segment means the cursor arrives where
+// the control actually is, and the returned point is the last one observed.
+//
+// Tracking only applies while the overlay is drawn. With the overlay off there
+// is no glide and no settle, so the click posts immediately and has nothing to
+// drift away from.
+func glideCursorToAnchor(anchor clickAnchor, x, y int) (int, int) {
+	owner := anchor.owner()
+	if !ghostcursor.Enabled() || !targetVisible(owner) {
+		return x, y
+	}
+	primeGhostCursor()
+
+	total := cursorGlideDuration()
+	if !anchor.tracks || total <= 0 {
+		glideSegment(x, y, total)
+		return x, y
+	}
+	segment := total / glideTrackSegments
+	for i := 0; i < glideTrackSegments; i++ {
+		x, y = anchor.resolve(x, y)
+		glideSegment(x, y, segment)
+	}
+	return x, y
 }
 
 var primeGhostOnce sync.Once
@@ -211,7 +251,7 @@ func clickLocalPoint(el *axuiautomation.Element, x, y int) error {
 		return err
 	}
 	absX, absY := localPointToScreen(el, x, y)
-	return mouseClickScreenPoint(absX, absY, cgEventLeftMouseDown, cgEventLeftMouseUp, cgMouseButtonLeft, el)
+	return mouseClickScreenPoint(absX, absY, cgEventLeftMouseDown, cgEventLeftMouseUp, cgMouseButtonLeft, anchorTo(el, x, y))
 }
 
 func hoverLocalPoint(el *axuiautomation.Element, x, y int) error {
@@ -233,6 +273,68 @@ func hoverScreenPoint(x, y int) error {
 	return nil
 }
 
+// clickAnchor ties a screen point to the element and local offset it was
+// derived from. A click is posted roughly a third of a second after its
+// coordinates are computed — the ghost cursor glides for cursorGlideDuration
+// and then settles — and a UI that moves in that window (a window growing as
+// content is added, a sheet sliding in, a list re-laying out) leaves the
+// posted event at the old point, next to the control instead of on it. Holding
+// the anchor lets the point be recomputed just before the post.
+//
+// The zero clickAnchor tracks nothing: it is for callers that only have a
+// screen point, such as the OCR path, where there is no element to re-read.
+type clickAnchor struct {
+	el     *axuiautomation.Element
+	x, y   int // offset within el
+	tracks bool
+}
+
+func anchorTo(el *axuiautomation.Element, x, y int) clickAnchor {
+	return clickAnchor{el: el, x: x, y: y, tracks: el != nil}
+}
+
+// owner returns the element the overlay animations belong to.
+func (a clickAnchor) owner() *axuiautomation.Element { return a.el }
+
+// resolve returns where the anchored point is now, falling back to the
+// caller's original point when there is nothing to re-read.
+func (a clickAnchor) resolve(x, y int) (int, int) {
+	if nx, ny, ok := a.track(); ok {
+		return nx, ny
+	}
+	return x, y
+}
+
+// track reads the anchor's current screen point. It reports false when there
+// is no element or the element no longer has a usable frame: a wedged or
+// closed AX element answers with a zero rect, and steering a click to the
+// screen origin is worse than leaving it where the caller aimed.
+//
+// The offset is clamped into the live frame so a control that shrinks during
+// the animation is still hit rather than clicked just outside its edge.
+func (a clickAnchor) track() (int, int, bool) {
+	if !a.tracks || a.el == nil {
+		return 0, 0, false
+	}
+	frame := a.el.Frame()
+	w, h := int(math.Round(frame.Size.Width)), int(math.Round(frame.Size.Height))
+	if w <= 0 || h <= 0 {
+		return 0, 0, false
+	}
+	return int(math.Round(frame.Origin.X)) + clampOffset(a.x, w),
+		int(math.Round(frame.Origin.Y)) + clampOffset(a.y, h), true
+}
+
+func clampOffset(v, size int) int {
+	if v >= size {
+		return size / 2
+	}
+	if v < 0 {
+		return 0
+	}
+	return v
+}
+
 func localPointToScreen(el *axuiautomation.Element, x, y int) (int, int) {
 	frame := el.Frame()
 	absX := int(math.Round(frame.Origin.X)) + x
@@ -241,7 +343,7 @@ func localPointToScreen(el *axuiautomation.Element, x, y int) (int, int) {
 }
 
 func clickScreenPoint(x, y int) error {
-	return mouseClickScreenPoint(x, y, cgEventLeftMouseDown, cgEventLeftMouseUp, cgMouseButtonLeft, nil)
+	return mouseClickScreenPoint(x, y, cgEventLeftMouseDown, cgEventLeftMouseUp, cgMouseButtonLeft, clickAnchor{})
 }
 
 func doubleClickLocalPoint(el *axuiautomation.Element, x, y int) error {
@@ -249,7 +351,7 @@ func doubleClickLocalPoint(el *axuiautomation.Element, x, y int) error {
 		return err
 	}
 	absX, absY := localPointToScreen(el, x, y)
-	return doubleClickScreenPoint(absX, absY, el)
+	return doubleClickScreenPoint(absX, absY, anchorTo(el, x, y))
 }
 
 func rightClickLocalPoint(el *axuiautomation.Element, x, y int) error {
@@ -257,11 +359,11 @@ func rightClickLocalPoint(el *axuiautomation.Element, x, y int) error {
 		return err
 	}
 	absX, absY := localPointToScreen(el, x, y)
-	return mouseClickScreenPoint(absX, absY, cgEventRightMouseDown, cgEventRightMouseUp, cgMouseButtonRight, el)
+	return mouseClickScreenPoint(absX, absY, cgEventRightMouseDown, cgEventRightMouseUp, cgMouseButtonRight, anchorTo(el, x, y))
 }
 
 func rightClickScreenPoint(x, y int) error {
-	return mouseClickScreenPoint(x, y, cgEventRightMouseDown, cgEventRightMouseUp, cgMouseButtonRight, nil)
+	return mouseClickScreenPoint(x, y, cgEventRightMouseDown, cgEventRightMouseUp, cgMouseButtonRight, clickAnchor{})
 }
 
 func dragLocalPoint(el *axuiautomation.Element, startX, startY, endX, endY int, button int32) error {
@@ -276,7 +378,7 @@ func dragLocalPoint(el *axuiautomation.Element, startX, startY, endX, endY int, 
 	return dragScreenPoint(absStartX, absStartY, absEndX, absEndY, button, 0, 0)
 }
 
-func doubleClickScreenPoint(x, y int, owner *axuiautomation.Element) error {
+func doubleClickScreenPoint(x, y int, anchor clickAnchor) error {
 	initCGMouseEvents()
 	switch {
 	case cgEventCreateMouseEvent == nil:
@@ -287,8 +389,10 @@ func doubleClickScreenPoint(x, y int, owner *axuiautomation.Element) error {
 		return fmt.Errorf("CGEventSetIntegerValueField not available")
 	}
 
-	glideCursorTo(x, y, owner)
+	owner := anchor.owner()
+	x, y = glideCursorToAnchor(anchor, x, y)
 	pauseForCursor(owner, cursorSettleDuration())
+	x, y = anchor.resolve(x, y)
 	flashClickActivity(x, y, owner)
 	noteCLIVisualFeedback()
 	if err := postMouseClickEvent(x, y, cgEventLeftMouseDown, cgEventLeftMouseUp, cgMouseButtonLeft, 1); err != nil {
@@ -305,7 +409,7 @@ func doubleClickScreenPoint(x, y int, owner *axuiautomation.Element) error {
 	return nil
 }
 
-func mouseClickScreenPoint(x, y int, downType, upType, button int32, owner *axuiautomation.Element) error {
+func mouseClickScreenPoint(x, y int, downType, upType, button int32, anchor clickAnchor) error {
 	initCGMouseEvents()
 	switch {
 	case cgEventCreateMouseEvent == nil:
@@ -314,8 +418,10 @@ func mouseClickScreenPoint(x, y int, downType, upType, button int32, owner *axui
 		return fmt.Errorf("CGEventPost not available")
 	}
 
-	glideCursorTo(x, y, owner)
+	owner := anchor.owner()
+	x, y = glideCursorToAnchor(anchor, x, y)
 	pauseForCursor(owner, cursorSettleDuration())
+	x, y = anchor.resolve(x, y)
 	flashClickActivity(x, y, owner)
 	noteCLIVisualFeedback()
 	if err := postMouseClickEvent(x, y, downType, upType, button, 0); err != nil {
