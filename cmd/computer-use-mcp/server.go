@@ -7,13 +7,14 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/tmc/axmcp/internal/buildversion"
 	"github.com/tmc/axmcp/internal/ui/permissions"
 )
 
 func newComputerUseServer(rt *runtimeState) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "computer-use-mcp",
-		Version: "0.1.0",
+		Version: buildversion.String(),
 	}, &mcp.ServerOptions{
 		Instructions: computerUseInstructions(),
 		Capabilities: &mcp.ServerCapabilities{

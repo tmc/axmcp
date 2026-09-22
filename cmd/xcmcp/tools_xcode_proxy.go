@@ -15,6 +15,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/tmc/apple/x/axuiautomation"
+	"github.com/tmc/axmcp/internal/buildversion"
 )
 
 const xcodeToolDiscoveryTimeout = 10 * time.Second
@@ -185,7 +186,7 @@ func newXcodeProxy(ctx context.Context) (*xcodeProxy, error) {
 	transport := &mcp.CommandTransport{Command: cmd}
 	client := mcp.NewClient(&mcp.Implementation{
 		Name:    "xcmcp-xcode-proxy",
-		Version: "0.1.0",
+		Version: buildversion.String(),
 	}, nil)
 
 	// Start auto-clicker for the Allow dialog before connecting.
@@ -362,7 +363,7 @@ func (proxy *xcodeProxy) reconnect(ctx context.Context) error {
 		transport := &mcp.CommandTransport{Command: cmd}
 		client := mcp.NewClient(&mcp.Implementation{
 			Name:    "xcmcp-xcode-proxy",
-			Version: "0.1.0",
+			Version: buildversion.String(),
 		}, nil)
 
 		allowCtx, allowCancel := context.WithCancel(ctx)

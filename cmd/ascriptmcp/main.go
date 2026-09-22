@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/tmc/axmcp/internal/buildversion"
 	"github.com/tmc/macgo"
 )
 
@@ -40,7 +41,7 @@ func main() {
 
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "ascriptmcp",
-		Version: "0.1.0",
+		Version: buildversion.String(),
 	}, &mcp.ServerOptions{
 		Capabilities: &mcp.ServerCapabilities{
 			Tools: &mcp.ToolCapabilities{ListChanged: true},

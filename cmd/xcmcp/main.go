@@ -13,6 +13,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/tmc/apple/appkit"
+	"github.com/tmc/axmcp/internal/buildversion"
 	"github.com/tmc/axmcp/internal/resources"
 	"github.com/tmc/axmcp/internal/ui"
 	"github.com/tmc/macgo"
@@ -121,7 +122,7 @@ func main() {
 	// Create server
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "xcmcp",
-		Version: "0.1.0",
+		Version: buildversion.String(),
 	}, serverOpts)
 
 	// Detect context (Phase 2)
