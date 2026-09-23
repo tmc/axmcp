@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/tmc/apple/x/axuiautomation"
 	"github.com/tmc/axmcp/internal/computeruse"
@@ -81,7 +83,8 @@ func TestComputerUsePermissionsResource(t *testing.T) {
 	if len(read.Contents) != 1 || !strings.Contains(read.Contents[0].Text, "\"accessibility\"") {
 		t.Fatalf("ReadResource contents = %#v, want JSON snapshot", read.Contents)
 	}
-	if _, err := cs.ListResourceTemplates(ctx, nil); err == nil || !strings.Contains(err.Error(), "Method not found") {
+	var rpcErr *jsonrpc.Error
+	if _, err := cs.ListResourceTemplates(ctx, nil); !errors.As(err, &rpcErr) || rpcErr.Code != jsonrpc.CodeMethodNotFound {
 		t.Fatalf("ListResourceTemplates error = %v, want method not found", err)
 	}
 }

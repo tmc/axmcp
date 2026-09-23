@@ -231,6 +231,19 @@ func completeCSVValues(value string, candidates []string) []string {
 	return out
 }
 
+// handshakeProtocolVersions returns the MCP protocol versions that predate
+// 2026-07-28. Project discovery asks the client for its roots while serving
+// requests, which that revision forbids.
+func handshakeProtocolVersions() []string {
+	var versions []string
+	for _, v := range mcp.SupportedProtocolVersions() {
+		if v < "2026-07-28" {
+			versions = append(versions, v)
+		}
+	}
+	return versions
+}
+
 func sessionProjectRoot(ctx context.Context, session *mcp.ServerSession, fallback string) string {
 	roots := sessionFileRoots(ctx, session)
 	if len(roots) > 0 {

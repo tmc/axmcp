@@ -109,6 +109,7 @@ func main() {
 		Capabilities: &mcp.ServerCapabilities{
 			Tools: &mcp.ToolCapabilities{ListChanged: true},
 		},
+		SupportedProtocolVersions: handshakeProtocolVersions(),
 	}
 
 	if *enableResources || *subscribeBuildErrors {

@@ -21,6 +21,7 @@ func newComputerUseServer(rt *runtimeState) *mcp.Server {
 			Tools:     &mcp.ToolCapabilities{ListChanged: false},
 			Resources: &mcp.ResourceCapabilities{ListChanged: true},
 		},
+		SupportedProtocolVersions: handshakeProtocolVersions(),
 	})
 	registerComputerUseTools(server, rt)
 	if rt.native == nil {
@@ -30,6 +31,19 @@ func newComputerUseServer(rt *runtimeState) *mcp.Server {
 	registerPermissionResource(server)
 	server.AddReceivingMiddleware(computerUseCompatibilityMiddleware())
 	return server
+}
+
+// handshakeProtocolVersions returns the MCP protocol versions that predate
+// 2026-07-28. Approval prompts elicit from inside tool calls, which that
+// revision forbids.
+func handshakeProtocolVersions() []string {
+	var versions []string
+	for _, v := range mcp.SupportedProtocolVersions() {
+		if v < "2026-07-28" {
+			versions = append(versions, v)
+		}
+	}
+	return versions
 }
 
 // nativeTools are the tools listed after the compatibility set.

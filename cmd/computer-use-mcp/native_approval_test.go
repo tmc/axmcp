@@ -39,7 +39,7 @@ func TestNativeRequestApproval(t *testing.T) {
 			b := &nativeApprovalTestBackend{nativeTestBackend: &nativeTestBackend{target: nativeTarget{App: computeruse.AppInfo{PID: 42, Name: "Fixture", BundleID: "test.fixture"}}}, rt: &runtimeState{approvals: store}}
 			r := newNativeRunner(b)
 			defer r.close()
-			server := mcp.NewServer(&mcp.Implementation{Name: "approval-test", Version: "1"}, nil)
+			server := mcp.NewServer(&mcp.Implementation{Name: "approval-test", Version: "1"}, &mcp.ServerOptions{SupportedProtocolVersions: handshakeProtocolVersions()})
 			registerNativeApprovalTool(server, r)
 			a, z := mcp.NewInMemoryTransports()
 			ss, err := server.Connect(t.Context(), a, nil)

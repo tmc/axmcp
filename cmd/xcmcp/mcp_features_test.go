@@ -99,8 +99,9 @@ func newProtocolFeatureTestServer(t *testing.T) *mcp.Server {
 	t.Helper()
 
 	opts := &mcp.ServerOptions{
-		Instructions:      serverInstructions(true, ""),
-		CompletionHandler: completionHandler,
+		Instructions:              serverInstructions(true, ""),
+		CompletionHandler:         completionHandler,
+		SupportedProtocolVersions: handshakeProtocolVersions(),
 	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "xcmcp", Version: "test"}, opts)
 	registerSwiftUIPreviewFeatures(server)
