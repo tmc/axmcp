@@ -282,7 +282,7 @@ func ocrElementCapture(el *axuiautomation.Element, opts ocrOptions) ([]ocrResult
 		return nil, nil, fmt.Errorf("element has zero-size frame")
 	}
 
-	png, err := el.Screenshot()
+	png, err := screenshotElement(el)
 	if err != nil {
 		return nil, nil, fmt.Errorf("screenshot: %w", err)
 	}

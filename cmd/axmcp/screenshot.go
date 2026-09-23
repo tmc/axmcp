@@ -330,6 +330,30 @@ func captureWindowCG(win windowInfo) ([]byte, error) {
 	return nil, fmt.Errorf("CGWindowListCreateImage returned nil for window %d (%s)", win.WindowID, strings.Join(errs, ", "))
 }
 
+// screenshotElement captures el's frame from el's own window, so windows
+// stacked above it do not appear in the image. A screen-rectangle capture,
+// which includes whatever covers the element, is the fallback when the
+// window cannot be identified or captured.
+func screenshotElement(el *axuiautomation.Element) ([]byte, error) {
+	frame := el.Frame()
+	if wid := el.WindowID(); wid != 0 && frame.Size.Width > 0 && frame.Size.Height > 0 {
+		rect := corefoundation.CGRect{
+			Origin: corefoundation.CGPoint{X: frame.Origin.X, Y: frame.Origin.Y},
+			Size:   corefoundation.CGSize{Width: frame.Size.Width, Height: frame.Size.Height},
+		}
+		img := coregraphics.CGWindowListCreateImage(rect,
+			coregraphics.KCGWindowListOptionIncludingWindow,
+			coregraphics.CGWindowID(wid),
+			coregraphics.KCGWindowImageBoundsIgnoreFraming|coregraphics.KCGWindowImageBestResolution)
+		if img != 0 {
+			defer coregraphics.CGImageRelease(img)
+			return cgImageToPNG(img)
+		}
+		diagf("screenshotElement: window %d capture failed, using screen rect\n", wid)
+	}
+	return el.Screenshot()
+}
+
 func captureRect(rect corefoundation.CGRect) ([]byte, error) {
 	if rect.Size.Width <= 0 || rect.Size.Height <= 0 {
 		return nil, fmt.Errorf("empty capture rect")

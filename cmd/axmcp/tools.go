@@ -415,7 +415,7 @@ func buildAXTreePayload(appName string, root *axuiautomation.Element, scope stri
 	var png []byte
 	if includeScreenshot || includeOCR {
 		var err error
-		png, err = root.Screenshot()
+		png, err = screenshotElement(root)
 		if err != nil {
 			return axTreePayload{}, fmt.Errorf("screenshot %s: %w", scope, err)
 		}
@@ -1234,7 +1234,7 @@ func captureElementOrWindow(appName string, isElement bool, el *axuiautomation.E
 
 	// Fallback to accessibility element screenshot.
 	diagf("captureElementOrWindow: falling back to AX element screenshot\n")
-	png, err := el.Screenshot()
+	png, err := screenshotElement(el)
 	if err != nil {
 		diagf("captureElementOrWindow: AX screenshot failed: %v\n", err)
 		return nil, fmt.Errorf("screenshot: %w", err)
