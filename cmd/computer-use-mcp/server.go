@@ -79,7 +79,8 @@ func computerUseCompatibilityMiddleware() mcp.Middleware {
 				}
 				return &mcp.ListToolsResult{Tools: tools}, nil
 			case "resources/templates/list":
-				return nil, methodNotFoundError(method)
+				// The SDK replaces the message with its own.
+				return nil, &jsonrpc.Error{Code: jsonrpc.CodeMethodNotFound}
 			default:
 				return next(ctx, method, req)
 			}
@@ -109,19 +110,6 @@ func registerPermissionResource(server *mcp.Server) {
 			},
 		}, nil
 	})
-}
-
-func methodNotFoundError(method string) error {
-	detail := fmt.Sprintf("Unknown method: %s", method)
-	data, err := json.Marshal(map[string]any{"detail": detail})
-	if err != nil {
-		data = nil
-	}
-	return &jsonrpc.Error{
-		Code:    jsonrpc.CodeMethodNotFound,
-		Message: "Method not found: " + detail,
-		Data:    data,
-	}
 }
 
 func orderedComputerUseTools() []*mcp.Tool {
