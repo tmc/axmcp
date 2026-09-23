@@ -20,6 +20,11 @@ import (
 
 const xcodeToolDiscoveryTimeout = 10 * time.Second
 
+// bridgeSessionOptions pins mcpbridge sessions to the initialize handshake.
+// Without a version the SDK first probes with the 2026-07-28 server/discover
+// request, which mcpbridge predates.
+var bridgeSessionOptions = &mcp.ClientSessionOptions{ProtocolVersion: "2025-11-25"}
+
 var hasRunningXcodeProcess = detectRunningXcodeProcess
 
 // xcodeProxy manages a child mcpbridge process and client session.
@@ -198,7 +203,7 @@ func newXcodeProxy(ctx context.Context) (*xcodeProxy, error) {
 	slog.Debug("connecting to mcpbridge via xcrun")
 	connectCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	session, err := client.Connect(connectCtx, transport, nil)
+	session, err := client.Connect(connectCtx, transport, bridgeSessionOptions)
 	if err != nil {
 		allowCancel()
 		return nil, fmt.Errorf("connect to mcpbridge: %w", err)
@@ -369,7 +374,7 @@ func (proxy *xcodeProxy) reconnect(ctx context.Context) error {
 		allowCtx, allowCancel := context.WithCancel(ctx)
 		go autoAllowXcodeDialog(allowCtx)
 
-		session, err := client.Connect(connectCtx, transport, nil)
+		session, err := client.Connect(connectCtx, transport, bridgeSessionOptions)
 		cancel()
 		if err != nil {
 			allowCancel()
