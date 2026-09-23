@@ -100,6 +100,10 @@ func readMenuPath(app *axuiautomation.Application, path []string) (*axuiautomati
 
 // clickMenuPath presses the menu item named by path. Titles match as in
 // readMenuPath, so "Export..." presses the "Export…" that macOS publishes.
+//
+// Pressing a disabled item does nothing and reports no error, so a disabled
+// item is an error here rather than a silent no-op. AppKit disables many
+// items while their app is in the background.
 func clickMenuPath(app *axuiautomation.Application, path []string) error {
 	titles := make([]string, len(path))
 	for i := range path {
@@ -108,7 +112,11 @@ func clickMenuPath(app *axuiautomation.Application, path []string) error {
 			return err
 		}
 		titles[i] = el.Title()
+		enabled := el.IsEnabled()
 		el.Release()
+		if i == len(path)-1 && !enabled {
+			return fmt.Errorf("menu item %q is disabled; it may need its app to be frontmost", strings.Join(titles, " > "))
+		}
 	}
 	return app.ClickMenuItem(titles)
 }
