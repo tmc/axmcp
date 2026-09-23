@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -18,18 +18,10 @@ type listAppsInput struct{}
 func registerListApps(st *state) {
 	mcp.AddTool(st.server, &mcp.Tool{
 		Name:        "ascript_list_apps",
-		Description: "List scriptable macOS applications in /Applications that have an sdef",
+		Description: "List macOS applications in /Applications, /System/Applications, their Utilities folders, and ~/Applications",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, _ listAppsInput) (*mcp.CallToolResult, any, error) {
-		entries, err := os.ReadDir("/Applications")
-		if err != nil {
-			return nil, nil, fmt.Errorf("read /Applications: %w", err)
-		}
 		var buf bytes.Buffer
-		for _, e := range entries {
-			if !strings.HasSuffix(e.Name(), ".app") {
-				continue
-			}
-			appPath := "/Applications/" + e.Name()
+		for _, appPath := range listApps(appDirs()) {
 			appName := sdef.AppName(appPath)
 			st.mu.Lock()
 			exposed := st.exposed[strings.ToLower(appName)]
@@ -38,7 +30,7 @@ func registerListApps(st *state) {
 			if exposed {
 				status = " [exposed]"
 			}
-			fmt.Fprintf(&buf, "%-40s  %s%s\n", e.Name(), appPath, status)
+			fmt.Fprintf(&buf, "%-40s  %s%s\n", filepath.Base(appPath), appPath, status)
 		}
 		return textResult(buf.String()), nil, nil
 	})
@@ -106,28 +98,6 @@ full path ("/Applications/Xcode.app").`,
 		}
 		return textResult(buf.String()), nil, nil
 	})
-}
-
-// resolveAppPath turns a short name like "Xcode" into "/Applications/Xcode.app".
-func resolveAppPath(app string) string {
-	if strings.Contains(app, "/") {
-		return app
-	}
-	// Try exact match first, then case-insensitive.
-	exact := "/Applications/" + app + ".app"
-	if _, err := os.Stat(exact); err == nil {
-		return exact
-	}
-	entries, _ := os.ReadDir("/Applications")
-	lower := strings.ToLower(app)
-	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".app") {
-			if strings.ToLower(strings.TrimSuffix(e.Name(), ".app")) == lower {
-				return "/Applications/" + e.Name()
-			}
-		}
-	}
-	return exact // best guess
 }
 
 // ── per-command tool ──────────────────────────────────────────────────────────

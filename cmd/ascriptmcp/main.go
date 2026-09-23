@@ -4,7 +4,7 @@
 // It starts with two meta-tools:
 //
 //   - ascript_expose_app: registers a full set of tools for a named app
-//   - ascript_list_apps:  lists scriptable apps in /Applications
+//   - ascript_list_apps:  lists installed applications
 //
 // Calling ascript_expose_app for "Xcode" parses /Applications/Xcode.app's sdef
 // and dynamically adds tools like xcode_build, xcode_test, xcode_run, etc.

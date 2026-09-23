@@ -45,15 +45,8 @@ func cliListApps() *cobra.Command {
 		Use:   "list-apps",
 		Short: "List scriptable macOS applications",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			entries, err := os.ReadDir("/Applications")
-			if err != nil {
-				return fmt.Errorf("read /Applications: %w", err)
-			}
-			for _, e := range entries {
-				if !strings.HasSuffix(e.Name(), ".app") {
-					continue
-				}
-				fmt.Println(e.Name())
+			for _, path := range listApps(appDirs()) {
+				fmt.Println(path)
 			}
 			return nil
 		},
